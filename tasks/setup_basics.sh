@@ -24,4 +24,4 @@ sudo apt install -y curl \
     htop
 
 # Python basics
-pip install uv
+pip install uv --break-system-packages
