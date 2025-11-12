@@ -1,5 +1,11 @@
 #!/bin/bash
 
+# usage
+# general: 
+# ./ssh_forward_port.sh $LOCAL_PORT $TARGET_MACHINE $REMOTE_PORT $TARGET_MACHINE_SSH_USER $TARGET_MACHINE_SSH_PORT
+# e.g.:
+# ./ssh_forward_port.sh 3333 192.168.0.3 3333 myuser 2224
+
 # Parameters
 LOCAL_PORT=$1
 REMOTE_HOST=$2
