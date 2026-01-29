@@ -3,13 +3,27 @@ set -eu
 
 # === Configuration ===
 
-LM_STUDIO_VERSION="0.3.31-7"
+LM_STUDIO_VERSION="0.4.0-18"
 SOURCE_URL="https://installers.lmstudio.ai/linux/x64/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-x64.AppImage"
 
 DESKTOP_LINK_TARGET_PATH="$HOME/Desktop/LM-Studio.desktop"
 START_SCRIPT_TARGET_PATH="$HOME/lmstudio"
 APP_IMAGE_TARGET_PATH="$HOME/lmstudio_bin"
 APP_IMAGE_BACKUP_PATH="$HOME/lmstudio_bin_backup"
+
+INSTALL_LLMSTER_ENABLED="true"
+# install llmster cli (lms)
+if [[ "$INSTALL_LLMSTER_ENABLED" == "true" ]]; then
+    echo "Installing llmster ..."
+    curl -fsSL https://lmstudio.ai/install.sh | bash
+    lms --help
+    lms --version
+    echo "Finished install llmster."
+    echo
+else
+    echo "llmster install is disabled. Skipping installation."
+    echo
+fi
 
 echo "Installing version: $LM_STUDIO_VERSION"
 
