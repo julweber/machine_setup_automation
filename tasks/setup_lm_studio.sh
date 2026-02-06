@@ -3,7 +3,7 @@ set -eu
 
 # === Configuration ===
 
-LM_STUDIO_VERSION="0.4.0-18"
+LM_STUDIO_VERSION="0.4.1-1"
 SOURCE_URL="https://installers.lmstudio.ai/linux/x64/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-x64.AppImage"
 
 DESKTOP_LINK_TARGET_PATH="$HOME/Desktop/LM-Studio.desktop"
