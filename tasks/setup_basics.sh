@@ -21,7 +21,8 @@ sudo apt install -y curl \
     nvtop \
     radeontop \
     btop \
-    htop
+    htop \
+    tmux
 
 # Python basics
 pip install uv --break-system-packages
