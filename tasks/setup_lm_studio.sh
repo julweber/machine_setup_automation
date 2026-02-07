@@ -2,8 +2,8 @@
 set -eu
 
 # === Configuration ===
-
-LM_STUDIO_VERSION="0.4.1-1"
+DEFAULT_LM_STUDIO_VERSION="0.4.2-2"
+LM_STUDIO_VERSION="${LM_STUDIO_VERSION:-$DEFAULT_LM_STUDIO_VERSION}"
 SOURCE_URL="https://installers.lmstudio.ai/linux/x64/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-x64.AppImage"
 
 DESKTOP_LINK_TARGET_PATH="$HOME/Desktop/LM-Studio.desktop"
@@ -11,7 +11,8 @@ START_SCRIPT_TARGET_PATH="$HOME/lmstudio"
 APP_IMAGE_TARGET_PATH="$HOME/lmstudio_bin"
 APP_IMAGE_BACKUP_PATH="$HOME/lmstudio_bin_backup"
 
-INSTALL_LLMSTER_ENABLED="true"
+INSTALL_LLMSTER_ENABLED="${INSTALL_LLMSTER_ENABLED:-true}"
+
 # install llmster cli (lms)
 if [[ "$INSTALL_LLMSTER_ENABLED" == "true" ]]; then
     echo "Installing llmster ..."
