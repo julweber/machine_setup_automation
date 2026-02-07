@@ -30,13 +30,13 @@ echo ""
 
 ## sshd
 echo "Configuring firewall rules for: SSHD - $SSHD_PORT"
-sudo ufw allow $SSHD_PORT
-sudo ufw allow $SSHD_PORT/tcp
+sudo ufw allow "$SSHD_PORT"
+sudo ufw allow "$SSHD_PORT/tcp"
 
 ## LM Studio
 echo "Configuring firewall rules for: LM_STUDIO - $LM_STUDIO_PORT"
-sudo ufw allow $LM_STUDIO_PORT
-sudo ufw allow $LM_STUDIO_PORT/tcp
+sudo ufw allow "$LM_STUDIO_PORT"
+sudo ufw allow "$LM_STUDIO_PORT/tcp"
 
 ## gnome remote
 # echo "Configuring firewall rules for: GNOME_REMOTE - $GNOME_REMOTE_PORT"

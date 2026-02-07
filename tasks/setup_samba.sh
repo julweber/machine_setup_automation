@@ -10,18 +10,18 @@ SHARE_PATH="$BASE_SHARE_PATH/shared"
 SAMBA_USER="sambauser"
 DEVELOPER_GROUP_NAME="devs"
 
-sudo mkdir -p $BASE_SHARE_PATH
-sudo mkdir -p $SHARE_PATH
+sudo mkdir -p "$BASE_SHARE_PATH"
+sudo mkdir -p "$SHARE_PATH"
 
 sudo groupadd "$DEVELOPER_GROUP_NAME"
-sudo chown $SAMBA_USER:devs $BASE_SHARE_PATH
-sudo chmod -R 770 $BASE_SHARE_PATH
+sudo chown "$SAMBA_USER":devs "$BASE_SHARE_PATH"
+sudo chmod -R 770 "$BASE_SHARE_PATH"
 
-sudo chown $SAMBA_USER:devs $SHARE_PATH
-sudo chmod -R 770 $SHARE_PATH
+sudo chown "$SAMBA_USER":devs "$SHARE_PATH"
+sudo chmod -R 770 "$SHARE_PATH"
 
-sudo usermod -aG $DEVELOPER_GROUP_NAME $SAMBA_USER
-sudo usermod -aG $DEVELOPER_GROUP_NAME $USER
+sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$SAMBA_USER"
+sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$USER"
 newgrp devs
 
 
@@ -66,6 +66,6 @@ sudo smbpasswd -a "$SAMBA_USER"
 
 echo "Samba has been installed and configured."
 echo "Share path: $SHARE_PATH"
-echo "Access it on the network as: \\\\$(hostname -I | awk '{print $1}')\\$SAMBA_SHARE_NAME"
+printf 'Access it on the network as: \\\\\\%s\\\%s\n' "$(hostname -I | awk '{print $1}')" "$SAMBA_SHARE_NAME"
 
 # ---------------------------------

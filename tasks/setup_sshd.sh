@@ -51,8 +51,8 @@ sudo systemctl restart ssh
 # sudo systemctl status ssh
 
 # prepare .ssh dir
-mkdir -p $HOME/.ssh
-touch $HOME/.ssh/authorized_keys
+mkdir -p "$HOME/.ssh"
+touch "$HOME/.ssh/authorized_keys"
 
 echo "Place your allowed public keys in: $HOME/.ssh/authorized_keys"
 echo "----- FINISHED SSH SETUP ------"

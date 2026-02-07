@@ -40,7 +40,7 @@ cd \$HOME
 EOF
 fi
 
-chmod +x $START_SCRIPT_TARGET_PATH
+chmod +x "$START_SCRIPT_TARGET_PATH"
 
 # create desktop link
 if [[ -f "$DESKTOP_LINK_TARGET_PATH" ]]; then
@@ -59,16 +59,16 @@ Exec=$START_SCRIPT_TARGET_PATH
 EOF
 fi
 
-chmod +x $DESKTOP_LINK_TARGET_PATH
+chmod +x "$DESKTOP_LINK_TARGET_PATH"
 
 if [[ -f "$APP_IMAGE_TARGET_PATH" ]]; then
     echo "LM Studio binary exists: $APP_IMAGE_TARGET_PATH"
     echo "Moving to $APP_IMAGE_BACKUP_PATH"
-    mv $APP_IMAGE_TARGET_PATH $APP_IMAGE_BACKUP_PATH
+    mv "$APP_IMAGE_TARGET_PATH" "$APP_IMAGE_BACKUP_PATH"
 fi
 
 echo "Downloading LM Studio AppImage from: $SOURCE_URL to $APP_IMAGE_TARGET_PATH ... " 
-wget $SOURCE_URL --output-document $APP_IMAGE_TARGET_PATH
-chmod +x $APP_IMAGE_TARGET_PATH
+wget "$SOURCE_URL" --output-document "$APP_IMAGE_TARGET_PATH"
+chmod +x "$APP_IMAGE_TARGET_PATH"
 echo "Finished installing version: $LM_STUDIO_VERSION"
 

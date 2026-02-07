@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 set -eu
 
 # install comfy UI
 python3 -m venv comfy-env
-source comfy-env/bin/activate
+source "comfy-env/bin/activate"
 pip install comfy-cli
 comfy --install-completion
 comfy install

@@ -14,7 +14,7 @@ set -eu
 #
 #
 sudo apt install python3-setuptools python3-wheel -y
-sudo usermod -a -G render,video $LOGNAME
+sudo usermod -a -G render,video "$LOGNAME"
 sudo mkdir --parents --mode=0755 /etc/apt/keyrings
 wget https://repo.radeon.com/rocm/rocm.gpg.key -O - | \
 gpg --dearmor | sudo tee /etc/apt/keyrings/rocm.gpg > /dev/null
