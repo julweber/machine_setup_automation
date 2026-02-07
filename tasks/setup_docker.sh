@@ -1,7 +1,14 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 set -eu
 
 #----------------- docker ----------------
+# Check if Docker is already installed
+if command -v docker &> /dev/null && docker --version &> /dev/null; then
+    echo "Docker is already installed"
+    exit 0
+fi
+
 # Update package lists
 sudo apt update && sudo apt upgrade -y
 sudo apt install -y ca-certificates curl 
@@ -20,7 +27,7 @@ sudo chmod a+r /etc/apt/keyrings/docker.asc
 # Add the repository to Apt sources:
 echo \
   "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(. /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
+  $(source /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
   sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
 sudo apt-get update
 
@@ -37,6 +44,6 @@ echo "Docker installed successfully on Ubuntu $UBUNTU_VERSION"
 
 sudo groupadd docker
 sudo chown root:docker /var/run/docker.sock
-sudo usermod -aG docker $USER
+sudo usermod -aG docker "$USER"
 newgrp docker
 docker run hello-world
