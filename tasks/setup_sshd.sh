@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -eu
 
 
 # Setup sshd server
@@ -7,10 +8,8 @@ sudo apt install -y openssh-server
 
 # show sshd status
 echo "SSHD status:"
-sudo systemctl status sshd
+sudo systemctl status sshd |true
 echo "--------------------"
-
-set -eu
 
 # SSHD
 # ------------ Config --------------

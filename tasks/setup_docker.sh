@@ -32,7 +32,8 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin d
 echo "Testing Docker installation..."
 sudo docker run hello-world
 
-echo "Docker installed successfully on Ubuntu 22.04"
+UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "24.04")
+echo "Docker installed successfully on Ubuntu $UBUNTU_VERSION"
 
 sudo groupadd docker
 sudo chown root:docker /var/run/docker.sock
