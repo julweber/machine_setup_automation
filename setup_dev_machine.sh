@@ -14,3 +14,4 @@ source tasks/configure_firewall.sh
 
 # source tasks/setup_brave.sh
 # source tasks/setup_vscode.sh
+# source tasks/setup_opencode_server.sh

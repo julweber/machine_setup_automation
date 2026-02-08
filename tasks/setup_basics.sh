@@ -22,7 +22,9 @@ sudo apt install -y curl \
     radeontop \
     btop \
     htop \
-    tmux
+    tmux \
+    nodejs \
+    npm
 
 # Python basics
 pip install uv --break-system-packages

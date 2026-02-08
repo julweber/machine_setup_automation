@@ -7,6 +7,7 @@ LM_STUDIO_PORT="${LM_STUDIO_PORT:-1234}"
 OPENWEBUI_PORT="${OPENWEBUI_PORT:-3333}"
 KUBERNETES_API_PORT="${KUBERNETES_API_PORT:-6443}"
 GNOME_REMOTE_PORT="${GNOME_REMOTE_PORT:-3389}"
+OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 
 echo "Configured env vars:"
 echo "SSHD_PORT=$SSHD_PORT"
@@ -14,6 +15,7 @@ echo "LM_STUDIO_PORT=$LM_STUDIO_PORT"
 echo "OPENWEBUI_PORT=$OPENWEBUI_PORT"
 echo "KUBERNETES_API_PORT=$KUBERNETES_API_PORT"
 echo "GNOME_REMOTE_PORT=$GNOME_REMOTE_PORT"
+echo "OPENCODE_PORT=$OPENCODE_PORT"
 echo "--------------------------"
 echo ""
 
@@ -37,6 +39,11 @@ sudo ufw allow "$SSHD_PORT/tcp"
 echo "Configuring firewall rules for: LM_STUDIO - $LM_STUDIO_PORT"
 sudo ufw allow "$LM_STUDIO_PORT"
 sudo ufw allow "$LM_STUDIO_PORT/tcp"
+
+## Opencode Server
+echo "Configuring firewall rules for: OPENCODE - $OPENCODE_PORT"
+sudo ufw allow "$OPENCODE_PORT"
+sudo ufw allow "$OPENCODE_PORT/tcp"
 
 ## gnome remote
 # echo "Configuring firewall rules for: GNOME_REMOTE - $GNOME_REMOTE_PORT"
