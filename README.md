@@ -89,6 +89,22 @@ machine_setup_automation/
   ```
   The script prints colour‑coded status messages and keeps the tunnel alive until you interrupt it with **Ctrl+C**.
 
+Useful tunnel commands:
+   ```bash
+   REMOTE_HOST=myserver.example.com
+   REMOTE_USER="myuser"
+   PORT="2224"
+
+   # lmstudio
+   ./ssh_port_forward.sh 1234 "$REMOTE_HOST" 1234 "$REMOTE_USER" "$PORT"
+
+   # openwebui
+   ./ssh_port_forward.sh 3333 "$REMOTE_HOST" 3333 "$REMOTE_USER" "$PORT"
+
+   # opencode
+   ./ssh_port_forward.sh 4096 "$REMOTE_HOST" 4096 "$REMOTE_USER" "$PORT"
+   ```
+
 ---
 
 ## Quick Start (Minimal LLM Workstation)
