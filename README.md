@@ -6,7 +6,7 @@ This repository provides a collection of **Bash automation scripts** to quickly 
 - Setting up SSH with a custom port.
 - Configuring the firewall.
 - Installing Docker and optional Kubernetes (k3s).
-- Deploying LM Studio, Open WebUI and other LLM‑related services.
+- Deploying LM Studio, Open WebUI, Opencode and other LLM-related services.
 - Providing helper utilities for SSH tunneling, Qdrant vector storage, Penpot, etc.
 
 The goal is to let a developer **run a single entrypoint script** and end up with a fully functional LLM development environment that can be further customized.
@@ -24,8 +24,9 @@ machine_setup_automation/
 │   ├── setup_basics.sh            # System packages & basic Python tooling
 │   ├── setup_docker.sh            # Docker Engine + group permissions
 │   ├── setup_kubernetes.sh        # k3s cluster + k9s CLI (optional)
-│   ├── setup_lm_studio.sh         # Download LM Studio AppImage, optional llmster cli
+│   ├── setup_lm_studio.sh         # Download LM Studio AppImage, optional llmster cli
 │   ├── setup_openwebui.sh          # *Deprecated* – see `old/` for historic version
+│   ├── setup_opencode_server.sh   # Opencode AI agent server installation and configuration
 │   ├── setup_sshd.sh              # OpenSSH server with configurable port
 │   ├── setup_brave.sh             # Install Brave browser (optional)
 │   ├── setup_vscode.sh            # Install VS Code (optional)
@@ -62,14 +63,15 @@ machine_setup_automation/
 ## Core Task Scripts (`tasks/`)
 | Script | Primary purpose | Key environment variables |
 |--------|-----------------|----------------------------|
-| `setup_basics.sh` | Installs common system packages (curl, git, python3, etc.) and the **uv** Python package manager. | None |
-| `setup_sshd.sh` | Installs OpenSSH server, ensures it runs on a custom port, adds safe defaults (`PubkeyAuthentication yes`, `PasswordAuthentication no`). | `SSHD_PORT` (default 2224) |
-| `configure_firewall.sh` | Sets up **UFW** rules for the ports used by other services. | `SSHD_PORT`, `LM_STUDIO_PORT` (default 1234), `OPENWEBUI_PORT` (default 3333), `KUBERNETES_API_PORT` (default 6443), `GNOME_REMOTE_PORT` (default 3389) |
+| `setup_basics.sh` | Installs common system packages (curl, git, python3, etc.), **uv** Python package manager, and Node.js/npm. | None |
+| `setup_sshd.sh` | Installs OpenSSH server, ensures it runs on a custom port, adds safe defaults (`PubkeyAuthentication yes`, `PasswordAuthentication no`). | `SSHD_PORT` (default 2224) |
+| `configure_firewall.sh` | Sets up **UFW** rules for the ports used by other services. | `SSHD_PORT`, `LM_STUDIO_PORT` (default 1234), `OPENWEBUI_PORT` (default 3333), `KUBERNETES_API_PORT` (default 6443), `GNOME_REMOTE_PORT` (default 3389), `OPENCODE_PORT` (default 4096) |
 | `setup_docker.sh` | Installs Docker Engine from the official Docker repository, adds the current user to the `docker` group and verifies the installation. | None |
-| `setup_kubernetes.sh` | Installs a lightweight **k3s** cluster and the `k9s` TUI for Kubernetes management. | `K9S_VERSION` (default `0.50.7`) |
-| `setup_lm_studio.sh` | Downloads the specified LM Studio AppImage, creates a desktop entry, an optional start script, and optionally installs the **llmster** CLI (`lms`). | `LM_STUDIO_VERSION` (default `0.4.2-2`), `INSTALL_LLMSTER_ENABLED` (default `true`) |
+| `setup_kubernetes.sh` | Installs a lightweight **k3s** cluster and the `k9s` TUI for Kubernetes management. | `K9S_VERSION` (default `0.50.7`) |
+| `setup_lm_studio.sh` | Downloads the specified LM Studio AppImage, creates a desktop entry, an optional start script, and optionally installs the **llmster** CLI (`lms`). | `LM_STUDIO_VERSION` (default `0.4.2-2`), `INSTALL_LLMSTER_ENABLED` (default `true`) |
+| `setup_opencode_server.sh` | Installs and configures the Opencode AI coding agent server with systemd integration. | `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`) |
 | `setup_brave.sh` | Installs the Brave browser from its official apt repository. | None |
-| `setup_vscode.sh` | Installs VS Code from Microsoft's official repository. | None |
+| `setup_vscode.sh` | Installs VS Code from Microsoft's official repository. | None |
 | `setup_comfy.sh` *(placeholder)* | Placeholder for future ComfyUI setup. | — |
 | `setup_rocm.sh` | Installs ROCm for AMD GPU acceleration support. | None (hardcodes ROCm 7.0 alpha repo) |
 | `setup_samba.sh` | Installs and configures Samba file sharing. | `BASE_SHARE_PATH`, `SAMBA_SHARE_NAME`, `SHARE_PATH`, `SAMBA_USER`, `DEVELOPER_GROUP_NAME` |
@@ -98,9 +100,9 @@ machine_setup_automation/
 2. **Make sure you have sudo rights** – all scripts call `sudo` where required.
 3. **Run the desired entrypoint**:
    - For a *server* (headless VM, cloud instance):
-     ```bash
-     ./setup_server.sh    # sources basics → sshd → docker → lm‑studio → firewall …
-     ```
+```bash
+      ./setup_server.sh    # sources basics → sshd → docker → lm-studio → firewall → opencode …
+      ```
    - For a *development workstation* (your laptop/desktop):
      ```bash
      ./setup_dev_machine.sh
@@ -110,7 +112,7 @@ machine_setup_automation/
    - Docker ready (run `docker run hello-world` to double‑check).
    - SSH listening on the custom port (`sshd` service is enabled).
    - LM Studio binary at `$HOME/lmstudio_bin` with a start shortcut at `$HOME/lmstudio`.
-   - UFW firewall allowing SSH, LM Studio (and optionally OpenWebUI) ports.
+   - UFW firewall allowing SSH, LM Studio (and optionally OpenWebUI and Opencode) ports.
 
 ---
 
@@ -126,13 +128,14 @@ The scripts are deliberately **parameterised via environment variables** that yo
 2. **Edit the default values directly** at the top of each task script (e.g., change `LM_STUDIO_VERSION="0.4.0-18"` in `setup_lm_studio.sh`). This is handy for a permanent change across all runs.
 
 ### Frequently overridden variables
-| Variable | Default | Where it’s used |
+| Variable | Default | Where it's used |
 |----------|---------|-----------------|
-| `SSHD_PORT` | `2224` | `setup_sshd.sh`, `configure_firewall.sh`
-| `LM_STUDIO_PORT` | `1234` | `configure_firewall.sh` (firewall rule), optional OpenWebUI integration
-| `OPENWEBUI_PORT` | `3333` | `configure_firewall.sh`
-| `KUBERNETES_API_PORT` | `6443` | `configure_firewall.sh`
-| `GNOME_REMOTE_PORT` | `3389` | `configure_firewall.sh`
+| `SSHD_PORT` | `2224` | `setup_sshd.sh`, `configure_firewall.sh` |
+| `LM_STUDIO_PORT` | `1234` | `configure_firewall.sh` (firewall rule), optional OpenWebUI integration |
+| `OPENWEBUI_PORT` | `3333` | `configure_firewall.sh` |
+| `KUBERNETES_API_PORT` | `6443` | `configure_firewall.sh` |
+| `GNOME_REMOTE_PORT` | `3389` | `configure_firewall.sh` |
+| `OPENCODE_PORT` | `4096` | `setup_opencode_server.sh`, `configure_firewall.sh` |
 | `LM_STUDIO_VERSION` | `0.4.2-2` | `setup_lm_studio.sh` |
 | `INSTALL_LLMSTER_ENABLED` | `true` | `setup_lm_studio.sh` |
 | `K9S_VERSION` | `0.50.7` | `setup_kubernetes.sh` |
@@ -142,10 +145,11 @@ The scripts are deliberately **parameterised via environment variables** that yo
 ## Optional / Advanced Components
 - **Kubernetes (k3s)** – Uncomment the line `# source tasks/setup_kubernetes.sh` in either entrypoint if you need a local cluster. The script will install k3s and the `k9s` CLI.
 - **Brave Browser** – Uncomment `# source tasks/setup_brave.sh` to add Brave to the setup.
-- **VS Code** – Uncomment `# source tasks/setup_vscode.sh` to install VS Code from Microsoft's official repository.
+- **VS Code** – Uncomment `# source tasks/setup_vscode.sh` to install VS Code from Microsoft's official repository.
 - **ROCm** – Uncomment `# source tasks/setup_rocm.sh` for AMD GPU acceleration support (requires compatible AMD hardware).
 - **Samba file sharing** – Uncomment `# source tasks/setup_samba.sh` to enable network file sharing.
-- **OpenWebUI** – The original script lives in `old/`. If you wish to re‑enable it, copy it into `tasks/` and source it from the entrypoint. It currently builds a Docker Compose stack that connects OpenWebUI to LM Studio.
+- **OpenWebUI** – The original script lives in `old/`. If you wish to re-enable it, copy it into `tasks/` and source it from the entrypoint. It currently builds a Docker Compose stack that connects OpenWebUI to LM Studio.
+- **Opencode Server** – Uncomment `# source tasks/setup_opencode_server.sh` to install and configure the Opencode AI coding agent server with systemd integration.
 
 ---
 
