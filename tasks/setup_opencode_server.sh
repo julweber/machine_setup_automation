@@ -38,53 +38,23 @@ if [[ "$GENERATE_PASSWORD" == "true" && -z "$OPENCODE_SERVER_PASSWORD" ]]; then
     echo ""
 fi
 
-# Check if opencode is already installed
-if command -v opencode &> /dev/null && opencode --version &> /dev/null; then
-    echo "Opencode CLI is already installed. Skipping installation."
-else
-    echo "Installing Opencode Server..."
 
-    case "$OPENCODE_INSTALL_METHOD" in
-        npm)
-            if ! command -v npm &> /dev/null; then
-                echo "npm is not installed. Installing Node.js and npm..."
-                sudo apt update
-                sudo apt install -y nodejs npm
-            fi
-
-            echo "Installing opencode globally via npm..."
-            sudo npm install -g @opencode/agent
-
-            if ! opencode --version &> /dev/null; then
-                echo "Error: Opencode CLI installation failed verification."
-                exit 1
-            fi
-            ;;
-        curl)
-            LATEST_RELEASE=$(curl -s https://api.github.com/repos/opencode-ai/opencode/releases/latest | grep '"tag_name"' | sed -E 's/.*"tag_name": "([^"]+)".*/\1/')
-            if [[ -z "$LATEST_RELEASE" ]]; then
-                echo "Failed to get latest release version. Falling back to v0.1.0"
-                LATEST_RELEASE="v0.1.0"
-            fi
-
-            DOWNLOAD_URL="https://github.com/opencode-ai/opencode/releases/download/$LATEST_RELEASE/opencode-linux-amd64"
-
-            sudo curl -sL "$DOWNLOAD_URL" -o /usr/local/bin/opencode
-            sudo chmod +x /usr/local/bin/opencode
-
-            if ! opencode --version &> /dev/null; then
-                echo "Error: Opencode CLI installation failed verification."
-                exit 1
-            fi
-            ;;
-        *)
-            echo "Error: Unknown install method '$OPENCODE_INSTALL_METHOD'. Valid options: npm, curl"
-            exit 1
-            ;;
-    esac
-
-    echo "Opencode CLI installed successfully."
+echo "Installing/Updating Opencode Server..."
+if ! command -v npm &> /dev/null; then
+    echo "npm is not installed. Installing Node.js and npm..."
+    sudo apt update
+    sudo apt install -y nodejs npm
 fi
+
+echo "Installing opencode globally via npm..."
+sudo npm install -g opencode-ai
+
+if ! opencode --version &> /dev/null; then
+    echo "Error: Opencode CLI installation failed verification."
+    exit 1
+fi
+
+echo "Opencode CLI installed/updated successfully."
 
 SERVICE_FILE="/etc/systemd/system/opencode-agent.service"
 
@@ -101,7 +71,7 @@ Type=simple
 User=$CURRENT_USER
 Environment="OPENCODE_SERVER_USERNAME=$OPENCODE_SERVER_USERNAME"
 Environment="OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD"
-ExecStart=/usr/local/bin/opencode server --host $OPENCODE_HOSTNAME --port $OPENCODE_PORT
+ExecStart=/usr/local/bin/opencode web --hostname 0.0.0.0 --port 4096
 Restart=always
 RestartSec=5
 WorkingDirectory=$HOME_DIR
@@ -150,5 +120,5 @@ echo "Username: $OPENCODE_SERVER_USERNAME"
 if [[ -n "$OPENCODE_SERVER_PASSWORD" ]]; then
     echo "Password: *** (configured)"
 else
-    echo "Note: No password configured. HTTP basic auth will fail if password is required."
+    echo "ATTENTION: No password configured !!!"
 fi
