@@ -2,7 +2,7 @@
 set -eu
 
 # === Configuration ===
-DEFAULT_LM_STUDIO_VERSION="0.4.2-2"
+DEFAULT_LM_STUDIO_VERSION="0.4.5-2"
 LM_STUDIO_VERSION="${LM_STUDIO_VERSION:-$DEFAULT_LM_STUDIO_VERSION}"
 SOURCE_URL="https://installers.lmstudio.ai/linux/x64/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-x64.AppImage"
 
@@ -12,19 +12,6 @@ APP_IMAGE_TARGET_PATH="$HOME/lmstudio_bin"
 APP_IMAGE_BACKUP_PATH="$HOME/lmstudio_bin_backup"
 
 INSTALL_LLMSTER_ENABLED="${INSTALL_LLMSTER_ENABLED:-true}"
-
-# install llmster cli (lms)
-if [[ "$INSTALL_LLMSTER_ENABLED" == "true" ]]; then
-    echo "Installing llmster ..."
-    curl -fsSL https://lmstudio.ai/install.sh | bash
-    lms --help
-    lms --version
-    echo "Finished install llmster."
-    echo
-else
-    echo "llmster install is disabled. Skipping installation."
-    echo
-fi
 
 echo "Installing version: $LM_STUDIO_VERSION"
 
@@ -72,3 +59,17 @@ wget "$SOURCE_URL" --output-document "$APP_IMAGE_TARGET_PATH"
 chmod +x "$APP_IMAGE_TARGET_PATH"
 echo "Finished installing version: $LM_STUDIO_VERSION"
 
+set +e
+
+# install llmster cli (lms)
+if [[ "$INSTALL_LLMSTER_ENABLED" == "true" ]]; then
+    echo "Installing llmster . NOT FAILING SCRIPT ON ERRORS!!!"
+    curl -fsSL https://lmstudio.ai/install.sh | bash
+    lms --help
+    lms --version
+    echo "Finished install llmster."
+    echo
+else
+    echo "llmster install is disabled. Skipping installation."
+    echo
+fi
