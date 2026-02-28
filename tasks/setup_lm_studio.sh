@@ -2,16 +2,35 @@
 set -eu
 
 # === Configuration ===
-DEFAULT_LM_STUDIO_VERSION="0.4.5-2"
-LM_STUDIO_VERSION="${LM_STUDIO_VERSION:-$DEFAULT_LM_STUDIO_VERSION}"
-SOURCE_URL="https://installers.lmstudio.ai/linux/x64/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-x64.AppImage"
-
 DESKTOP_LINK_TARGET_PATH="$HOME/Desktop/LM-Studio.desktop"
 START_SCRIPT_TARGET_PATH="$HOME/lmstudio"
 APP_IMAGE_TARGET_PATH="$HOME/lmstudio_bin"
 APP_IMAGE_BACKUP_PATH="$HOME/lmstudio_bin_backup"
 
 INSTALL_LLMSTER_ENABLED="${INSTALL_LLMSTER_ENABLED:-true}"
+
+LATEST_URL="https://lmstudio.ai/download/latest/linux/x64"
+
+DEFAULT_LM_STUDIO_VERSION="0.4.6-1"
+
+LM_STUDIO_VERSION="${LM_STUDIO_VERSION:-$DEFAULT_LM_STUDIO_VERSION}"
+SOURCE_URL="https://installers.lmstudio.ai/linux/x64/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-x64.AppImage"
+
+
+# === check if not specified directly ===
+if [[ "$LM_STUDIO_VERSION" == "$DEFAULT_LM_STUDIO_VERSION" ]]; then
+    echo "Checking latest LM Studio version..."
+
+    # Follow redirects and grab the final URL, which contains the version number
+    FINAL_URL=$(curl -sI -L "$LATEST_URL" -o /dev/null -w '%{url_effective}')
+
+    # Extract version from the URL (e.g. .../LM-Studio-0.3.5-x86_64.AppImage)
+    LM_STUDIO_VERSION=$(echo "$FINAL_URL" | grep -oP -m1 '[\d]+\.[\d]+\.[\d]+-[\d]+' | head -1)
+
+    echo "Latest LM Studio version: $LM_STUDIO_VERSION"
+    echo "Download URL: $FINAL_URL"
+    SOURCE_URL="$FINAL_URL"
+fi
 
 echo "Installing version: $LM_STUDIO_VERSION"
 
