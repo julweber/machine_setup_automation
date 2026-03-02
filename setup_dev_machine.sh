@@ -7,6 +7,9 @@ source tasks/setup_docker.sh
 source tasks/setup_lm_studio.sh
 source tasks/configure_firewall.sh
 
+# source tasks/setup_hyprland.sh
+# source tasks/setup_nanobot.sh
+
 # source tasks/setup_kubernetes.sh
 # source tasks/setup_openwebui.sh
 
