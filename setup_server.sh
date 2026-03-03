@@ -14,5 +14,6 @@ source tasks/configure_firewall.sh
 # source tasks/setup_kubernetes.sh
 # source tasks/setup_samba.sh
 # source tasks/setup_opencode_server.sh
+# source tasks/setup_pi.sh
 
 
