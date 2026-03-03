@@ -1,10 +1,52 @@
 #!/usr/bin/env bash
 # =============================================================================
 # Forgejo Docker Setup Script
-# Installs and runs a Forgejo instance (self-hosted Git forge) via Docker
-# using Docker Compose with optional PostgreSQL database support.
+# =============================================================================
 #
-# Based on: https://forgejo.org/docs/latest/admin/installation/docker/
+# DESCRIPTION:
+#   Automated setup script for deploying Forgejo, a lightweight self-hosted
+#   Git forge (similar to GitHub/GitLab), using Docker Compose. Supports
+#   SQLite for lightweight setups or PostgreSQL for production use.
+#
+# KEY ACTIONS:
+#   1. Pre-flight checks: Verifies root access, Docker installation & daemon
+#   2. Stops and removes any existing Forgejo Docker Compose stack (with prompt)
+#   3. Creates persistent storage directories on the host system
+#   4. Generates a docker-compose.yml file based on DB_TYPE configuration
+#   5. Pulls required Docker images (Forgejo + optional PostgreSQL)
+#   6. Starts the Docker Compose stack in detached mode
+#   7. Waits for Forgejo web UI to become available (max 120s)
+#   8. Displays access information and useful management commands
+#
+# IMPORTANT VARIABLES:
+#   FORGEJO_HOME       - Host directory for persistent data (default: /srv/forgejo)
+#   FORGEJO_IMAGE      - Docker image tag to use (default: codeberg.org/forgejo/forgejo:14)
+#   CONTAINER_NAME     - Docker container name (default: forgejo)
+#   HTTP_PORT          - Host port for web UI (default: 89)
+#   SSH_PORT           - Host port for Git SSH access (default: 2223)
+#   DB_TYPE            - Database backend: "sqlite" or "postgres" (default: sqlite)
+#   POSTGRES_*         - PostgreSQL credentials (only used when DB_TYPE=postgres)
+#
+# DEPENDENCIES:
+#   - Docker: Must be installed and daemon must be running
+#   - Docker Compose: Required for orchestration
+#   - Root/sudo access: Required for directory creation and Docker operations
+#   - curl: Used for health check polling
+#
+# OUTPUTS:
+#   - ${FORGEJO_HOME}/docker-compose.yml - Generated compose configuration
+#   - ${FORGEJO_HOME}/data/               - Forgejo application data
+#   - ${FORGEJO_HOME}/postgres/           - PostgreSQL data (if DB_TYPE=postgres)
+#
+# USAGE:
+#   sudo ./setup_forgejo.sh
+#   
+#   # Or with custom configuration:
+#   sudo FORGEJO_HOME=/opt/forgejo HTTP_PORT=3000 ./setup_forgejo.sh
+#
+# REFERENCE:
+#   https://forgejo.org/docs/latest/admin/installation/docker/
+#
 # =============================================================================
 
 set -euo pipefail

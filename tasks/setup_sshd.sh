@@ -1,4 +1,36 @@
 #!/usr/bin/env bash
+#
+# SSH Server (sshd) Setup Script
+# ===============================
+#
+# DESCRIPTION:
+#   Installs and configures OpenSSH server with security-hardened settings.
+#   Sets up the SSH daemon to use public key authentication only, disables
+#   password authentication, and configures a custom port.
+#
+# KEY ACTIONS:
+#   1. Installs openssh-server package via apt
+#   2. Displays current sshd service status
+#   3. Configures sshd with security settings:
+#      - Enables public key authentication
+#      - Disables password authentication
+#      - Sets custom SSH port
+#   4. Appends configuration lines to sshd_config (idempotent - checks before adding)
+#   5. Enables and restarts SSH service
+#   6. Creates ~/.ssh directory and authorized_keys file
+#
+# IMPORTANT VARIABLES:
+#   SSHD_PORT          - SSH daemon port (default: 2224)
+#   SSHD_CONFIG_FILE   - Path to sshd config (default: /etc/ssh/sshd_config)
+#
+# DEPENDENCIES:
+#   - apt package manager
+#   - sudo privileges
+#   - systemctl (systemd)
+#
+# USAGE:
+#   SSHD_PORT=2224 ./setup_sshd.sh
+#
 set -eu
 
 

@@ -1,4 +1,35 @@
 #!/usr/bin/env bash
+################################################################################
+# Script: setup_basics.sh
+# Description: Installs essential system packages and tools for development
+#              environment setup on Debian/Ubuntu-based systems.
+#
+# Key Actions:
+#   1. Updates apt package lists
+#   2. Installs core utilities (curl, wget, git, jq, yq, net-tools, gpg)
+#   3. Installs terminal tools (tldr, bat, terminator, tmux)
+#   4. Installs Python 3 (full install) and pip
+#   5. Installs system monitoring tools (nvtop, radeontop, btop, htop)
+#   6. Installs Node.js and npm via apt
+#   7. Installs Python package manager 'uv' via pip
+#   8. Installs and configures Node Version Manager (NVM)
+#   9. Loads NVM into current shell session
+#
+# Important Variables:
+#   NVM_VERSION - Version of NVM to install (default: 0.40.4)
+#   NVM_DIR     - NVM installation directory (default: $HOME/.nvm)
+#
+# Dependencies:
+#   - Debian/Ubuntu-based Linux distribution
+#   - sudo privileges for apt package installation
+#   - Internet connection for downloading packages and NVM
+#   - pip (installed during script execution)
+#
+# Notes:
+#   - Script exits on any error (set -e)
+#   - Script exits on undefined variables (set -u)
+#   - Uses --break-system-packages flag for pip install
+################################################################################
 set -eu
 
 NVM_VERSION="0.40.4"

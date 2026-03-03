@@ -2,16 +2,37 @@
 # shellcheck disable=SC1091,SC3047
 set -eu
 
-#----------------- RESTRICTED USER SETUP ----------------
-# Creates a restricted SSH user for secure tunnel-only access.
-# This script sets up a chrooted SSH environment with minimal privileges.
+################################################################################
+# SCRIPT: setup_ssh_tunnel_user.sh
+################################################################################
+#
+# DESCRIPTION:
+#   Creates a restricted SSH user account for secure tunnel-only access.
+#   This script configures a locked-down SSH environment with minimal privileges,
+#   suitable for secure port forwarding without granting interactive shell access.
+#
+# KEY ACTIONS PERFORMED:
+#   1. Validates username format and environment variables
+#   2. Creates system user with /usr/sbin/nologin shell
+#   3. Locks user account to disable password authentication
+#   4. Sets up .ssh directory with proper permissions (700)
+#   5. Generates ED25519 SSH keypair for the user
+#   6. Adds public key to authorized_keys file
+#   7. Updates /etc/ssh/sshd_config with Match User block for:
+#      - AllowTcpForwarding yes
+#      - GatewayPorts (configurable)
+#      - X11Forwarding no
+#      - PermitTTY no
+#   8. Validates sshd_config syntax
+#   9. Restarts SSH service to apply changes
 #
 # SECURITY FEATURES:
-# - Password authentication disabled (key-based only)
-# - No interactive shell access (/usr/sbin/nologin shell)
-# - PTY allocation disabled
-# - X11 forwarding disabled
-# - Port forwarding enabled for tunneling purposes
+#   - Password authentication disabled (key-based only)
+#   - No interactive shell access (/usr/sbin/nologin shell)
+#   - PTY allocation disabled (PermitTTY no)
+#   - X11 forwarding disabled
+#   - Port forwarding enabled for tunneling purposes
+#   - Account locked with 'passwd -l'
 #
 # USAGE:
 #   Source the script with environment variables:
@@ -28,10 +49,18 @@ set -eu
 #   ALLOW_GATEWAY_PORTS  - Allow remote port forwarding via GatewayPorts,
 #                          set to "yes" or "no" (default: no)
 #
+# DEPENDENCIES:
+#   - sudo privileges (root access required)
+#   - OpenSSH server package (sshd)
+#   - systemd (for service restart)
+#   - ssh-keygen (for key generation)
+#   - Standard utilities: useradd, passwd, chown, chmod, sed, grep, tee
+#
 # OUTPUT FILES:
-#   $RESTRICTED_USER_HOME/.ssh/id_ed25519      - Private key (600 permissions)
-#   $RESTRICTED_USER_HOME/.ssh/id_ed25519.pub  - Public key
-#   $RESTRICTED_USER_HOME/.ssh/authorized_keys - Authorized keys file
+#   /home/$RESTRICTED_USER/.ssh/id_ed25519      - Private key (600 permissions)
+#   /home/$RESTRICTED_USER/.ssh/id_ed25519.pub  - Public key
+#   /home/$RESTRICTED_USER/.ssh/authorized_keys - Authorized keys file (600)
+#   /etc/ssh/sshd_config                        - Updated with Match User block
 #
 # TUNNEL COMMANDS:
 #   Always use -N to suppress shell session (avoids nologin rejection).
@@ -53,19 +82,33 @@ set -eu
 #         -p $SSHD_PORT $RESTRICTED_USER@<server> -i ~/.ssh/tunnel-key
 #   Then access LM Studio at http://localhost:1235/v1/models on your local machine
 #
-#
-# EXAMPLES:
 #   # Create user with custom name and port
 #   RESTRICTED_USER="dbuser" SSHD_PORT=2225 source tasks/setup_ssh_tunnel_user.sh
 #
 #   # Allow gateway ports for external access to tunnels
 #   ALLOW_GATEWAY_PORTS=yes source tasks/setup_ssh_tunnel_user.sh
 #
+# IMPORTANT VARIABLES:
+#   RESTRICTED_USER      - Target username (validated for Linux compliance)
+#   SSHD_PORT            - SSH daemon port number
+#   ALLOW_GATEWAY_PORTS  - GatewayPorts setting (yes/no)
+#   SSHD_CONFIG_FILE     - Path to SSH daemon config (/etc/ssh/sshd_config)
+#   RESTRICTED_HOME      - User's home directory (/home/$RESTRICTED_USER)
+#   SSHD_MATCH_BLOCK     - SSH Match User configuration block
+#
+# IDEMPOTENCY:
+#   - Script checks if user exists and exits gracefully if found
+#   - Existing sshd_config Match User blocks are updated (not duplicated)
+#   - Safe to run multiple times without side effects
+#
 # NOTES:
-# - Requires root/sudo privileges
-# - Will fail if user already exists (idempotent)
-# - SSH service will be restarted
-# - Existing sshd_config blocks for this user are updated
+#   - Requires root/sudo privileges
+#   - Script is idempotent (safe to run multiple times)
+#   - SSH service will be restarted (brief connection interruption)
+#   - Existing sshd_config blocks for this user are automatically updated
+#   - Username validation enforces Linux user naming conventions
+#
+################################################################################
 
 # Configuration
 RESTRICTED_USER="${RESTRICTED_USER:-tunneluser}"

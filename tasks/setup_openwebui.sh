@@ -1,5 +1,51 @@
 #!/bin/bash
 
+################################################################################
+# Open WebUI Setup Script
+################################################################################
+#
+# DESCRIPTION:
+#   This script automates the installation and configuration of Open WebUI
+#   using Docker Compose. It sets up Open WebUI to connect to an external
+#   LM Studio instance for AI model inference.
+#
+# KEY ACTIONS:
+#   1. Creates a project directory at ~/open-webui
+#   2. Generates a docker-compose.yml file with Open WebUI container config
+#   3. Configures Open WebUI to connect to LM Studio API endpoint
+#   4. Creates a start_openwebui.sh convenience script for easy startup
+#   5. Launches the Docker containers and verifies the service is running
+#   6. Displays access URLs and management instructions
+#
+# DEPENDENCIES:
+#   - Docker (with Docker Compose plugin)
+#   - LM Studio running locally on port $LM_STUDIO_PORT
+#   - Internet connection for pulling Docker images
+#
+# CONFIGURATION VARIABLES:
+#   - OPENWEBUI_PORT: Port for Open WebUI web interface (default: 3333)
+#   - LM_STUDIO_PORT: Port where LM Studio API is listening (default: 1234)
+#   - PROJECT_DIR: Installation directory (default: $HOME/open-webui)
+#
+# USAGE:
+#   ./setup_openwebui.sh
+#   
+#   Or with custom ports:
+#   OPENWEBUI_PORT=8080 LM_STUDIO_PORT=5000 ./setup_openwebui.sh
+#
+# OUTPUTS:
+#   - Docker container running Open WebUI at http://localhost:$OPENWEBUI_PORT
+#   - docker-compose.yml configuration file
+#   - start_openwebui.sh startup convenience script
+#   - Persistent data volume: openwebui_data
+#
+# NOTES:
+#   - WEBUI_SECRET_KEY should be changed in production
+#   - LM Studio must be running before starting Open WebUI
+#   - Use 'docker compose logs -f' to view container logs
+#
+################################################################################
+
 set -euo pipefail
 
 # Configuration

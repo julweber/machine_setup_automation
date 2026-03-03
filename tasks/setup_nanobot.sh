@@ -11,13 +11,46 @@
 # Usage:
 #   bash setup_nanobot.sh
 #
-# Environment Variables (all optional):
-#   NANOBOT_TARGET_REPO_DIRECTORY   Directory to clone the nanobot repository into.
+#   Optionally override the clone destination:
+#     NANOBOT_TARGET_REPO_DIRECTORY=/opt/nanobot bash setup_nanobot.sh
+#
+# Key Steps:
+#   1. Verify that Docker is installed and available on PATH.
+#   2. Clone the nanobot repository (https://github.com/HKUDS/nanobot) into
+#      NANOBOT_TARGET_REPO_DIRECTORY, or pull the latest changes if the
+#      directory already exists.
+#   3. Generate a restart_nanobot.sh convenience script inside the repository
+#      directory that stops and restarts the nanobot-gateway Docker service.
+#   4. Build the nanobot Docker image (tagged "nanobot") from the cloned source.
+#   5. Run the nanobot onboarding flow via:
+#        docker compose run --rm nanobot-cli onboard
+#      This initialises the shared config directory (NANOBOT_SHARED_DIRECTORY).
+#   6. Print post-setup instructions, including how to configure the API key
+#      and test the LLM connection.
+#
+# Environment Variables:
+#   NANOBOT_TARGET_REPO_DIRECTORY   (optional) Directory to clone the nanobot
+#                                   repository into.
 #                                   Default: $HOME/nanobot
 #
-# Prerequisites:
-#   - Docker must be installed and running
-#   - git must be available
+#   NANOBOT_SHARED_DIRECTORY        (internal, not overridable) Host directory
+#                                   mounted into the nanobot containers for
+#                                   shared config and data. Matches the default
+#                                   mount path used by the upstream
+#                                   docker-compose.yml.
+#                                   Fixed value: $HOME/.nanobot
+#
+# Generated Files:
+#   <NANOBOT_TARGET_REPO_DIRECTORY>/restart_nanobot.sh
+#       A helper script that runs `docker compose down nanobot-gateway` followed
+#       by `docker compose up -d nanobot-gateway`. Created with execute
+#       permissions during setup.
+#
+# Prerequisites / Dependencies:
+#   - bash  (version 4+ recommended; uses set -euo pipefail)
+#   - docker  (must be installed, running, and accessible without sudo)
+#   - docker compose  (v2 plugin or standalone; used for run / up / down)
+#   - git  (must be available on PATH for cloning / pulling the repo)
 # ==============================================================================
 
 set -euo pipefail

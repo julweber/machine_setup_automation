@@ -1,4 +1,46 @@
 #!/usr/bin/env bash
+#
+# ============================================================================
+# LM Studio Installation Script
+# ============================================================================
+#
+# DESCRIPTION:
+#   Automates the installation and setup of LM Studio on Linux systems.
+#   Downloads the AppImage binary, creates startup scripts, and configures
+#   desktop integration. Optionally installs the llmster CLI tool (lms).
+#
+# KEY ACTIONS:
+#   1. Detects the latest LM Studio version by following redirects from the
+#      official download URL (unless a specific version is provided)
+#   2. Creates a startup script (~/lmstudio) that launches the AppImage
+#      with --no-sandbox flag
+#   3. Creates a desktop shortcut (~/Desktop/LM-Studio.desktop) for easy access
+#   4. Downloads the LM Studio AppImage binary to ~/lmstudio_bin
+#   5. Backs up existing installation if present (to ~/lmstudio_bin_backup)
+#   6. Optionally installs llmster CLI tool via official install script
+#
+# IMPORTANT VARIABLES:
+#   LM_STUDIO_VERSION         - Version to install (default: auto-detect latest)
+#   INSTALL_LLMSTER_ENABLED   - Install llmster CLI (default: true)
+#   DEFAULT_LM_STUDIO_VERSION - Fallback version (0.4.6-1)
+#   LATEST_URL                - URL to detect latest version
+#   START_SCRIPT_TARGET_PATH  - Path to startup script (~/lmstudio)
+#   APP_IMAGE_TARGET_PATH     - Path to AppImage binary (~/lmstudio_bin)
+#   DESKTOP_LINK_TARGET_PATH  - Path to desktop shortcut (~/Desktop/LM-Studio.desktop)
+#
+# DEPENDENCIES:
+#   - curl: For downloading and version detection
+#   - wget: For downloading the AppImage
+#   - grep: For parsing version from URLs
+#   - Standard bash utilities (cat, chmod, mv)
+#
+# USAGE:
+#   ./setup_lm_studio.sh
+#   LM_STUDIO_VERSION=0.4.5-2 ./setup_lm_studio.sh
+#   INSTALL_LLMSTER_ENABLED=false ./setup_lm_studio.sh
+#
+# ============================================================================
+
 set -eu
 
 # === Configuration ===

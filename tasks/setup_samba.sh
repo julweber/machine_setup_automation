@@ -1,4 +1,44 @@
 #!/usr/bin/env bash
+################################################################################
+# SAMBA SHARE SETUP SCRIPT
+################################################################################
+#
+# DESCRIPTION:
+#   This script automates the installation and configuration of a Samba file
+#   sharing server on Debian/Ubuntu systems. It creates a shared directory
+#   accessible over the network with proper permissions and user authentication.
+#
+# KEY ACTIONS:
+#   1. Creates base share directory structure and developer group
+#   2. Sets up proper ownership and permissions (770) for share paths
+#   3. Installs Samba package via apt
+#   4. Enables and starts the smbd service
+#   5. Backs up original Samba configuration
+#   6. Adds share definition to /etc/samba/smb.conf
+#   7. Creates Samba user (if doesn't exist) with no-login system account
+#   8. Prompts for Samba password configuration
+#   9. Displays network access information
+#
+# IMPORTANT VARIABLES:
+#   BASE_SHARE_PATH      - Root directory for Samba shares (/home/samba)
+#   SAMBA_SHARE_NAME     - Name of the share visible on network (shared)
+#   SHARE_PATH           - Full path to shared directory
+#   SAMBA_USER           - System user for Samba authentication (sambauser)
+#   DEVELOPER_GROUP_NAME - Group with access to shares (devs)
+#
+# DEPENDENCIES:
+#   - apt package manager (Debian/Ubuntu)
+#   - sudo privileges
+#   - samba package
+#   - systemd (for service management)
+#
+# SIDE EFFECTS:
+#   - Modifies /etc/samba/smb.conf (creates backup first)
+#   - Creates system user and group
+#   - Adds current user to developer group
+#   - Opens network share (SMB protocol, typically port 445)
+#
+################################################################################
 set -eu
 
 # ---------------- samba --------------------

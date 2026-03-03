@@ -1,4 +1,47 @@
 #!/usr/bin/env bash
+#
+# ============================================================================
+# Script: setup_opencode_server.sh
+# ============================================================================
+#
+# Description:
+#   Installs and configures the Opencode AI Coding Agent Server as a
+#   systemd service. This script handles installation via npm, creates
+#   a systemd service unit, and optionally configures firewall rules.
+#
+# Key Actions:
+#   1. Validates and displays configuration from environment variables
+#   2. Optionally generates a secure random password if requested
+#   3. Installs Node.js and npm if not already present
+#   4. Installs/updates opencode-ai globally via npm
+#   5. Creates systemd service file at /etc/systemd/system/opencode-agent.service
+#   6. Enables and starts the opencode-agent.service
+#   7. Configures UFW firewall rules to allow traffic on the configured port
+#   8. Tests the health endpoint and displays service status
+#
+# Environment Variables:
+#   OPENCODE_PORT                - Port for the server (default: 4096)
+#   OPENCODE_HOSTNAME            - Hostname to bind to (default: 0.0.0.0)
+#   OPENCODE_SERVER_USERNAME     - Username for authentication (default: opencode)
+#   OPENCODE_SERVER_PASSWORD     - Password for authentication (default: empty)
+#   OPENCODE_INSTALL_METHOD      - Installation method (default: npm)
+#   GENERATE_PASSWORD            - Auto-generate password if true (default: false)
+#
+# Dependencies:
+#   - sudo privileges required
+#   - openssl (for password generation)
+#   - systemd (for service management)
+#   - ufw (optional, for firewall configuration)
+#   - curl (optional, for health check testing)
+#
+# Service Details:
+#   - Service Name: opencode-agent.service
+#   - Service File: /etc/systemd/system/opencode-agent.service
+#   - Runs as: Current user ($USER)
+#   - Auto-restart: Enabled with 5-second delay
+#
+# ============================================================================
+#
 set -eu
 
 # === Configuration ===

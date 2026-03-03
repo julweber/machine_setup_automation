@@ -1,4 +1,43 @@
 #!/usr/bin/env bash
+#
+# ==============================================================================
+# FIREWALL CONFIGURATION SCRIPT
+# ==============================================================================
+#
+# Description:
+#   This script configures UFW (Uncomplicated Firewall) rules for a development
+#   machine. It allows incoming traffic on specific ports used by various
+#   services and applications, then enables the firewall.
+#
+# Key Actions:
+#   1. Displays current firewall status and existing rules
+#   2. Configures environment variables for service ports (with defaults)
+#   3. Adds UFW allow rules for active services:
+#      - SSHD (custom port for SSH access)
+#      - LM Studio (local AI model server)
+#      - OpenCode Server (code server instance)
+#   4. Enables the UFW firewall
+#   5. Displays final configured rules
+#
+# Environment Variables (with defaults):
+#   - SSHD_PORT (default: 2224)          - SSH daemon port
+#   - LM_STUDIO_PORT (default: 1234)     - LM Studio API port
+#   - OPENWEBUI_PORT (default: 3333)     - Open WebUI port (currently disabled)
+#   - KUBERNETES_API_PORT (default: 6443) - Kubernetes API port (currently disabled)
+#   - GNOME_REMOTE_PORT (default: 3389)  - GNOME Remote Desktop port (currently disabled)
+#   - OPENCODE_PORT (default: 4096)      - OpenCode server port
+#
+# Dependencies:
+#   - ufw (Uncomplicated Firewall) must be installed
+#   - sudo privileges required for firewall configuration
+#
+# Notes:
+#   - Some services (GNOME Remote, OpenWebUI, Kubernetes) are commented out
+#   - Script uses 'set -eu' for strict error handling
+#   - Both generic and TCP-specific rules are added for each port
+#
+# ==============================================================================
+
 set -eu
 
 # ------------ Config --------------
