@@ -51,22 +51,44 @@ APP_IMAGE_BACKUP_PATH="$HOME/lmstudio_bin_backup"
 
 INSTALL_LLMSTER_ENABLED="${INSTALL_LLMSTER_ENABLED:-true}"
 
-LATEST_URL="https://lmstudio.ai/download/latest/linux/x64"
+# Architecture-specific URLs
+LATEST_URL_AMD64="https://lmstudio.ai/download/latest/linux/x64"
+LATEST_URL_ARM64="https://lmstudio.ai/download/latest/linux/arm64"
 
 DEFAULT_LM_STUDIO_VERSION="0.4.6-1"
 
 LM_STUDIO_VERSION="${LM_STUDIO_VERSION:-$DEFAULT_LM_STUDIO_VERSION}"
-SOURCE_URL="https://installers.lmstudio.ai/linux/x64/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-x64.AppImage"
+
+# Detect system architecture and set appropriate URL path
+ARCH=$(uname -m)
+case "$ARCH" in
+    x86_64)
+        ARCH_TYPE="amd64"
+        LATEST_URL="$LATEST_URL_AMD64"
+        ;;
+    aarch64|arm64)
+        ARCH_TYPE="arm64"
+        LATEST_URL="$LATEST_URL_ARM64"
+        ;;
+    *)
+        echo "Error: Unsupported architecture: $ARCH"
+        echo "LM Studio only supports amd64 (x86_64) and arm64 (aarch64/arm64)"
+        exit 1
+        ;;
+esac
+
+echo "Detected architecture: $ARCH ($ARCH_TYPE)"
+SOURCE_URL="https://installers.lmstudio.ai/linux/$ARCH_TYPE/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-$ARCH_TYPE.AppImage"
 
 
 # === check if not specified directly ===
 if [[ "$LM_STUDIO_VERSION" == "$DEFAULT_LM_STUDIO_VERSION" ]]; then
-    echo "Checking latest LM Studio version..."
+    echo "Checking latest LM Studio version for $ARCH_TYPE..."
 
     # Follow redirects and grab the final URL, which contains the version number
     FINAL_URL=$(curl -sI -L "$LATEST_URL" -o /dev/null -w '%{url_effective}')
 
-    # Extract version from the URL (e.g. .../LM-Studio-0.3.5-x86_64.AppImage)
+    # Extract version from the URL (e.g. .../LM-Studio-0.4.6-1-arm64.AppImage)
     LM_STUDIO_VERSION=$(echo "$FINAL_URL" | grep -oP -m1 '[\d]+\.[\d]+\.[\d]+-[\d]+' | head -1)
 
     echo "Latest LM Studio version: $LM_STUDIO_VERSION"
