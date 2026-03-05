@@ -175,6 +175,14 @@ The scripts are deliberately **parameterised via environment variables** that yo
 
 ---
 
+## Agentic Engineering & Specification
+
+This project uses the **[spec-framework](https://github.com/julweber/spec-framework)** for agentic engineering — a structured approach to defining, reviewing, and implementing features through AI-assisted workflows.
+
+The full project specification (description, architecture, concepts, conventions, feature specs, and tasks) can be found in the **`specification/`** directory.
+
+---
+
 ## Contributing
 Feel free to fork this repository and add new task scripts (e.g., for additional AI tools) or improve existing ones. When adding a script:
 - Place it under `tasks/` if it is part of the core provisioning flow, otherwise put it in an appropriate sub‑folder.
