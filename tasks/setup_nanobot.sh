@@ -97,9 +97,15 @@ fi
 echo "Cloning nanobot repository..."
 if [ ! -d "$NANOBOT_TARGET_REPO_DIRECTORY" ]; then
     git clone https://github.com/HKUDS/nanobot "$NANOBOT_TARGET_REPO_DIRECTORY"
+    LATEST_TAG=$(git -C "$NANOBOT_TARGET_REPO_DIRECTORY" describe --tags "$(git -C "$NANOBOT_TARGET_REPO_DIRECTORY" rev-list --tags --max-count=1)")
+    echo "Checking out latest release tag: $LATEST_TAG"
+    git -C "$NANOBOT_TARGET_REPO_DIRECTORY" checkout "$LATEST_TAG"
 else
-    echo "nanobot directory already exists, pulling latest changes..."
-    cd "$NANOBOT_TARGET_REPO_DIRECTORY" && git pull && cd -
+    echo "nanobot directory already exists, fetching latest tags..."
+    git -C "$NANOBOT_TARGET_REPO_DIRECTORY" fetch --tags
+    LATEST_TAG=$(git -C "$NANOBOT_TARGET_REPO_DIRECTORY" describe --tags "$(git -C "$NANOBOT_TARGET_REPO_DIRECTORY" rev-list --tags --max-count=1)")
+    echo "Checking out latest release tag: $LATEST_TAG"
+    git -C "$NANOBOT_TARGET_REPO_DIRECTORY" checkout "$LATEST_TAG"
 fi
 
 pushd "$NANOBOT_TARGET_REPO_DIRECTORY"
