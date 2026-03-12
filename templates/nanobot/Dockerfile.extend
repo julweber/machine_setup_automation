@@ -1,0 +1,52 @@
+# ==============================================================================
+# Dockerfile.extend
+# ==============================================================================
+# Extends the upstream nanobot Docker image with additional system packages,
+# Python libraries, and Node tools needed for advanced nanobot skills.
+#
+# Build flow (managed by setup_nanobot.sh):
+#   1. Upstream image is built first:  docker build -t nanobot .
+#   2. This file layers on top:        docker build -f Dockerfile.extend -t nanobot-extended .
+#
+# To add more software:
+#   - apt packages  -> add to the apt-get install block below
+#   - Python libs   -> uncomment / extend the uv pip install line
+#   - Node CLI tools -> uncomment / extend the npm install -g line
+# Then re-run setup_nanobot.sh  OR  run restart_nanobot.sh --rebuild
+# ==============================================================================
+
+# -- Base: the just-built upstream nanobot image --------------------------------
+FROM nanobot
+
+# -- System packages ------------------------------------------------------------
+# Add apt packages that nanobot skills may shell out to.
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends \
+        ffmpeg \
+        imagemagick \
+        jq \
+        ripgrep \
+        wget \
+        unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+# -- Go (official binary) -------------------------------------------------------
+# Installing via the official tarball avoids needing add-apt-repository / PPAs.
+ARG GO_VERSION=1.24.1
+RUN wget -q "https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz" -O /tmp/go.tar.gz && \
+    tar -C /usr/local -xzf /tmp/go.tar.gz && \
+    rm /tmp/go.tar.gz
+ENV PATH="/usr/local/go/bin:${PATH}"
+
+# -- Python extras --------------------------------------------------------------
+# Uncomment and extend to add Python libraries.
+# RUN uv pip install --system --no-cache \
+#     pandas \
+#     matplotlib \
+#     requests
+
+# pi
+RUN npm install -g @mariozechner/pi-coding-agent
+
+# opencode
+RUN go install github.com/opencode-ai/opencode@latest
