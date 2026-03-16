@@ -9,7 +9,7 @@
 #   SQLite for lightweight setups or PostgreSQL for production use.
 #
 # KEY ACTIONS:
-#   1. Pre-flight checks: Verifies root access, Docker installation & daemon
+#   1. Pre-flight checks: Verifies Docker installation & daemon
 #   2. Stops and removes any existing Forgejo Docker Compose stack (with prompt)
 #   3. Creates persistent storage directories on the host system
 #   4. Generates a docker-compose.yml file based on DB_TYPE configuration
@@ -30,7 +30,6 @@
 # DEPENDENCIES:
 #   - Docker: Must be installed and daemon must be running
 #   - Docker Compose: Required for orchestration
-#   - Root/sudo access: Required for directory creation and Docker operations
 #   - curl: Used for health check polling
 #
 # OUTPUTS:
@@ -42,7 +41,7 @@
 #   sudo ./setup_forgejo.sh
 #   
 #   # Or with custom configuration:
-#   sudo FORGEJO_HOME=/opt/forgejo HTTP_PORT=3000 ./setup_forgejo.sh
+#   FORGEJO_HOME=/opt/forgejo HTTP_PORT=3000 sudo ./setup_forgejo.sh
 #
 # REFERENCE:
 #   https://forgejo.org/docs/latest/admin/installation/docker/
@@ -75,6 +74,11 @@ POSTGRES_DB="${POSTGRES_DB:-forgejo}"
 POSTGRES_USER="${POSTGRES_USER:-forgejo}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-changeme}"     # ← change before running!
 
+# Traefik reverse-proxy integration (opt-in)
+FORGEJO_TRAEFIK="${FORGEJO_TRAEFIK:-false}"            # Set to "true" to enable Traefik labels
+FORGEJO_DOMAIN="${FORGEJO_DOMAIN:-}"                   # e.g. git.example.com (required when FORGEJO_TRAEFIK=true)
+PROXY_NETWORK="${PROXY_NETWORK:-proxy}"                # Traefik's external Docker network name
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # COLOURS & HELPERS
@@ -95,10 +99,6 @@ step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
 
 step "Running pre-flight checks"
 
-if [[ "$EUID" -ne 0 ]]; then
-  error "Please run this script as root or with sudo."
-fi
-
 if ! command -v docker &>/dev/null; then
   error "Docker is not installed or not in PATH. Run setup_docker.sh first."
 fi
@@ -108,6 +108,18 @@ if ! docker info &>/dev/null; then
 fi
 
 success "Docker $(docker --version | awk '{print $3}' | tr -d ',') detected and running."
+
+# Traefik pre-flight (only when opt-in)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$FORGEJO_TRAEFIK" == "true" ]]; then
+  # shellcheck disable=SC1091
+  source "${SCRIPT_DIR}/../lib/helpers.sh"
+  ensure_proxy_network
+  if [[ -z "$FORGEJO_DOMAIN" ]]; then
+    echo -e "${RED}[ERROR]${RESET} FORGEJO_DOMAIN must be set when FORGEJO_TRAEFIK=true." >&2
+    exit 1
+  fi
+fi
 
 # Warn about default passwords
 if [[ "$DB_TYPE" != "sqlite" ]]; then
@@ -132,7 +144,7 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   read -rp "    Tear down existing stack and re-create? Data in ${FORGEJO_HOME}/data will be preserved. [y/N] " answer
   if [[ "${answer,,}" == "y" ]]; then
     info "Stopping and removing existing stack..."
-    docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+    sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
     success "Old stack removed."
   else
     info "Keeping existing stack. Exiting."
@@ -146,10 +158,10 @@ fi
 
 step "Creating persistent storage directories under ${FORGEJO_HOME}"
 
-mkdir -p "${FORGEJO_HOME}/data"
+sudo mkdir -p "${FORGEJO_HOME}/data"
 
 if [[ "$DB_TYPE" == "postgres" ]]; then
-  mkdir -p "${FORGEJO_HOME}/postgres"
+  sudo mkdir -p "${FORGEJO_HOME}/postgres"
 fi
 
 success "Directories ready."
@@ -160,65 +172,73 @@ success "Directories ready."
 
 step "Generating ${COMPOSE_FILE}"
 
-# ── SQLite (no external database) ────────────────────────────────────────────
-if [[ "$DB_TYPE" == "sqlite" ]]; then
+[[ "$DB_TYPE" != "sqlite" && "$DB_TYPE" != "postgres" ]] && \
+  error "Unknown DB_TYPE '${DB_TYPE}'. Valid values: sqlite, postgres"
 
-cat > "$COMPOSE_FILE" <<EOF
-networks:
+# ── Networks ──────────────────────────────────────────────────────────────────
+SECTION_NETWORKS="networks:
   forgejo:
-    external: false
+    external: false"
+if [[ "$FORGEJO_TRAEFIK" == "true" ]]; then
+  SECTION_NETWORKS+="
+  ${PROXY_NETWORK}:
+    external: true"
+fi
 
-services:
-  server:
-    image: ${FORGEJO_IMAGE}
-    container_name: ${CONTAINER_NAME}
-    environment:
-      - USER_UID=${USER_UID}
-      - USER_GID=${USER_GID}
-    restart: always
-    networks:
-      - forgejo
-    volumes:
-      - ${FORGEJO_HOME}/data:/data
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    ports:
-      - "${HTTP_PORT}:3000"
-      - "${SSH_PORT}:22"
-EOF
-
-# ── PostgreSQL ────────────────────────────────────────────────────────────────
-elif [[ "$DB_TYPE" == "postgres" ]]; then
-
-cat > "$COMPOSE_FILE" <<EOF
-networks:
-  forgejo:
-    external: false
-
-services:
-  server:
-    image: ${FORGEJO_IMAGE}
-    container_name: ${CONTAINER_NAME}
-    environment:
-      - USER_UID=${USER_UID}
-      - USER_GID=${USER_GID}
+# ── Server: extra environment variables (postgres only) ───────────────────────
+SECTION_SERVER_DB_ENV=""
+if [[ "$DB_TYPE" == "postgres" ]]; then
+  SECTION_SERVER_DB_ENV="\
       - FORGEJO__database__DB_TYPE=postgres
       - FORGEJO__database__HOST=db:5432
       - FORGEJO__database__NAME=${POSTGRES_DB}
       - FORGEJO__database__USER=${POSTGRES_USER}
-      - FORGEJO__database__PASSWD=${POSTGRES_PASSWORD}
-    restart: always
-    networks:
-      - forgejo
-    volumes:
-      - ${FORGEJO_HOME}/data:/data
-      - /etc/timezone:/etc/timezone:ro
-      - /etc/localtime:/etc/localtime:ro
-    ports:
-      - "${HTTP_PORT}:3000"
-      - "${SSH_PORT}:22"
-    depends_on:
-      - db
+      - FORGEJO__database__PASSWD=${POSTGRES_PASSWORD}"
+fi
+
+# ── Server: networks list ─────────────────────────────────────────────────────
+SECTION_SERVER_NETWORKS="    networks:
+      - forgejo"
+if [[ "$FORGEJO_TRAEFIK" == "true" ]]; then
+  SECTION_SERVER_NETWORKS+="
+      - ${PROXY_NETWORK}"
+fi
+
+# ── Server: ports (HTTP suppressed behind Traefik) ────────────────────────────
+SECTION_SERVER_PORTS="    ports:"
+if [[ "$FORGEJO_TRAEFIK" != "true" ]]; then
+  SECTION_SERVER_PORTS+="
+      - \"${HTTP_PORT}:3000\""
+fi
+SECTION_SERVER_PORTS+="
+      - \"${SSH_PORT}:22\""
+
+# ── Server: Traefik labels ────────────────────────────────────────────────────
+SECTION_SERVER_LABELS=""
+if [[ "$FORGEJO_TRAEFIK" == "true" ]]; then
+  SECTION_SERVER_LABELS=$(cat <<TRAEFIK_LABELS
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK}"
+      - "traefik.http.routers.forgejo.rule=Host(\`${FORGEJO_DOMAIN}\`)"
+      - "traefik.http.routers.forgejo.entrypoints=websecure"
+      - "traefik.http.routers.forgejo.tls.certresolver=letsencrypt"
+      - "traefik.http.services.forgejo.loadbalancer.server.port=3000"
+TRAEFIK_LABELS
+  )
+fi
+
+# ── Server: depends_on (postgres only) ───────────────────────────────────────
+SECTION_SERVER_DEPENDS=""
+if [[ "$DB_TYPE" == "postgres" ]]; then
+  SECTION_SERVER_DEPENDS="    depends_on:
+      - db"
+fi
+
+# ── Database service (postgres only) ─────────────────────────────────────────
+SECTION_DB_SERVICE=""
+if [[ "$DB_TYPE" == "postgres" ]]; then
+  SECTION_DB_SERVICE=$(cat <<DB_SERVICE
 
   db:
     image: postgres:14
@@ -232,11 +252,33 @@ services:
       - forgejo
     volumes:
       - ${FORGEJO_HOME}/postgres:/var/lib/postgresql/data
-EOF
-
-else
-  error "Unknown DB_TYPE '${DB_TYPE}'. Valid values: sqlite, postgres"
+DB_SERVICE
+  )
 fi
+
+# ── Assemble and write ────────────────────────────────────────────────────────
+{
+  printf '%s\n\n' "${SECTION_NETWORKS}"
+  printf 'services:\n'
+  printf '  server:\n'
+  printf '    image: %s\n'           "${FORGEJO_IMAGE}"
+  printf '    container_name: %s\n'  "${CONTAINER_NAME}"
+  printf '    environment:\n'
+  printf '      - USER_UID=%s\n'     "${USER_UID}"
+  printf '      - USER_GID=%s\n'     "${USER_GID}"
+  [[ -n "${SECTION_SERVER_DB_ENV}"   ]] && printf '%s\n' "${SECTION_SERVER_DB_ENV}"
+  printf '    restart: always\n'
+  printf '%s\n'                       "${SECTION_SERVER_NETWORKS}"
+  printf '    volumes:\n'
+  printf '      - %s/data:/data\n'   "${FORGEJO_HOME}"
+  printf '      - /etc/timezone:/etc/timezone:ro\n'
+  printf '      - /etc/localtime:/etc/localtime:ro\n'
+  printf '%s\n'                       "${SECTION_SERVER_PORTS}"
+  [[ -n "${SECTION_SERVER_LABELS}"   ]] && printf '%s\n' "${SECTION_SERVER_LABELS}"
+  [[ -n "${SECTION_SERVER_DEPENDS}"  ]] && printf '%s\n' "${SECTION_SERVER_DEPENDS}"
+  [[ -n "${SECTION_DB_SERVICE}"      ]] && printf '%s\n' "${SECTION_DB_SERVICE}"
+  : # ensure brace group exits 0 so pipefail does not trigger on empty optional sections
+} | sudo tee "$COMPOSE_FILE" > /dev/null
 
 success "docker-compose.yml written to ${COMPOSE_FILE}"
 
@@ -245,7 +287,7 @@ success "docker-compose.yml written to ${COMPOSE_FILE}"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Pulling Docker images"
-docker compose -f "$COMPOSE_FILE" pull
+sudo docker compose -f "$COMPOSE_FILE" pull
 success "Images pulled."
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -253,7 +295,7 @@ success "Images pulled."
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Starting Forgejo stack (detached)"
-docker compose -f "$COMPOSE_FILE" up -d
+sudo docker compose -f "$COMPOSE_FILE" up -d
 success "Stack started."
 
 # ─────────────────────────────────────────────────────────────────────────────
