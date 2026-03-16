@@ -204,12 +204,10 @@ if [[ "$FORGEJO_TRAEFIK" == "true" ]]; then
       - ${PROXY_NETWORK}"
 fi
 
-# ── Server: ports (HTTP suppressed behind Traefik) ────────────────────────────
+# ── Server: ports (always expose HTTP and SSH) ────────────────────────────────
 SECTION_SERVER_PORTS="    ports:"
-if [[ "$FORGEJO_TRAEFIK" != "true" ]]; then
-  SECTION_SERVER_PORTS+="
-      - \"${HTTP_PORT}:3000\""
-fi
+SECTION_SERVER_PORTS+="
+      - \"${HTTP_PORT}:3000\"  # Local access via http://localhost:${HTTP_PORT} or http://${HOST_IP}:${HTTP_PORT}"
 SECTION_SERVER_PORTS+="
       - \"${SSH_PORT}:22\""
 

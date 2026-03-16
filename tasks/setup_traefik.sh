@@ -103,6 +103,48 @@ for arg in "$@"; do
 done
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
+# │ VALIDATION — ensure ACME_EMAIL is provided                             │
+# │                                                                         │
+# │     ACME_EMAIL set?                                                     │
+# │          │                                                              │
+# │   ┌─────┴──────┐                                                        │
+# │   │            │                                                        │
+# │  YES│           NO                                                       │
+# │    ▼            ▼                                                        │
+# │ Proceed      Check if default used                                        │
+# │              │                                                            │
+# │              ▼                                                            │
+# │     ┌───────────────┐                                                    │
+# │     │ Default email?│                                                    │
+# │     └───────┬───────┘                                                    │
+# │             │                                                            │
+# │          YES│NO                                                          │
+# │             ▼                                                            │
+# │    Fail with error + instructions                                        │
+# │    (exit 1)                                                              │
+# └─────────────────────────────────────────────────────────────────────────┘
+
+if [[ "$ACME_EMAIL" == "admin@example.com" ]]; then
+  echo ""
+  echo -e "${RED}╔═══════════════════════════════════════════════════════════╗${RESET}"
+  echo -e "${RED}║   ERROR: ACME_EMAIL not configured!                      ║${RESET}"
+  echo -e "${RED}╚═══════════════════════════════════════════════════════════╝${RESET}"
+  echo ""
+  echo "Let's Encrypt requires a valid email address for account registration."
+  echo "The default 'admin@example.com' is rejected by Let's Encrypt."
+  echo ""
+  echo -e "${YELLOW}Please run with your real email:${RESET}"
+  echo ""
+  echo -e "${BOLD}  ACME_EMAIL=your@email.com ./tasks/setup_traefik.sh${RESET}"
+  echo ""
+  echo "Examples:"
+  echo -e "  ${CYAN}ACME_EMAIL=admin@denkfabrik.space ./tasks/setup_traefik.sh${RESET}"
+  echo -e "  ${CYAN}ACME_EMAIL=admin@example.com ./tasks/setup_traefik.sh${RESET}"
+  echo ""
+  exit 1
+fi
+
+# ┌─────────────────────────────────────────────────────────────────────────┐
 # │ PRE-FLIGHT CHECKS — verify prerequisites before proceeding             │
 # │                                                                         │
 # │     ┌─────────────┐                                                     │
