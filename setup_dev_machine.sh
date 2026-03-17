@@ -18,3 +18,4 @@ source tasks/configure_firewall.sh
 # source tasks/setup_vscode.sh
 # source tasks/setup_opencode_server.sh
 # source tasks/setup_pi.sh
+# source tasks/setup_hyprwhspr.sh
