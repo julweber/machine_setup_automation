@@ -1,8 +1,8 @@
-#!/bin/bash
-
-################################################################################
-# Open WebUI Setup Script
-################################################################################
+#!/usr/bin/env bash
+# shellcheck disable=SC2086,SC1091
+# =============================================================================
+# Open WebUI Docker Setup Script
+# =============================================================================
 #
 # DESCRIPTION:
 #   This script automates the installation and configuration of Open WebUI
@@ -10,129 +10,459 @@
 #   LM Studio instance for AI model inference.
 #
 # KEY ACTIONS:
-#   1. Creates a project directory at ~/open-webui
-#   2. Generates a docker-compose.yml file with Open WebUI container config
-#   3. Configures Open WebUI to connect to LM Studio API endpoint
-#   4. Creates a start_openwebui.sh convenience script for easy startup
-#   5. Launches the Docker containers and verifies the service is running
-#   6. Displays access URLs and management instructions
+#   1. Pre-flight checks: Verifies Docker installation & daemon, port availability
+#   2. Checks if an existing Open WebUI container/compose stack is running
+#   3. Generates a secure secret key (stored in .env file for security)
+#   4. Creates docker-compose.yml with Traefik or direct access mode
+#   5. Pulls required Docker images
+#   6. Starts the Docker Compose stack in detached mode
+#   7. Waits for Open WebUI to become available (max 120s)
+#   8. Displays access information and useful management commands
+#
+# IMPORTANT VARIABLES:
+#   OPENWEBUI_PORT     - Host port for direct web UI access (default: 3333)
+#   LM_STUDIO_PORT     - Port where LM Studio API is listening (default: 1234)
+#   PROJECT_DIR        - Installation directory (default: $HOME/open-webui)
+#   WEBUI_SECRET_KEY   - Custom secret key (auto-generated if not set, stored in .env)
+#   
+#   Traefik reverse-proxy integration (opt-in):
+#   OPENWEBUI_TRAEFIK  - Set to "true" to enable Traefik routing (default: false)
+#   OPENWEBUI_DOMAIN   - Domain for Traefik access (required when Traefik=true)
+#   PROXY_NETWORK      - Traefik's external Docker network name (default: proxy)
 #
 # DEPENDENCIES:
-#   - Docker (with Docker Compose plugin)
+#   - Docker: Must be installed and daemon must be running
 #   - LM Studio running locally on port $LM_STUDIO_PORT
-#   - Internet connection for pulling Docker images
+#   - Docker Compose v2+ recommended
+#   - openssl: Used for generating secure secret key
+#   - curl: Used for health check polling
+#   - Traefik instance with proxy network (when OPENWEBUI_TRAEFIK=true)
 #
-# CONFIGURATION VARIABLES:
-#   - OPENWEBUI_PORT: Port for Open WebUI web interface (default: 3333)
-#   - LM_STUDIO_PORT: Port where LM Studio API is listening (default: 1234)
-#   - PROJECT_DIR: Installation directory (default: $HOME/open-webui)
+# OUTPUTS:
+#   - ${PROJECT_DIR}/docker-compose.yml - Generated compose configuration
+#   - ${PROJECT_DIR}/.env            - Secret key and environment variables (secure)
+#   - ${PROJECT_DIR}/start_openwebui.sh - Convenience startup script
+#   - Persistent data volume: openwebui_data
 #
 # USAGE:
 #   ./setup_openwebui.sh
 #   
-#   Or with custom ports:
+#   # Or with custom ports:
 #   OPENWEBUI_PORT=8080 LM_STUDIO_PORT=5000 ./setup_openwebui.sh
+#   
+#   # With Traefik integration:
+#   OPENWEBUI_TRAEFIK=true OPENWEBUI_DOMAIN=openwebui.example.com ./setup_openwebui.sh
 #
-# OUTPUTS:
-#   - Docker container running Open WebUI at http://localhost:$OPENWEBUI_PORT
-#   - docker-compose.yml configuration file
-#   - start_openwebui.sh startup convenience script
-#   - Persistent data volume: openwebui_data
+# REFERENCE:
+#   https://openwebui.com/docs/
 #
-# NOTES:
-#   - WEBUI_SECRET_KEY should be changed in production
-#   - LM Studio must be running before starting Open WebUI
-#   - Use 'docker compose logs -f' to view container logs
-#
-################################################################################
+# =============================================================================
 
 set -euo pipefail
 
-# Configuration
-OPENWEBUI_PORT="${OPENWEBUI_PORT:-3333}"
-LM_STUDIO_PORT="${LM_STUDIO_PORT:-1234}"
+# ─────────────────────────────────────────────────────────────────────────────
+# CLEANUP TRAP — handles partial failures
+# ─────────────────────────────────────────────────────────────────────────────
 
-# === DEFAULT CONSTANTS ===
-PROJECT_DIR="$HOME/open-webui"
+cleanup_on_failure() {
+  local exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    echo ""
+    warn "Setup failed (exit code: ${exit_code})! Cleaning up..."
+    if [[ -d "$PROJECT_DIR" ]] && docker compose ps &>/dev/null; then
+      docker compose down --remove-orphans 2>/dev/null || true
+      info "Removed partially created stack."
+    fi
+  fi
+}
 
-echo "🚀 Starting Open WebUI Setup ..."
+trap cleanup_on_failure EXIT
 
-# === 1. Define Project Directory ===
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION — edit these variables before running
+# ─────────────────────────────────────────────────────────────────────────────
+
+OPENWEBUI_PORT="${OPENWEBUI_PORT:-3333}"          # Host port for web UI (direct mode)
+LM_STUDIO_PORT="${LM_STUDIO_PORT:-1234}"          # LM Studio API port
+PROJECT_DIR="${PROJECT_DIR:-$HOME/open-webui}"    # Installation directory
+
+# Secret key for Open WebUI authentication (auto-generated if not set)
+WEBUI_SECRET_KEY="${WEBUI_SECRET_KEY:-}"
+
+# Traefik reverse-proxy integration (opt-in)
+OPENWEBUI_TRAEFIK="${OPENWEBUI_TRAEFIK:-false}"   # Set to "true" to enable Traefik routing
+OPENWEBUI_DOMAIN="${OPENWEBUI_DOMAIN:-}"          # e.g. openwebui.example.com (required when Traefik=true)
+PROXY_NETWORK="${PROXY_NETWORK:-proxy}"           # Traefik's external Docker network name
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COLOURS & HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+
+info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
+success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRE-FLIGHT CHECKS
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Running pre-flight checks"
+
+if ! command -v docker &>/dev/null; then
+  error "Docker is not installed or not in PATH. Run setup_docker.sh first."
+fi
+
+if ! docker info &>/dev/null; then
+  error "Docker daemon is not running. Start it with: sudo systemctl start docker"
+fi
+
+success "Docker $(docker --version | awk '{print $3}' | tr -d ',') detected and running."
+
+# Check Docker Compose version (v2+ recommended)
+COMPOSE_VERSION=$(docker compose version --short 2>/dev/null || echo "0.0.0")
+COMPOSE_MAJOR=$(echo "$COMPOSE_VERSION" | cut -d'.' -f1)
+if [[ "$COMPOSE_MAJOR" -lt 2 ]]; then
+  warn "Docker Compose v2+ recommended. Current version: ${COMPOSE_VERSION}"
+fi
+
+# Check for openssl (required for secret key generation)
+if [[ -z "$WEBUI_SECRET_KEY" ]] && ! command -v openssl &>/dev/null; then
+  error "openssl is not installed. Required for generating secure secret key. Install it or set WEBUI_SECRET_KEY manually."
+fi
+
+# Check if port is already in use (direct mode only)
+if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
+  if ss -tln 2>/dev/null | grep -q ":${OPENWEBUI_PORT} " || \
+     netstat -tln 2>/dev/null | grep -q ":${OPENWEBUI_PORT} "; then
+    error "Port ${OPENWEBUI_PORT} is already in use. Choose a different OPENWEBUI_PORT."
+  fi
+fi
+
+# Traefik pre-flight (only when opt-in)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+  # shellcheck disable=SC1091
+  source "${SCRIPT_DIR}/../lib/helpers.sh"
+  if ! ensure_proxy_network; then
+    error "Traefik proxy network '${PROXY_NETWORK}' not found or inaccessible."
+  fi
+  if [[ -z "$OPENWEBUI_DOMAIN" ]]; then
+    error "OPENWEBUI_DOMAIN must be set when OPENWEBUI_TRAEFIK=true."
+  fi
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CHECK FOR EXISTING STACK
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Checking for existing Open WebUI stack"
+
+COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yml"
+
+if [[ -f "$COMPOSE_FILE" ]]; then
+  warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
+  echo ""
+  info "${BOLD}IMPORTANT:${RESET} Your data in 'openwebui_data' volume will be PRESERVED."
+  info "However, resetting the stack may break references to old configurations."
+  read -rp "    Are you sure you want to re-create the stack? [y/N] " answer
+  if [[ "${answer,,}" == "y" ]]; then
+    info "Stopping and removing existing stack..."
+    cd "$PROJECT_DIR"
+    docker compose down 2>/dev/null || true
+    success "Old stack removed. Data volume preserved."
+  else
+    info "Keeping existing stack. Exiting."
+    exit 0
+  fi
+fi
+
+# Check if LM Studio is available (warning, not fatal)
+step "Checking LM Studio availability"
+
+if curl -s --connect-timeout 2 "http://localhost:${LM_STUDIO_PORT}/v1" &>/dev/null; then
+  success "LM Studio detected on port ${LM_STUDIO_PORT}."
+else
+  warn "LM Studio not responding on port ${LM_STUDIO_PORT}."
+  warn "Open WebUI will start but won't be able to connect to models until LM Studio is running."
+  warn "Start LM Studio with: lmstudio"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GENERATE SECRET KEY
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Generating secure secret key"
+
+if [[ -n "$WEBUI_SECRET_KEY" ]]; then
+  info "Using custom WEBUI_SECRET_KEY from environment variable."
+else
+  WEBUI_SECRET_KEY="$(openssl rand -hex 32)"
+  success "Generated new random secret key (first 8 chars: ${WEBUI_SECRET_KEY:0:8}...)."
+fi
+
+# Store secret in .env file for security (not in docker-compose.yml)
+ENV_FILE="${PROJECT_DIR}/.env"
+if [[ -f "$ENV_FILE" ]]; then
+  warn "Existing .env file found. Backing up to ${ENV_FILE}.bak"
+  cp "$ENV_FILE" "${ENV_FILE}.bak"
+fi
+
+# Write secret key to .env file (excluded from compose config output)
+cat > "$ENV_FILE" << EOF
+# Open WebUI Environment Variables
+# This file contains sensitive credentials - keep it secure!
+WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+EOF
+
+chmod 600 "$ENV_FILE"
+success "Secret key stored securely in .env file (mode: 600)."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CREATE PROJECT DIRECTORY
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Creating project directory at ${PROJECT_DIR}"
+
 mkdir -p "$PROJECT_DIR"
 cd "$PROJECT_DIR"
 
-# === 3. Create docker-compose.yml (Only Open WebUI, Connects to LM Studio) ===
+success "Directory ready."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GENERATE DOCKER COMPOSE FILE
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Generating ${COMPOSE_FILE}"
+
+# Build compose file using single template approach
 cat > docker-compose.yml << EOF
+# Open WebUI Docker Compose Configuration
+# Generated: $(date -Iseconds)
+# Note: Sensitive variables are loaded from .env file (see WEBUI_SECRET_KEY)
+
+networks:
+  openwebui:
+    external: false
+EOF
+
+# Add Traefik proxy network if enabled
+if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+  cat >> docker-compose.yml << EOF
+  ${PROXY_NETWORK}:
+    external: true
+EOF
+fi
+
+cat >> docker-compose.yml << 'EOF'
+
 services:
   openwebui:
     image: ghcr.io/open-webui/open-webui:main
     container_name: openwebui
     restart: unless-stopped
+EOF
+
+# Add ports section for direct mode (not Traefik)
+if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
+  cat >> docker-compose.yml << EOF
     ports:
-      - "$OPENWEBUI_PORT:8080"
+      - "${OPENWEBUI_PORT}:8080"
+EOF
+fi
+
+cat >> docker-compose.yml << EOF
     environment:
       # Connect to your LM Studio API
-      - OLLAMA_BASE_URL=http://localhost:$LM_STUDIO_PORT/v1
+      - OLLAMA_BASE_URL=http://localhost:${LM_STUDIO_PORT}/v1
       - WEBUI_HOST=0.0.0.0
       - WEBUI_PORT=8080
-      - WEBUI_SECRET_KEY=your-very-secret-key-change-this-in-prod  # 🔐 Change in production!
-      - DEBUG=true
+      # Secret key loaded from .env file (not exposed in compose config)
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+EOF
+
+# Add Traefik labels if enabled
+if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+  cat >> docker-compose.yml << EOF
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK}"
+      - "traefik.http.routers.openwebui.rule=Host(\`${OPENWEBUI_DOMAIN}\`)"
+      - "traefik.http.routers.openwebui.entrypoints=websecure"
+      - "traefik.http.routers.openwebui.tls.certresolver=letsencrypt"
+      - "traefik.http.services.openwebui.loadbalancer.server.port=8080"
+EOF
+fi
+
+cat >> docker-compose.yml << 'EOF'
+    networks:
+      - openwebui
+EOF
+
+# Add Traefik proxy network to container if enabled
+if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+  cat >> docker-compose.yml << EOF
+      - ${PROXY_NETWORK}
+EOF
+fi
+
+cat >> docker-compose.yml << 'EOF'
     volumes:
       - openwebui_data:/app/backend/data
-      # - ./models:/app/models  # Optional: Mount GGUF models for local use
-    # No depends_on needed — Open WebUI connects to external LM Studio
 
 volumes:
   openwebui_data:
 EOF
 
-echo "✅ docker-compose.yml created. Connected to LM Studio at http://localhost:$LM_STUDIO_PORT/v1."
+success "docker-compose.yml created."
 
-# === 4. Create Start Script (One-Click) ===
+# ─────────────────────────────────────────────────────────────────────────────
+# CREATE START SCRIPT
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Creating start script"
+
 cat > start_openwebui.sh << EOF
 #!/bin/bash
-cd "$HOME/open-webui"
+cd "\$PROJECT_DIR"
+
+# Load environment variables from .env file if it exists
+if [[ -f ".env" ]]; then
+  export \$(grep -v '^#' .env | xargs)
+fi
 
 docker compose up -d
-echo "🚀 Open WebUI is now running at http://localhost:$OPENWEBUI_PORT"
-echo "🔗 Connected to LM Studio API at http://localhost:$LM_STUDIO_PORT/v1"
 EOF
 
 chmod +x start_openwebui.sh
 
-# === 5. Start Services ===
-echo "🚀 Starting Open WebUI..."
+success "start_openwebui.sh created."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PULL IMAGES
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Pulling Docker images"
+
+docker compose pull
+
+success "Images pulled."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# START THE STACK
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Starting Open WebUI stack (detached)"
+
 docker compose up -d
 
-sleep 10 # Wait for service to initialize
+success "Stack started."
 
-if docker ps | grep openwebui > /dev/null; then
-    echo "✅ Open WebUI is running and connected to LM Studio!"
+# ─────────────────────────────────────────────────────────────────────────────
+# WAIT FOR OPENWEBUI TO BECOME AVAILABLE
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Waiting for Open WebUI to respond"
+
+MAX_WAIT=120
+INTERVAL=5
+ELAPSED=0
+READY=false
+
+if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+  # Traefik mode: skip direct health check (TLS via domain)
+  info "Traefik mode: skipping direct health check (TLS access at https://${OPENWEBUI_DOMAIN})"
+  info "Container will be accessible once DNS resolves and TLS is provisioned"
+  READY=true
 else
-    echo "❌ Failed to start. Check logs with: docker compose logs"
-    exit 1
+  # Direct mode: check localhost:port
+  ACCESS_URL="http://localhost:${OPENWEBUI_PORT}"
+  
+  while [[ $ELAPSED -lt $MAX_WAIT ]]; do
+    if curl -s -o /dev/null -w "%{http_code}" "$ACCESS_URL" | grep -qE "^(200|302|303)"; then
+      READY=true
+      break
+    fi
+    echo -ne "\r    Waited ${ELAPSED}s / ${MAX_WAIT}s ..."
+    sleep $INTERVAL
+    ELAPSED=$((ELAPSED + INTERVAL))
+  done
+  
+  echo ""
 fi
 
-# === 6. Final Instructions ===
-echo ""
-echo "🎉 SUCCESS! Open WebUI installed successfully."
-echo ""
-echo "🔹 Access the UI at: http://localhost:$OPENWEBUI_PORT"
-echo ""
-echo "🔗 Connected to LM Studio API at: http://localhost:$LM_STUDIO_PORT/v1"
-echo ""
-echo "🔧 To manage your instance:"
-echo "   - Start:  ./start_openwebui.sh"
-echo "   - Stop:   docker compose down"
-echo "   - Logs:   docker compose logs -f"
-echo ""
-echo "🔐 IMPORTANT: Change WEBUI_SECRET_KEY and admin password in docker-compose.yml!"
-echo "🛠️  Tool Calling & MCP Support:"
-echo "   - Enable function calling in Open WebUI prompt via JSON schema."
-echo "   - Set custom endpoints under Settings > API for MCP servers or proxies."
-echo ""
-echo "💡 Tip: LM Studio must be running before starting Open WebUI. Start it with 'lmstudio' command from terminal."
+if [[ "$READY" == "true" ]]; then
+  success "Open WebUI is up and responding!"
+else
+  warn "Open WebUI did not respond within ${MAX_WAIT}s."
+  warn "It may still be starting. Check logs with:"
+  warn "  docker compose logs -f"
+fi
 
-# Start openwebui
-echo "Starting via start_openwebui.sh now ..."
-./start_openwebui.sh
+# Disable cleanup trap on successful completion
+trap - EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SUMMARY
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo ""
+echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+echo -e "${GREEN}${BOLD}  Open WebUI setup complete!${RESET}"
+echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+echo ""
+
+if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+  echo -e "  ${BOLD}Web UI (Traefik)${RESET}   https://${OPENWEBUI_DOMAIN}"
+  echo -e "  ${BOLD}TLS${RESET}                Enabled via Let's Encrypt"
+else
+  echo -e "  ${BOLD}Web UI${RESET}             http://localhost:${OPENWEBUI_PORT}"
+fi
+
+echo ""
+echo -e "  ${BOLD}LM Studio API${RESET}      http://localhost:${LM_STUDIO_PORT}/v1"
+echo -e "  ${BOLD}Data directory${RESET}     Persistent volume (openwebui_data)"
+echo -e "  ${BOLD}Compose file${RESET}       ${COMPOSE_FILE}"
+echo -e "  ${BOLD}Environment file${RESET}   ${PROJECT_DIR}/.env"
+
+echo ""
+echo -e "${YELLOW}  First-time setup:${RESET}"
+echo -e "  Open the Web UI and create your admin account."
+echo -e "  The secret key has been auto-generated and stored in .env file."
+
+if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
+  echo ""
+  echo -e "${YELLOW}  Note:${RESET}"
+  echo -e "  - WEBUI_SECRET_KEY is securely generated and stored in .env file (not docker-compose.yml)"
+  echo -e "  - To use a custom key, set WEBUI_SECRET_KEY env var before running this script"
+fi
+
+echo ""
+echo -e "${BOLD}Useful commands:${RESET}"
+
+if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+  echo -e "  ${CYAN}# Traefik-specific debug commands${RESET}"
+  echo -e "  Check access logs:  docker logs traefik | grep \${OPENWEBUI_DOMAIN}"
+  echo -e "  Verify DNS       :  dig \${OPENWEBUI_DOMAIN}"
+  echo ""
+fi
+
+echo -e "  Start:        ./start_openwebui.sh"
+echo -e "  Stop:         docker compose down"
+echo -e "  Restart:      docker compose restart"
+echo -e "  Follow logs:  docker compose logs -f"
+echo -e "  Shell into:   docker exec -it openwebui bash"
+
+if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
+  echo ""
+  echo -e "${BOLD}🔐 Security Notice:${RESET}"
+  echo -e "  Your WEBUI_SECRET_KEY is stored in .env file (mode: 600)."
+  echo -e "  Do not share this file or expose it publicly without TLS protection."
+fi
+
+echo ""
+info "LM Studio must be running before starting Open WebUI. Start it with 'lmstudio' command from terminal."
