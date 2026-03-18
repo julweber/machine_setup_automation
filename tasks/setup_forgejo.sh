@@ -206,9 +206,20 @@ fi
 
 # ── Server: ports (always expose HTTP and SSH) ────────────────────────────────
 SECTION_SERVER_PORTS="    ports:"
+# Add port binding for local access
 SECTION_SERVER_PORTS+="
-      - \"${HTTP_PORT}:3000\"  # Local access via http://localhost:${HTTP_PORT} or http://${HOST_IP}:${HTTP_PORT}"
-SECTION_SERVER_PORTS+="
+      - \"${HTTP_PORT}:3000\"  # Local access via http://localhost:${HTTP_PORT} or http://${HOST_IP:-localhost}:${HTTP_PORT}"
+# Get host IP (fallback to localhost if unavailable) and add second binding for network access
+FALLBACK_IP=$(ip route | grep default | awk '{print \$2}' 2>/dev/null || echo "")
+if [[ -z "${HOST_IP:-}" ]]; then
+  HOST_IP="${FALLBACK_IP:-localhost}"
+fi
+# Only add network binding if we got a valid non-localhost IP
+NETWORK_BIND=""
+if [[ -n "$HOST_IP" && "$HOST_IP" != "localhost" ]]; then
+  NETWORK_BIND="\n      - \"${HOST_IP}${HTTP_PORT}:3000\"  # Network access for your local subnet (replace ${HOST_IP} with actual host IP if needed)"
+fi
+SECTION_SERVER_PORTS+="${NETWORK_BIND}
       - \"${SSH_PORT}:22\""
 
 # ── Server: Traefik labels ────────────────────────────────────────────────────
