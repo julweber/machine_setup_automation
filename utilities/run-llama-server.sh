@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Generalized llama-server launcher
-# Usage: ./run-llama-server.sh [--list-models] [llama-server args...]
+# Usage: ./run-llama-server.sh [llama-server args...]
 
 set -e
 
@@ -89,7 +89,7 @@ fi
 if [[ -z "${arg_map[--model]}" ]]; then
     echo "Error: No model specified."
     echo ""
-    echo "Usage: ./run-llama-server.sh [--list-models] [llama-server args...]"
+    echo "Usage: ./run-llama-server.sh [llama-server args...]"
     echo "       ./run-llama-server.sh --model /path/to/model.gguf [args...]"
     exit 1
 fi
