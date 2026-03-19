@@ -50,19 +50,26 @@ SHARE_PATH="$BASE_SHARE_PATH/shared"
 SAMBA_USER="sambauser"
 DEVELOPER_GROUP_NAME="devs"
 
-sudo mkdir -p "$BASE_SHARE_PATH"
-sudo mkdir -p "$SHARE_PATH"
+# Create developer group if it doesn't exist (idempotent)
+if ! getent group "$DEVELOPER_GROUP_NAME" >/dev/null 2>&1; then
+    sudo groupadd "$DEVELOPER_GROUP_NAME"
+fi
 
-sudo groupadd "$DEVELOPER_GROUP_NAME"
+# Create Samba user if it doesn't exist (idempotent)
+if ! id -u "$SAMBA_USER" >/dev/null 2>&1; then
+    sudo adduser --no-create-home --disabled-password --gecos "" "$SAMBA_USER"
+fi
+
+# Add users to developer group (idempotent - usermod handles existing membership gracefully)
+sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$SAMBA_USER"
+sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$USER"
+
+# Set ownership on directories (now that user exists!)
 sudo chown "$SAMBA_USER":devs "$BASE_SHARE_PATH"
 sudo chmod -R 770 "$BASE_SHARE_PATH"
 
 sudo chown "$SAMBA_USER":devs "$SHARE_PATH"
 sudo chmod -R 770 "$SHARE_PATH"
-
-sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$SAMBA_USER"
-sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$USER"
-newgrp devs
 
 
 

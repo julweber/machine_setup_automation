@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
 # Generalized llama-server launcher
 # Usage: ./run-llama-server.sh [llama-server args...]

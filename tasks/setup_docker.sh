@@ -81,15 +81,24 @@ sudo apt-get update
 echo "Installing Docker Engine..."
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
-# Verify installation
-echo "Testing Docker installation..."
-sudo docker run hello-world
-
 UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "24.04")
 echo "Docker installed successfully on Ubuntu $UBUNTU_VERSION"
 
-sudo groupadd docker
-sudo chown root:docker /var/run/docker.sock
+# Ensure docker group exists (idempotent)
+if getent group docker >/dev/null; then
+    echo "✓ docker group already exists"
+else
+    sudo groupadd docker
+fi
+sudo chown root:docker /var/run/docker.sock 2>/dev/null || true
 sudo usermod -aG docker "$USER"
-newgrp docker
+# newgrp requires interactive TTY, so handle gracefully in automated contexts
+if id -nG | grep -q docker; then
+    echo "✓ already in docker group"
+else
+    newgrp docker >/dev/null 2>&1 || true
+fi
+
+# Verify installation
+echo "Testing Docker installation..."
 docker run hello-world
