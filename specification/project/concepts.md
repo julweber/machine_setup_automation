@@ -3,7 +3,7 @@
 ## Key Entities
 
 ### Entrypoint
-A top-level Bash script in the repository root (`setup_server.sh`, `setup_dev_machine.sh`) that sources a selected subset of task scripts to provision a specific type of machine. Each entrypoint targets a different use case (headless server vs. desktop workstation).
+A top-level Bash script in the repository root (`setup-server.sh`, `setup-dev-machine.sh`) that sources a selected subset of task scripts to provision a specific type of machine. Each entrypoint targets a different use case (headless server vs. desktop workstation).
 
 ### Task Script
 A self-contained Bash script in `tasks/` that installs and configures a single component. Task scripts are sourced by entrypoints and execute within the same shell process, sharing environment variables. Every task script must be **idempotent**.

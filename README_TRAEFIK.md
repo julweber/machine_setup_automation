@@ -1,6 +1,6 @@
 # Traefik v3 Reverse Proxy Setup
 
-This guide documents the `setup_traefik.sh` script, which deploys a production-ready **Traefik v3** reverse proxy on Ubuntu with Docker Compose. It includes TLS via Let's Encrypt, security headers, rate limiting, and an optional protected dashboard.
+This guide documents the `setup-traefik.sh` script, which deploys a production-ready **Traefik v3** reverse proxy on Ubuntu with Docker Compose. It includes TLS via Let's Encrypt, security headers, rate limiting, and an optional protected dashboard.
 
 ## Table of Contents
 - [Features](#features)
@@ -46,13 +46,13 @@ Before running the setup script:
 
 ```bash
 # Basic setup with default domain and HTTP challenge
-ACME_EMAIL=your@email.com ./tasks/setup_traefik.sh
+ACME_EMAIL=your@email.com ./tasks/setup-traefik.sh
 
 # With dashboard enabled
-TRAEFIK_DASHBOARD=true ACME_EMAIL=your@email.com ./tasks/setup_traefik.sh
+TRAEFIK_DASHBOARD=true ACME_EMAIL=your@email.com ./tasks/setup-traefik.sh
 
 # Interactive mode (prompts for confirmation)
-./tasks/setup_traefik.sh --interactive
+./tasks/setup-traefik.sh --interactive
 ```
 
 After successful setup:
@@ -68,7 +68,7 @@ All options can be set as environment variables before running the script. Overr
 ```bash
 export TRAEFIK_DOMAIN="traefik.example.com"
 export ACME_EMAIL="admin@example.com"
-./tasks/setup_traefik.sh
+./tasks/setup-traefik.sh
 ```
 
 ### Environment Variables
@@ -104,7 +104,7 @@ When using `--interactive`, the script will:
 ### 1. Basic Setup with HTTP Challenge
 
 ```bash
-ACME_EMAIL=admin@denkfabrik.space ./tasks/setup_traefik.sh
+ACME_EMAIL=admin@denkfabrik.space ./tasks/setup-traefik.sh
 ```
 
 This creates a Traefik instance that:
@@ -120,7 +120,7 @@ export ACME_EMAIL=admin@example.com
 export DNS_PROVIDER=cloudflare
 export CF_DNS_API_TOKEN="your_cloudflare_api_token_here"
 export TRAEFIK_DASHBOARD=true
-./tasks/setup_traefik.sh --interactive
+./tasks/setup-traefik.sh --interactive
 ```
 
 This configures:
@@ -131,7 +131,7 @@ This configures:
 ### 3. Staging Environment for Testing
 
 ```bash
-ACME_EMAIL=test@example.com ACME_STAGING=true ./tasks/setup_traefik.sh
+ACME_EMAIL=test@example.com ACME_STAGING=true ./tasks/setup-traefik.sh
 ```
 
 Uses Let's Encrypt staging server (produces untrusted certificates). Useful for testing without rate limit concerns.
@@ -140,7 +140,7 @@ Uses Let's Encrypt staging server (produces untrusted certificates). Useful for 
 
 ```bash
 HTTP_PORT=8080 HTTPS_PORT=8443 PROXY_NETWORK=myproxy \
-ACME_EMAIL=admin@example.com ./tasks/setup_traefik.sh
+ACME_EMAIL=admin@example.com ./tasks/setup-traefik.sh
 ```
 
 Changes entry point ports to 8080/8443 and uses `myproxy` as the network name.
@@ -307,7 +307,7 @@ docker compose -f /opt/traefik/docker-compose.yml logs --tail=50 traefik
 Edit `TRAEFIK_HOME/.env` or set environment variables before running:
 
 ```bash
-HTTP_PORT=8080 HTTPS_PORT=8443 ./tasks/setup_traefik.sh
+HTTP_PORT=8080 HTTPS_PORT=8443 ./tasks/setup-traefik.sh
 ```
 
 Then restart Traefik:
@@ -459,7 +459,7 @@ rm -rf /opt/traefik
 ### Regenerate Passwords
 
 ```bash
-TRAEFIK_ADMIN_USER=newadmin TRAEFIK_ADMIN_PASS=newpassword ./tasks/setup_traefik.sh
+TRAEFIK_ADMIN_USER=newadmin TRAEFIK_ADMIN_PASS=newpassword ./tasks/setup-traefik.sh
 ```
 
 ---

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# Script: setup_comfy.sh
+# Script: setup-comfy.sh
 # Description: Automated setup and installation of ComfyUI with ROCm support
 #
 # This script installs ComfyUI (a powerful and modular stable diffusion GUI) 

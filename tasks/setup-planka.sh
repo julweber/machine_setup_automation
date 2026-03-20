@@ -45,13 +45,13 @@
 #   - ${PLANKA_HOME}/postgres/          - PostgreSQL data directory
 #
 # USAGE:
-#   sudo ./setup_planka.sh
+#   sudo ./setup-planka.sh
 #
 #   # Or with custom configuration:
-#   sudo HTTP_PORT=8080 BASE_URL=http://planka.example.com ./setup_planka.sh
+#   sudo HTTP_PORT=8080 BASE_URL=http://planka.example.com ./setup-planka.sh
 #
 #   # With pre-set admin credentials (non-interactive):
-#   sudo ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=s3cur3 ./setup_planka.sh
+#   sudo ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=s3cur3 ./setup-planka.sh
 #
 # REFERENCE:
 #   https://docs.planka.cloud/docs/installation/docker/production-version
@@ -111,7 +111,7 @@ if [[ "$EUID" -ne 0 ]]; then
 fi
 
 if ! command -v docker &>/dev/null; then
-  error "Docker is not installed or not in PATH. Run setup_docker.sh first."
+  error "Docker is not installed or not in PATH. Run setup-docker.sh first."
 fi
 
 if ! docker info &>/dev/null; then

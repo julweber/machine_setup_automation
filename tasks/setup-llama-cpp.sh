@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # =============================================================================
-# setup_llama_cpp.sh
+# setup-llama-cpp.sh
 # Installs llama.cpp on Ubuntu 24.04 with auto or manual GPU backend selection.
 # Supports: NVIDIA (CUDA) | AMD (Vulkan) | CPU fallback
 #
@@ -8,13 +8,13 @@
 # on the system (PATH, default install dir, or common system paths).
 #
 # Usage:
-#   ./install_llama_cpp.sh              # auto-detect GPU, skip if installed
-#   ./install_llama_cpp.sh --nvidia     # force NVIDIA/CUDA
-#   ./install_llama_cpp.sh --amd        # force AMD/Vulkan
-#   ./install_llama_cpp.sh --cpu        # CPU only
-#   ./install_llama_cpp.sh --check      # check installation status and exit
-#   ./install_llama_cpp.sh --force      # reinstall even if already present
-#   ./install_llama_cpp.sh --help       # show help
+#   ./setup-llama-cpp.sh              # auto-detect GPU, skip if installed
+#   ./setup-llama-cpp.sh --nvidia     # force NVIDIA/CUDA
+#   ./setup-llama-cpp.sh --amd        # force AMD/Vulkan
+#   ./setup-llama-cpp.sh --cpu        # CPU only
+#   ./setup-llama-cpp.sh --check      # check installation status and exit
+#   ./setup-llama-cpp.sh --force      # reinstall even if already present
+#   ./setup-llama-cpp.sh --help       # show help
 # =============================================================================
 
 set -euo pipefail

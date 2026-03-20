@@ -35,9 +35,9 @@
 #   - Standard bash utilities (cat, chmod, mv)
 #
 # USAGE:
-#   ./setup_lm_studio.sh
-#   LM_STUDIO_VERSION=0.4.5-2 ./setup_lm_studio.sh
-#   INSTALL_LLMSTER_ENABLED=false ./setup_lm_studio.sh
+#   ./setup-lm-studio.sh
+#   LM_STUDIO_VERSION=0.4.5-2 ./setup-lm-studio.sh
+#   INSTALL_LLMSTER_ENABLED=false ./setup-lm-studio.sh
 #
 # ============================================================================
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 ################################################################################
-# Script: setup_pi.sh
+# Script: setup-pi.sh
 # Description: Installs and configures the Pi coding agent environment
 #
 # This script sets up the Pi coding agent (by Mario Zechner) which is an AI

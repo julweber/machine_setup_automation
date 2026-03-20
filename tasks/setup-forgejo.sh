@@ -38,10 +38,10 @@
 #   - ${FORGEJO_HOME}/postgres/           - PostgreSQL data (if DB_TYPE=postgres)
 #
 # USAGE:
-#   sudo ./setup_forgejo.sh
+#   sudo ./setup-forgejo.sh
 #   
 #   # Or with custom configuration:
-#   FORGEJO_HOME=/opt/forgejo HTTP_PORT=3000 sudo ./setup_forgejo.sh
+#   FORGEJO_HOME=/opt/forgejo HTTP_PORT=3000 sudo ./setup-forgejo.sh
 #
 # REFERENCE:
 #   https://forgejo.org/docs/latest/admin/installation/docker/
@@ -100,7 +100,7 @@ step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
 step "Running pre-flight checks"
 
 if ! command -v docker &>/dev/null; then
-  error "Docker is not installed or not in PATH. Run setup_docker.sh first."
+  error "Docker is not installed or not in PATH. Run setup-docker.sh first."
 fi
 
 if ! docker info &>/dev/null; then

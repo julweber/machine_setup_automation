@@ -29,7 +29,7 @@
 #   - systemctl (systemd)
 #
 # USAGE:
-#   SSHD_PORT=2224 ./setup_sshd.sh
+#   SSHD_PORT=2224 ./setup-sshd.sh
 #
 set -eu
 

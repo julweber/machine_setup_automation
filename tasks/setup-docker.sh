@@ -38,7 +38,7 @@
 #   - UBUNTU_VERSION: Detected Ubuntu version for logging
 #
 # USAGE:
-#   ./setup_docker.sh
+#   ./setup-docker.sh
 #
 # NOTE:
 #   After running, you may need to log out and back in for group changes

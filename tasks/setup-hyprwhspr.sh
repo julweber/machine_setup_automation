@@ -40,9 +40,9 @@
 #   - Commands: apt, git, wget, python3, pip
 #
 # USAGE:
-#   ./tasks/setup_hyprwhspr.sh
-#   HYPRWHSPR_BACKEND=cpu HYPRWHSPR_WAYBAR=false ./tasks/setup_hyprwhspr.sh
-#   HYPRWHSPR_SKIP_DEPS=true ./tasks/setup_hyprwhspr.sh
+#   ./tasks/setup-hyprwhspr.sh
+#   HYPRWHSPR_BACKEND=cpu HYPRWHSPR_WAYBAR=false ./tasks/setup-hyprwhspr.sh
+#   HYPRWHSPR_SKIP_DEPS=true ./tasks/setup-hyprwhspr.sh
 #
 # NOTES:
 #   - Log out and back in after first install for group permissions.

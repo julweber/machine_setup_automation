@@ -45,13 +45,13 @@
 #   - Running Excalidraw container with auto-restart policy
 #
 # USAGE:
-#   sudo ./setup_excalidraw.sh
+#   sudo ./setup-excalidraw.sh
 #   
 #   # Or with custom configuration:
-#   HOST_PORT=8080 sudo ./setup_excalidraw.sh
+#   HOST_PORT=8080 sudo ./setup-excalidraw.sh
 #
 #   # With Traefik integration:
-#   EXCALIDRAW_TRAEFIK=true EXCALIDRAW_DOMAIN=whiteboard.example.com sudo ./setup_excalidraw.sh
+#   EXCALIDRAW_TRAEFIK=true EXCALIDRAW_DOMAIN=whiteboard.example.com sudo ./setup-excalidraw.sh
 #
 # =============================================================================
 
@@ -93,7 +93,7 @@ trap 'info "Setup failed. Check container state with: docker ps -a"' ERR
 step "Running pre-flight checks"
 
 if ! command -v docker &>/dev/null; then
-  error "Docker is not installed or not in PATH. Run setup_docker.sh first."
+  error "Docker is not installed or not in PATH. Run setup-docker.sh first."
 fi
 
 if ! docker info &>/dev/null; then

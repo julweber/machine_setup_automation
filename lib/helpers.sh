@@ -62,7 +62,7 @@ if ! declare -F ensure_proxy_network > /dev/null 2>&1; then
       success "Docker network '${network}' exists."
     else
       echo -e "${RED}[ERROR]${RESET} Docker network '${network}' not found." >&2
-      echo -e "${RED}[ERROR]${RESET} Please run setup_traefik.sh first to create it." >&2
+      echo -e "${RED}[ERROR]${RESET} Please run setup-traefik.sh first to create it." >&2
       exit 1
     fi
   }

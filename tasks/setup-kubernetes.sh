@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ################################################################################
-# Script: setup_kubernetes.sh
+# Script: setup-kubernetes.sh
 # Description: Automates the installation and setup of a Kubernetes environment
 #              using K3s (lightweight Kubernetes distribution) and K9s (terminal
 #              UI for Kubernetes cluster management).
@@ -27,8 +27,8 @@
 #   - K9s CLI installed system-wide
 #
 # Usage:
-#   ./setup_kubernetes.sh
-#   K9S_VERSION=0.51.0 ./setup_kubernetes.sh  # Use specific K9s version
+#   ./setup-kubernetes.sh
+#   K9S_VERSION=0.51.0 ./setup-kubernetes.sh  # Use specific K9s version
 ################################################################################
 set -eu
 

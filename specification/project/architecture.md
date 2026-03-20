@@ -10,17 +10,17 @@
 
 ```text
 repository root
-├── setup_server.sh          # Entrypoint: headless/cloud server
-├── setup_dev_machine.sh     # Entrypoint: developer workstation
+├── setup-server.sh          # Entrypoint: headless/cloud server
+├── setup-dev-machine.sh     # Entrypoint: developer workstation
 ├── tasks/                   # Task scripts (one per component)
-│   ├── setup_basics.sh
-│   ├── setup_sshd.sh
-│   ├── setup_docker.sh
-│   ├── setup_lm_studio.sh
-│   ├── configure_firewall.sh
+│   ├── setup-basics.sh
+│   ├── setup-sshd.sh
+│   ├── setup-docker.sh
+│   ├── setup-lm-studio.sh
+│   ├── configure-firewall.sh
 │   └── ...
 └── utilities/               # Standalone helper scripts
-    └── ssh_port_forward.sh
+    └── ssh-port-forward.sh
 ```
 
 The architecture follows a simple **linear sourcing model**:
@@ -67,7 +67,7 @@ The repository is cloned directly onto the target machine and executed locally:
 ```bash
 git clone <repo-url>
 cd machine_setup_automation
-./setup_server.sh   # or ./setup_dev_machine.sh
+./setup-server.sh   # or ./setup-dev-machine.sh
 ```
 
 There is no remote execution, CI/CD pipeline, or container wrapping the scripts themselves.

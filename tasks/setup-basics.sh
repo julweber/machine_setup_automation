@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 ################################################################################
-# Script: setup_basics.sh
+# Script: setup-basics.sh
 # Description: Installs essential system packages and tools for development
 #              environment setup on Debian/Ubuntu-based systems.
 #

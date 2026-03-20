@@ -45,13 +45,13 @@
 #   - Persistent data volume: openwebui_data
 #
 # USAGE:
-#   ./setup_openwebui.sh
+#   ./setup-openwebui.sh
 #   
 #   # Or with custom ports:
-#   OPENWEBUI_PORT=8080 LM_STUDIO_PORT=5000 ./setup_openwebui.sh
+#   OPENWEBUI_PORT=8080 LM_STUDIO_PORT=5000 ./setup-openwebui.sh
 #   
 #   # With Traefik integration:
-#   OPENWEBUI_TRAEFIK=true OPENWEBUI_DOMAIN=openwebui.example.com ./setup_openwebui.sh
+#   OPENWEBUI_TRAEFIK=true OPENWEBUI_DOMAIN=openwebui.example.com ./setup-openwebui.sh
 #
 # REFERENCE:
 #   https://openwebui.com/docs/
@@ -114,7 +114,7 @@ step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
 step "Running pre-flight checks"
 
 if ! command -v docker &>/dev/null; then
-  error "Docker is not installed or not in PATH. Run setup_docker.sh first."
+  error "Docker is not installed or not in PATH. Run setup-docker.sh first."
 fi
 
 if ! docker info &>/dev/null; then

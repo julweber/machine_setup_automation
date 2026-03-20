@@ -27,8 +27,8 @@
 #   - Standard bash utilities (cat, chmod, mv)
 #
 # USAGE:
-#   ./setup_whispering.sh
-#   WHISPERING_VERSION=7.6.0 ./setup_whispering.sh
+#   ./setup-whispering.sh
+#   WHISPERING_VERSION=7.6.0 ./setup-whispering.sh
 #
 # ============================================================================
 

@@ -3,7 +3,7 @@
 set -eu
 
 ################################################################################
-# SCRIPT: setup_ssh_tunnel_user.sh
+# SCRIPT: setup-ssh-tunnel-user.sh
 ################################################################################
 #
 # DESCRIPTION:
@@ -36,10 +36,10 @@ set -eu
 #
 # USAGE:
 #   Source the script with environment variables:
-#     RESTRICTED_USER="tunneluser" source tasks/setup_ssh_tunnel_user.sh
+#     RESTRICTED_USER="tunneluser" source tasks/setup-ssh-tunnel-user.sh
 #
 #   Or run directly (will use defaults):
-#     bash tasks/setup_ssh_tunnel_user.sh
+#     bash tasks/setup-ssh-tunnel-user.sh
 #
 # ENVIRONMENT VARIABLES:
 #   RESTRICTED_USER      - Username to create (required, default: tunneluser)
@@ -83,10 +83,10 @@ set -eu
 #   Then access LM Studio at http://localhost:1235/v1/models on your local machine
 #
 #   # Create user with custom name and port
-#   RESTRICTED_USER="dbuser" SSHD_PORT=2225 source tasks/setup_ssh_tunnel_user.sh
+#   RESTRICTED_USER="dbuser" SSHD_PORT=2225 source tasks/setup-ssh-tunnel-user.sh
 #
 #   # Allow gateway ports for external access to tunnels
-#   ALLOW_GATEWAY_PORTS=yes source tasks/setup_ssh_tunnel_user.sh
+#   ALLOW_GATEWAY_PORTS=yes source tasks/setup-ssh-tunnel-user.sh
 #
 # IMPORTANT VARIABLES:
 #   RESTRICTED_USER      - Target username (validated for Linux compliance)
@@ -119,7 +119,7 @@ SSHD_CONFIG_FILE="/etc/ssh/sshd_config"
 # Validate username is provided
 if [[ -z "$RESTRICTED_USER" ]]; then
     echo "ERROR: RESTRICTED_USER environment variable must be set"
-    echo "Usage: RESTRICTED_USER=username source tasks/setup_ssh_tunnel_user.sh"
+    echo "Usage: RESTRICTED_USER=username source tasks/setup-ssh-tunnel-user.sh"
     exit 1
 fi
 
