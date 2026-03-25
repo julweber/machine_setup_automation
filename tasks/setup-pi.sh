@@ -30,8 +30,20 @@
 
 set -euo pipefail
 
+# Load NVM if not already loaded
+if ! command -v nvm &> /dev/null; then
+    export NVM_DIR="$HOME/.nvm"
+    [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
+fi
+
 echo "Installing latest node version..."
 nvm install node
 
 echo "Installing pi coding agent..."
 npm install -g @mariozechner/pi-coding-agent
+pi install npm:pi-subagents
+pi install npm:pi-mcp-adapter
+pi install npm:pi-markdown-preview
+pi install npm:pi-web-access
+pi install npm:pi-extmgr
+pi update
