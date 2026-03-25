@@ -84,7 +84,12 @@ sudo systemctl restart ssh
 
 # prepare .ssh dir
 mkdir -p "$HOME/.ssh"
-touch "$HOME/.ssh/authorized_keys"
+if [[ ! -f "$HOME/.ssh/authorized_keys" ]]; then
+    touch "$HOME/.ssh/authorized_keys"
+    echo "Created new authorized_keys file at $HOME/.ssh/authorized_keys"
+else
+    echo "Existing authorized_keys found at $HOME/.ssh/authorized_keys (preserved)"
+fi
 
 echo "Place your allowed public keys in: $HOME/.ssh/authorized_keys"
 echo "----- FINISHED SSH SETUP ------"
