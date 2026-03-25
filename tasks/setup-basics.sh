@@ -60,10 +60,27 @@ sudo apt install -y curl \
     npm
 
 # Python basics
-pip install uv --break-system-packages
+if ! command -v uv &> /dev/null; then
+    echo "uv not found, installing..."
+    pip install uv --break-system-packages
+else
+    echo "uv already installed"
+fi
 
 # nodejs nvm
-curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v$NVM_VERSION/install.sh" | bash
+NVM_DIR="$HOME/.nvm"
+if [ ! -s "$NVM_DIR/nvm.sh" ]; then
+    echo "nvm not found, installing..."
+    curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v$NVM_VERSION/install.sh" | bash
+fi
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+# Huggingface cli
+if ! command -v hf &> /dev/null; then
+    echo "huggingface-cli not found, installing..."
+    curl -LsSf https://hf.co/cli/install.sh | bash
+else
+    echo "huggingface-cli already installed"
+fi

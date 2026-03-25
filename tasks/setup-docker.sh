@@ -48,9 +48,33 @@
 
 set -eu
 
+# Parse arguments
+FORCE=false
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --force)
+            FORCE=true
+            shift
+            ;;
+        --help)
+            echo "Usage: $0 [OPTIONS]"
+            echo ""
+            echo "Options:"
+            echo "  --force   Skip the Docker installed check and force reinstallation"
+            echo "  --help    Show this help message"
+            exit 0
+            ;;
+        *)
+            echo "Unknown option: $1"
+            echo "Use --help for usage information"
+            exit 1
+            ;;
+    esac
+done
+
 #----------------- docker ----------------
-# Check if Docker is already installed
-if command -v docker &> /dev/null && docker --version &> /dev/null; then
+# Check if Docker is already installed (unless --force was used)
+if [ "$FORCE" = false ] && command -v docker &> /dev/null && docker --version &> /dev/null; then
     echo "Docker is already installed"
     exit 0
 fi
