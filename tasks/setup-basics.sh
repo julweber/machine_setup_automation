@@ -73,9 +73,24 @@ if [ ! -s "$NVM_DIR/nvm.sh" ]; then
     echo "nvm not found, installing..."
     curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v$NVM_VERSION/install.sh" | bash
 fi
+
+# Add NVM configuration to ~/.profile if not present
+PROFILE="$HOME/.profile"
+if [ ! -s "$PROFILE" ] || ! grep -q "export NVM_DIR=" "$PROFILE"; then
+    echo "Adding NVM configuration to ~/.profile..."
+    cat >> "$PROFILE" <<EOF
+
+# NVM configuration
 export NVM_DIR="$HOME/.nvm"
-[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+[ -s "\$NVM_DIR/nvm.sh" ] && \. "\$NVM_DIR/nvm.sh"  # This loads nvm
+[ -s "\$NVM_DIR/bash_completion" ] && \. "\$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+EOF
+else
+    echo "NVM configuration already present in ~/.profile"
+fi
+
+# Source .profile to load NVM into current session
+source "$HOME/.profile"
 
 # Huggingface cli
 if ! command -v hf &> /dev/null; then
