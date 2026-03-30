@@ -184,6 +184,12 @@ echo ""
 
 # ── Command reference ───────────────────────────────────────────────────────
 echo -e "${YELLOW}📖 Common commands:${RESET}"
+
+echo ""
+echo "   ${BOLD}hermes help:${RESET}"
+echo "     docker compose run -it hermes-gateway --help   # display help"
+echo ""
+
 echo ""
 echo "   ${BOLD}Gateway management:${RESET}"
 echo "     ./restart_hermes.sh              # Start/restart gateway"
