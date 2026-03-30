@@ -86,6 +86,7 @@ HERMES_TARGET_REPO_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY:-/srv/hermes}"
 
 # Hermes data directory (matches official pattern: ~/.hermes in Docker docs)
 HERMES_DATA_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY}/.hermes"
+HERMES_WORKSPACE_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY}/workspace"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # STEP 1: Check Docker installation
@@ -158,7 +159,7 @@ echo ""
 # ── Configuration instructions ──────────────────────────────────────────────
 echo -e "${YELLOW}📁 Your files:${RESET}"
 echo "   Data directory:   $HERMES_DATA_DIRECTORY"
-echo "   Repository:       $HERMES_TARGET_REPO_DIRECTORY"
+echo "   Workspace directory: $HERMES_WORKSPACE_DIRECTORY"
 echo "   Docker image:     nousresearch/hermes-agent:latest"
 echo ""
 

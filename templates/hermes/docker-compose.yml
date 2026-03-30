@@ -4,6 +4,7 @@ services:
     container_name: hermes-gateway
     volumes:
       - /srv/hermes/.hermes:/opt/data
+      - /srv/hermes/workspace:/root/workspace
     restart: unless-stopped
     command: ["gateway"]
 
@@ -14,6 +15,7 @@ services:
     container_name: hermes-chat
     volumes:
       - /srv/hermes/.hermes:/opt/data
+      - /srv/hermes/workspace:/root/workspace
     stdin_open: true
     tty: true
     command: ["chat"]
@@ -25,6 +27,7 @@ services:
     container_name: hermes-setup
     volumes:
       - /srv/hermes/.hermes:/opt/data
+      - /srv/hermes/workspace:/root/workspace
     stdin_open: true
     tty: true
     command: ["setup"]
