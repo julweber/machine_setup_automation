@@ -1,0 +1,30 @@
+services:
+  hermes-gateway:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-gateway
+    volumes:
+      - /srv/hermes/.hermes:/opt/data
+    restart: unless-stopped
+    command: ["gateway"]
+
+  hermes-chat:
+    image: nousresearch/hermes-agent:latest
+    profiles:
+      - manual
+    container_name: hermes-chat
+    volumes:
+      - /srv/hermes/.hermes:/opt/data
+    stdin_open: true
+    tty: true
+    command: ["chat"]
+
+  hermes-setup:
+    image: nousresearch/hermes-agent:latest
+    profiles:
+      - manual
+    container_name: hermes-setup
+    volumes:
+      - /srv/hermes/.hermes:/opt/data
+    stdin_open: true
+    tty: true
+    command: ["setup"]
