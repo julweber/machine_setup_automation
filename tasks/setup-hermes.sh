@@ -163,11 +163,7 @@ echo "   Docker image:     nousresearch/hermes-agent:latest"
 echo ""
 
 # ── Setup wizard instructions ───────────────────────────────────────────────
-echo -e "${YELLOW}⚙️  Step 1: Configure your API keys in .env:${RESET}"
-echo ""
-
-# ── Setup wizard instructions ───────────────────────────────────────────────
-echo -e "${YELLOW}🚀 Step 2: Run the setup wizard to configure Hermes:${RESET}"
+echo -e "${YELLOW}🚀 Step 1: Run the setup wizard to configure Hermes:${RESET}"
 echo ""
 echo "   cd $HERMES_TARGET_REPO_DIRECTORY"
 echo "   docker compose run -it hermes-setup"
@@ -175,7 +171,7 @@ echo "   # Press Ctrl+D when finished"
 echo ""
 
 # ── Start the gateway instructions ───────────────────────────────────────────
-echo -e "${YELLOW}💬 Step 3: Start chatting with Hermes:${RESET}"
+echo -e "${YELLOW}💬 Step 2: Start chatting with Hermes:${RESET}"
 echo ""
 echo "   Option A — Use the hermes-chat service:"
 echo "     cd $HERMES_TARGET_REPO_DIRECTORY"
@@ -216,6 +212,5 @@ echo -e "${CYAN}─────────────────────�
 echo ""
 echo -e "${YELLOW}ℹ️  Note:${RESET}"
 echo "   The gateway service is NOT yet running. You must first:"
-echo "   1. Edit .env with your API keys in $HERMES_TARGET_REPO_DIRECTORY/.env"
-echo "   2. Run 'docker compose up hermes-setup' to configure Hermes"
+echo "   Run 'docker compose run -it hermes-setup' to configure Hermes"
 echo ""
