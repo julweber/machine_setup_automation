@@ -1,73 +1,135 @@
 #!/usr/bin/env bash
-#
-# ============================================================================
+# =============================================================================
 # Script: setup-opencode-server.sh
-# ============================================================================
+# =============================================================================
 #
-# Description:
-#   Installs and configures the Opencode AI Coding Agent Server as a
-#   systemd service. This script handles installation via npm, creates
-#   a systemd service unit, and optionally configures firewall rules.
+# DESCRIPTION:
+#   Installs and configures the Opencode AI Coding Agent Server. Supports two
+#   deployment modes:
 #
-# Key Actions:
-#   1. Validates and displays configuration from environment variables
-#   2. Optionally generates a secure random password if requested
-#   3. Installs Node.js and npm if not already present
-#   4. Installs/updates opencode-ai globally via npm
-#   5. Creates systemd service file at /etc/systemd/system/opencode-agent.service
-#   6. Enables and starts the opencode-agent.service
-#   7. Configures UFW firewall rules to allow traffic on the configured port
-#   8. Tests the health endpoint and displays service status
+#   1. **Docker mode**: Uses Docker Compose for containerized deployment
+#      - With or without Traefik reverse proxy
+#      - Persistent data in /srv/opencode
+#      - Easy updates via docker compose pull/up
 #
-# Environment Variables:
+#   2. **Systemd/NPM mode**: Direct installation on host
+#      - npm global install of opencode-ai
+#      - systemd service management
+#      - Direct port binding (no reverse proxy)
+#
+# KEY ACTIONS:
+#   1. Validates configuration from environment variables
+#   2. Generates secure random password if not provided via env
+#   3. Installs Node.js and npm if not present (systemd mode only)
+#   4. Installs/updates opencode-ai globally via npm (systemd mode only)
+#   5. Creates Docker Compose stack OR systemd service based on MODE
+#   6. Optionally configures Traefik labels for reverse proxy routing
+#   7. Configures UFW firewall rules
+#   8. Tests the health endpoint and displays status
+#
+# ENVIRONMENT VARIABLES:
 #   OPENCODE_PORT                - Port for the server (default: 4096)
 #   OPENCODE_HOSTNAME            - Hostname to bind to (default: 0.0.0.0)
-#   OPENCODE_SERVER_USERNAME     - Username for authentication (default: opencode)
-#   OPENCODE_SERVER_PASSWORD     - Password for authentication (default: empty)
-#   OPENCODE_INSTALL_METHOD      - Installation method (default: npm)
-#   GENERATE_PASSWORD            - Auto-generate password if true (default: false)
+#   OPENCODE_SERVER_USERNAME     - Username for HTTP basic auth (default: "admin")
+#   OPENCODE_SERVER_PASSWORD     - Password for HTTP basic auth (auto-generated if empty)
 #
-# Dependencies:
+#   Docker Mode Variables:
+#   OPENCODE_DATA_DIR            - Data directory for persistence (default: /srv/opencode)
+#   USE_DOCKER                   - Enable Docker mode (true/false, default: false)
+#
+#   Traefik Integration Variables:
+#   OPENCODE_TRAEFIK             - Set to "true" to enable Traefik routing (default: false)
+#   OPENCODE_DOMAIN              - Domain for Traefik access (required when OPENCODE_TRAEFIK=true)
+#   PROXY_NETWORK                - Traefik's external Docker network name (default: proxy)
+#
+# AUTHENTICATION:
+#   OpenCode uses HTTP Basic Auth via environment variables:
+#   - OPENCODE_SERVER_USERNAME defaults to "admin"
+#   - OPENCODE_SERVER_PASSWORD is auto-generated if empty
+#   - See https://opencode.ai/docs/server/#authentication for details
+#
+# DEPENDENCIES:
+#   Docker mode:
+#   - sudo privileges required
+#   - Docker Engine + Docker Compose v2+ installed and running
+#   - Traefik instance with proxy network (when OPENCODE_TRAEFIK=true)
+#
+#   Systemd mode:
 #   - sudo privileges required
 #   - openssl (for password generation)
 #   - systemd (for service management)
 #   - ufw (optional, for firewall configuration)
 #   - curl (optional, for health check testing)
 #
-# Service Details:
-#   - Service Name: opencode-agent.service
-#   - Service File: /etc/systemd/system/opencode-agent.service
-#   - Runs as: Current user ($USER)
-#   - Auto-restart: Enabled with 5-second delay
+# OUTPUTS:
+#   Docker mode:
+#   - ${OPENCODE_DATA_DIR}/docker-compose.yml - Generated compose configuration
+#   - ${OPENCODE_DATA_DIR}/.env               - Environment variables including auth (secure)
 #
-# ============================================================================
-#
-set -eu
+#   Systemd mode:
+#   - /etc/systemd/system/opencode-agent.service
+# =============================================================================
 
-# === Configuration ===
-OPENCODE_PORT="${OPENCODE_PORT:-4096}"
-OPENCODE_HOSTNAME="${OPENCODE_HOSTNAME:-0.0.0.0}"
-OPENCODE_SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-opencode}"
-OPENCODE_SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
-OPENCODE_INSTALL_METHOD="${OPENCODE_INSTALL_METHOD:-npm}"
+set -euo pipefail
 
-CURRENT_USER="$USER"
-HOME_DIR="$HOME"
+# ─────────────────────────────────────────────────────────────────────────────
+# COLOURS & HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
 
-echo "Opencode Server Configuration:"
-echo "  OPENCODE_PORT=$OPENCODE_PORT"
-echo "  OPENCODE_HOSTNAME=$OPENCODE_HOSTNAME"
-echo "  OPENCODE_SERVER_USERNAME=$OPENCODE_SERVER_USERNAME"
-echo "  OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD:+*** (set)}"
-echo "  OPENCODE_INSTALL_METHOD=$OPENCODE_INSTALL_METHOD"
-echo "--------------------------------"
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
 
-# Generate password if GENERATE_PASSWORD is true and password is empty
-GENERATE_PASSWORD="${GENERATE_PASSWORD:-false}"
-if [[ "$GENERATE_PASSWORD" == "true" && -z "$OPENCODE_SERVER_PASSWORD" ]]; then
-    echo ""
-    echo "Generating secure random password..."
+info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
+success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
+warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
+error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+load_config() {
+    OPENCODE_PORT="${OPENCODE_PORT:-4096}"
+    OPENCODE_HOSTNAME="${OPENCODE_HOSTNAME:-0.0.0.0}"
+    OPENCODE_SERVER_USERNAME="${OPENCODE_SERVER_USERNAME:-admin}"
+    OPENCODE_SERVER_PASSWORD="${OPENCODE_SERVER_PASSWORD:-}"
+    USE_DOCKER="${USE_DOCKER:-false}"
+    DATA_DIR="${OPENCODE_DATA_DIR:-/srv/opencode}"
+    OPENCODE_TRAEFIK="${OPENCODE_TRAEFIK:-false}"
+    PROXY_NETWORK="${PROXY_NETWORK:-proxy}"
+    OPENCODE_DOMAIN="${OPENCODE_DOMAIN:-}"
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+}
+
+print_config() {
+    local mode
+    mode="$(if [[ "$USE_DOCKER" == "true" ]]; then echo "docker"; else echo "systemd"; fi)"
+
+    echo "Opencode Server Configuration:"
+    echo "  Mode:                     $mode"
+    echo "  OPENCODE_PORT:            $OPENCODE_PORT"
+    echo "  OPENCODE_HOSTNAME:        $OPENCODE_HOSTNAME"
+    echo "  OPENCODE_SERVER_USERNAME: $OPENCODE_SERVER_USERNAME"
+    echo "  OPENCODE_SERVER_PASSWORD: ${OPENCODE_SERVER_PASSWORD:+*** (set)}"
+    if [[ "$USE_DOCKER" == "true" ]]; then
+        echo "  DATA_DIR:                 $DATA_DIR"
+        if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+            echo "  OPENCODE_DOMAIN:          ${OPENCODE_DOMAIN:-(required for Traefik)}"
+            echo "  PROXY_NETWORK:            $PROXY_NETWORK"
+        fi
+    fi
+    echo "--------------------------------"
+}
+
+maybe_generate_password() {
+    if [[ -n "$OPENCODE_SERVER_PASSWORD" ]]; then
+        return
+    fi
+
+    step "Generating secure random password..."
     OPENCODE_SERVER_PASSWORD=$(openssl rand -base64 32)
+
     echo ""
     echo "=============================================="
     echo "IMPORTANT: Generated Opencode Server Password"
@@ -79,89 +141,590 @@ if [[ "$GENERATE_PASSWORD" == "true" && -z "$OPENCODE_SERVER_PASSWORD" ]]; then
     echo "Please save this password securely. It will not be displayed again."
     echo "You can set OPENCODE_SERVER_PASSWORD environment variable to reuse it."
     echo ""
-fi
+}
 
+# ─────────────────────────────────────────────────────────────────────────────
+# PRE-FLIGHT CHECKS
+# ─────────────────────────────────────────────────────────────────────────────
 
-echo "Installing/Updating Opencode Server..."
-if ! command -v npm &> /dev/null; then
-    echo "npm is not installed. Installing Node.js and npm..."
-    sudo apt update
-    sudo apt install -y nodejs npm
-fi
+preflight_docker() {
+    step "Running pre-flight checks (Docker mode)"
 
-echo "Installing opencode globally via npm..."
-sudo npm install -g opencode-ai
+    # shellcheck disable=SC1091
+    source "${SCRIPT_DIR}/../lib/helpers.sh"
 
-if ! opencode --version &> /dev/null; then
-    echo "Error: Opencode CLI installation failed verification."
-    exit 1
-fi
+    if ! command -v docker &>/dev/null; then
+        error "Docker is not installed or not in PATH. Run setup-docker.sh first."
+    fi
 
-echo "Opencode CLI installed/updated successfully."
+    if ! docker info &>/dev/null; then
+        error "Docker daemon is not running. Start it with: sudo systemctl start docker"
+    fi
 
-SERVICE_FILE="/etc/systemd/system/opencode-agent.service"
+    success "Docker $(docker --version | awk '{print $3}' | tr -d ',') detected and running."
 
-if [[ -f "$SERVICE_FILE" ]]; then
-    echo "Service file already exists at $SERVICE_FILE. Skipping creation."
-else
-    sudo bash -c "cat > $SERVICE_FILE" << EOF
+    if [[ -z "$OPENCODE_SERVER_PASSWORD" ]] && ! command -v openssl &>/dev/null; then
+        error "openssl is not installed. Required for generating secure password. Install it or set OPENCODE_SERVER_PASSWORD manually."
+    fi
+
+    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        _preflight_traefik
+    fi
+}
+
+_preflight_traefik() {
+    if ! ensure_proxy_network; then
+        warn "Traefik proxy network '${PROXY_NETWORK}' not found or inaccessible."
+        warn "If you want Traefik integration, run setup-traefik.sh first."
+        warn "Continuing in direct-access mode..."
+        OPENCODE_TRAEFIK="false"
+        return
+    fi
+
+    if [[ -z "$OPENCODE_DOMAIN" ]]; then
+        error "OPENCODE_DOMAIN must be set when OPENCODE_TRAEFIK=true (e.g., opencode.example.com)."
+    fi
+}
+
+preflight_systemd() {
+    step "Running pre-flight checks (systemd mode)"
+
+    if ! command -v sudo &>/dev/null; then
+        error "sudo is not installed."
+    fi
+
+    if [[ -z "$OPENCODE_SERVER_PASSWORD" ]] && ! command -v openssl &>/dev/null; then
+        warn "openssl not found. Generating password may fail, or set OPENCODE_SERVER_PASSWORD manually."
+    fi
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SHARED: INSTALL OPENCODE VIA NPM
+# ─────────────────────────────────────────────────────────────────────────────
+
+install_opencode_npm() {
+    step "Installing/Updating Opencode Server..."
+
+    if ! command -v npm &>/dev/null; then
+        info "npm is not installed. Installing Node.js and npm..."
+        sudo apt update
+        sudo apt install -y nodejs npm
+    fi
+
+    if command -v opencode &>/dev/null; then
+        info "Opencode CLI already installed at $(which opencode). Updating to latest version..."
+    else
+        info "Installing opencode globally via npm..."
+    fi
+
+    sudo npm install -g opencode-ai --force
+
+    if ! opencode --version &>/dev/null; then
+        warn "Opencode CLI installation verification failed, but continuing..."
+    fi
+
+    success "Opencode CLI installed/updated successfully."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOCKER MODE
+# ─────────────────────────────────────────────────────────────────────────────
+
+_generate_compose_file() {
+    local compose_file="$1"
+
+    sudo tee "$compose_file" > /dev/null << EOF
+# Opencode Server Docker Compose Configuration
+# Generated: $(date -Iseconds)
+
+networks:
+  opencode:
+    external: false
+EOF
+
+    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        sudo tee -a "$compose_file" > /dev/null << EOF
+  ${PROXY_NETWORK}:
+    external: true
+EOF
+    fi
+
+    sudo tee -a "$compose_file" > /dev/null << EOF
+
+services:
+  opencode:
+    image: ghcr.io/anomalyco/opencode:latest
+    container_name: opencode-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
+EOF
+
+    if [[ "$OPENCODE_TRAEFIK" != "true" ]]; then
+        sudo tee -a "$compose_file" > /dev/null << EOF
+    ports:
+      - "${OPENCODE_PORT}:4096"
+EOF
+    fi
+
+    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        sudo tee -a "$compose_file" > /dev/null << EOF
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK}"
+      - "traefik.http.routers.opencode.rule=Host(\`${OPENCODE_DOMAIN}\`)"
+      - "traefik.http.routers.opencode.entrypoints=websecure"
+      - "traefik.http.routers.opencode.tls=true"
+      - "traefik.http.routers.opencode.tls.certresolver=letsencrypt"
+      - "traefik.http.services.opencode.loadbalancer.server.port=4096"
+EOF
+    fi
+
+    sudo tee -a "$compose_file" > /dev/null << EOF
+    networks:
+      - opencode
+EOF
+
+    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        sudo tee -a "$compose_file" > /dev/null << EOF
+      - ${PROXY_NETWORK}
+EOF
+    fi
+
+    sudo tee -a "$compose_file" > /dev/null << EOF
+    volumes:
+      - opencode_data:/data
+
+volumes:
+  opencode_data:
+EOF
+}
+
+_generate_env_file() {
+    local env_file="${DATA_DIR}/.env"
+
+    if [[ -f "$env_file" ]]; then
+        warn "Existing .env file found. Backing up to ${env_file}.bak"
+        sudo cp "$env_file" "${env_file}.bak"
+    fi
+
+    sudo tee "$env_file" > /dev/null << EOF
+# Opencode Server Environment Variables
+# This file contains sensitive credentials - keep it secure!
+OPENCODE_SERVER_USERNAME=${OPENCODE_SERVER_USERNAME}
+OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD}
+EOF
+
+    sudo chmod 600 "$env_file"
+    success "Secrets stored securely in .env file (mode: 600)."
+}
+
+_generate_start_script() {
+    sudo tee "${DATA_DIR}/start_opencode.sh" > /dev/null << 'EOF'
+#!/bin/bash
+cd "$(dirname "$0")"
+sudo docker compose up -d
+EOF
+    sudo chmod +x "${DATA_DIR}/start_opencode.sh"
+    success "start_opencode.sh created."
+}
+
+_wait_for_opencode_docker() {
+    step "Waiting for Opencode to respond"
+
+    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        info "Traefik mode: skipping direct health check (TLS access at https://${OPENCODE_DOMAIN})"
+        info "Container will be accessible once DNS resolves and TLS is provisioned."
+        return 0
+    fi
+
+    local access_url="http://localhost:${OPENCODE_PORT}"
+    local max_wait=120 interval=5 elapsed=0
+
+    while [[ $elapsed -lt $max_wait ]]; do
+        if curl -s -o /dev/null -w "%{http_code}" "$access_url" | grep -qE "^(200|302|303|401)"; then
+            echo ""
+            success "Opencode is up and responding!"
+            return 0
+        fi
+        echo -ne "\r    Waited ${elapsed}s / ${max_wait}s ..."
+        sleep "$interval"
+        elapsed=$((elapsed + interval))
+    done
+
+    echo ""
+    warn "Opencode did not respond within ${max_wait}s."
+    warn "It may still be starting. Check logs with: docker compose logs -f"
+}
+
+_configure_ufw_docker() {
+    if ! command -v ufw &>/dev/null || [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        return
+    fi
+
+    step "Configuring UFW firewall"
+    if ! sudo ufw status | grep -qE "^$OPENCODE_PORT "; then
+        info "Adding firewall rule for port $OPENCODE_PORT..."
+        sudo ufw allow "$OPENCODE_PORT/tcp"
+        success "UFW rules updated."
+    fi
+}
+
+setup_docker() {
+    local compose_file="${DATA_DIR}/docker-compose.yml"
+
+    trap 'warn "Setup failed (exit code: $?)! Cleaning up..."; cd "$DATA_DIR" && sudo docker compose down --remove-orphans 2>/dev/null || true' EXIT
+
+    sudo mkdir -p "$DATA_DIR"
+
+    step "Generating ${compose_file}"
+    _generate_compose_file "$compose_file"
+    success "docker-compose.yml created."
+
+    step "Generating ${DATA_DIR}/.env"
+    _generate_env_file
+
+    step "Creating start script"
+    _generate_start_script
+
+    step "Pulling Docker images"
+    cd "$DATA_DIR"
+    sudo docker compose pull
+    success "Images pulled."
+
+    step "Starting Opencode stack (detached)"
+    sudo docker compose up -d
+    success "Stack started."
+
+    _wait_for_opencode_docker
+    _configure_ufw_docker
+
+    trap - EXIT
+}
+
+summary_docker() {
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+    echo -e "${GREEN}${BOLD}  Opencode Server (Docker) setup complete!${RESET}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+    echo ""
+
+    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        echo -e "  ${BOLD}Web UI (Traefik)${RESET}   https://${OPENCODE_DOMAIN}"
+        echo -e "  ${BOLD}TLS${RESET}                Enabled via Let's Encrypt"
+    else
+        echo -e "  ${BOLD}Web UI${RESET}             http://localhost:${OPENCODE_PORT}"
+    fi
+
+    echo ""
+    echo -e "  ${BOLD}Data directory${RESET}     Persistent volume (opencode_data)"
+    echo -e "  ${BOLD}Compose file${RESET}       ${DATA_DIR}/docker-compose.yml"
+    echo -e "  ${BOLD}Environment file${RESET}   ${DATA_DIR}/.env"
+
+    if [[ "$OPENCODE_TRAEFIK" != "true" ]]; then
+        echo ""
+        echo -e "${YELLOW}  Note:${RESET}"
+        echo -e "  - OPENCODE_SERVER_PASSWORD is stored in .env (not exposed in docker-compose.yml)"
+        echo -e "  - To use a custom password, set OPENCODE_SERVER_PASSWORD before running this script"
+    fi
+
+    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+        echo ""
+        echo -e "${BOLD}${CYAN}Traefik-specific commands:${RESET}"
+        echo -e "  Check access logs:  docker logs traefik | grep ${OPENCODE_DOMAIN}"
+        echo -e "  Verify DNS:         dig ${OPENCODE_DOMAIN}"
+    fi
+
+    echo ""
+    echo -e "${BOLD}Useful commands:${RESET}"
+    echo -e "  Start:        ./start_opencode.sh"
+    echo -e "  Stop:         docker compose down"
+    echo -e "  Restart:      docker compose restart"
+    echo -e "  Follow logs:  docker compose logs -f"
+    echo -e "  Shell into:   docker exec -it opencode-agent bash"
+
+    if [[ "$OPENCODE_TRAEFIK" != "true" ]]; then
+        echo ""
+        echo -e "${BOLD}Security Notice:${RESET}"
+        echo -e "  Your OPENCODE_SERVER_PASSWORD is stored in .env (mode: 600)."
+        echo -e "  Do not share this file or expose it without TLS protection."
+    fi
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SYSTEMD MODE
+# ─────────────────────────────────────────────────────────────────────────────
+
+_write_service_file() {
+    local service_file="/etc/systemd/system/opencode-agent.service"
+
+    if [[ -f "$service_file" ]]; then
+        info "Service file $service_file already exists. Skipping write."
+        return
+    fi
+
+    sudo tee "$service_file" > /dev/null << EOF
 [Unit]
 Description=Opencode AI Coding Agent Server
 After=network.target
 
 [Service]
 Type=simple
-User=$CURRENT_USER
+User=$USER
 Environment="OPENCODE_SERVER_USERNAME=$OPENCODE_SERVER_USERNAME"
 Environment="OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD"
-ExecStart=/usr/local/bin/opencode web --hostname 0.0.0.0 --port 4096
+ExecStart=/usr/local/bin/opencode serve --hostname ${OPENCODE_HOSTNAME} --port ${OPENCODE_PORT}
 Restart=always
 RestartSec=5
-WorkingDirectory=$HOME_DIR
+WorkingDirectory=$HOME
 
 [Install]
 WantedBy=multi-user.target
 EOF
+    success "Service file written to $service_file"
+}
 
-    echo "Service file created."
-fi
+_configure_ufw_systemd() {
+    if ! command -v ufw &>/dev/null; then
+        return
+    fi
 
-echo "Reloading systemd daemon..."
-sudo systemctl daemon-reload
-
-echo "Enabling opencode-agent.service..."
-sudo systemctl enable opencode-agent.service
-
-echo "Starting opencode-agent.service..."
-sudo systemctl start opencode-agent.service
-
-if command -v ufw &> /dev/null; then
+    step "Configuring UFW firewall (systemd mode)"
     if ! sudo ufw status | grep -qE "^$OPENCODE_PORT "; then
-        echo "Adding firewall rule for port $OPENCODE_PORT..."
-        sudo ufw allow "$OPENCODE_PORT"
+        info "Adding firewall rule for port $OPENCODE_PORT..."
         sudo ufw allow "$OPENCODE_PORT/tcp"
+        success "UFW rules updated."
     fi
-fi
+}
 
-echo ""
-echo "=== Opencode Server Installation Complete ==="
-echo "Service Status:"
-sudo systemctl status opencode-agent.service --no-pager | head -n 10
+_test_health_endpoint() {
+    if [[ "$OPENCODE_HOSTNAME" == "127.0.0.1" || "$OPENCODE_HOSTNAME" == "localhost" ]]; then
+        return
+    fi
 
-if [[ "$OPENCODE_HOSTNAME" != "127.0.0.1" && "$OPENCODE_HOSTNAME" != "localhost" ]]; then
-    echo ""
-    echo "Testing health endpoint..."
+    info "Testing health endpoint..."
     sleep 3
-    if command -v curl &> /dev/null; then
-        curl -s "http://$OPENCODE_HOSTNAME:$OPENCODE_PORT/global/health" || true
+    if command -v curl &>/dev/null; then
+        curl -s --user "${OPENCODE_SERVER_USERNAME}:${OPENCODE_SERVER_PASSWORD}" \
+            "http://$OPENCODE_HOSTNAME:$OPENCODE_PORT/global/health" || true
     fi
-fi
+}
 
-echo ""
-echo "Opencode server is running on $OPENCODE_HOSTNAME:$OPENCODE_PORT"
-echo "Username: $OPENCODE_SERVER_USERNAME"
-if [[ -n "$OPENCODE_SERVER_PASSWORD" ]]; then
-    echo "Password: *** (configured)"
-else
-    echo "ATTENTION: No password configured !!!"
-fi
+setup_systemd() {
+    step "Creating systemd service file"
+    _write_service_file
+
+    step "Reloading systemd daemon"
+    sudo systemctl daemon-reload
+    success "Systemd daemon reloaded."
+
+    step "Enabling opencode-agent.service"
+    sudo systemctl enable opencode-agent.service
+    success "Service enabled (will start on boot)."
+
+    step "Starting/restarting opencode-agent.service"
+    if sudo systemctl is-active --quiet opencode-agent.service; then
+        info "Service is running. Restarting to apply changes..."
+        sudo systemctl restart opencode-agent.service
+    else
+        info "Service not running. Starting..."
+        sudo systemctl start opencode-agent.service
+    fi
+    success "Opencode service started/restarted successfully."
+
+    _configure_ufw_systemd
+    _test_health_endpoint
+}
+
+summary_systemd() {
+    echo ""
+    echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+    echo -e "${GREEN}${BOLD}  Opencode Server (systemd) setup complete!${RESET}"
+    echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+    echo ""
+    echo -e "  ${BOLD}Web UI${RESET}   http://${OPENCODE_HOSTNAME}:${OPENCODE_PORT}"
+    echo ""
+    echo -e "${BOLD}${CYAN}Admin credentials:${RESET}"
+    echo -e "  Username: $OPENCODE_SERVER_USERNAME"
+    if [[ -n "$OPENCODE_SERVER_PASSWORD" ]]; then
+        echo -e "  Password: *** (configured)"
+    else
+        echo -e "  Password: *** (auto-generated on first run via env vars)"
+    fi
+
+    echo ""
+    echo -e "${BOLD}Useful commands:${RESET}"
+    echo -e "  Status:       sudo systemctl status opencode-agent"
+    echo -e "  Start:        sudo systemctl start opencode-agent"
+    echo -e "  Stop:         sudo systemctl stop opencode-agent"
+    echo -e "  Restart:      sudo systemctl restart opencode-agent"
+    echo -e "  Logs:         sudo journalctl -u opencode-agent -f"
+
+    echo ""
+    echo -e "${BOLD}Security Notice:${RESET}"
+    echo -e "  Environment variables are stored in the systemd service file."
+    echo -e "  View with: sudo systemctl cat opencode-agent"
+    echo ""
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# UNINSTALL
+# ─────────────────────────────────────────────────────────────────────────────
+
+uninstall_docker() {
+    step "Uninstalling Opencode Server (Docker mode)"
+
+    if [[ -f "${DATA_DIR}/docker-compose.yml" ]]; then
+        info "Stopping and removing Docker stack..."
+        cd "$DATA_DIR"
+        sudo docker compose down --remove-orphans
+        success "Docker stack removed."
+    else
+        warn "No docker-compose.yml found in ${DATA_DIR}. Skipping stack teardown."
+    fi
+
+    if [[ -d "$DATA_DIR" ]]; then
+        info "Removing data directory ${DATA_DIR}..."
+        sudo rm -rf "$DATA_DIR"
+        success "Data directory removed."
+    fi
+
+    if command -v ufw &>/dev/null && [[ "$OPENCODE_TRAEFIK" != "true" ]]; then
+        step "Removing UFW firewall rule for port ${OPENCODE_PORT}"
+        sudo ufw delete allow "$OPENCODE_PORT/tcp" 2>/dev/null || true
+        success "UFW rule removed."
+    fi
+
+    success "Opencode Server (Docker) uninstalled."
+}
+
+uninstall_systemd() {
+    local service_file="/etc/systemd/system/opencode-agent.service"
+
+    step "Uninstalling Opencode Server (systemd mode)"
+
+    if sudo systemctl is-active --quiet opencode-agent.service 2>/dev/null; then
+        info "Stopping opencode-agent.service..."
+        sudo systemctl stop opencode-agent.service
+        success "Service stopped."
+    fi
+
+    if sudo systemctl is-enabled --quiet opencode-agent.service 2>/dev/null; then
+        info "Disabling opencode-agent.service..."
+        sudo systemctl disable opencode-agent.service
+        success "Service disabled."
+    fi
+
+    if [[ -f "$service_file" ]]; then
+        info "Removing service file ${service_file}..."
+        sudo rm "$service_file"
+        sudo systemctl daemon-reload
+        success "Service file removed and daemon reloaded."
+    else
+        warn "Service file ${service_file} not found. Already removed?"
+    fi
+
+    if command -v ufw &>/dev/null; then
+        step "Removing UFW firewall rule for port ${OPENCODE_PORT}"
+        sudo ufw delete allow "$OPENCODE_PORT/tcp" 2>/dev/null || true
+        success "UFW rule removed."
+    fi
+
+    success "Opencode Server (systemd) uninstalled."
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MAIN
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+    cat << 'EOF'
+Usage: setup-opencode-server.sh [--help] [--uninstall]
+
+Installs and configures the Opencode AI Coding Agent Server.
+All configuration is provided via environment variables.
+
+GENERAL OPTIONS
+  OPENCODE_PORT                Port to bind the server to.
+                               Default: 4096
+  OPENCODE_HOSTNAME            Hostname/IP to bind to.
+                               Default: 0.0.0.0
+  OPENCODE_SERVER_USERNAME     Username for HTTP basic auth.
+                               Default: admin
+  OPENCODE_SERVER_PASSWORD     Password for HTTP basic auth.
+                               Default: auto-generated (printed once at startup)
+
+DEPLOYMENT MODE
+  USE_DOCKER                   Set to "true" to use Docker Compose deployment.
+                               Default: false (systemd/npm mode)
+
+DOCKER MODE OPTIONS            (only used when USE_DOCKER=true)
+  OPENCODE_DATA_DIR            Host directory for Docker Compose files and .env.
+                               Default: /srv/opencode
+
+TRAEFIK OPTIONS                (only used when USE_DOCKER=true)
+  OPENCODE_TRAEFIK             Set to "true" to enable Traefik reverse proxy integration.
+                               Default: false
+  OPENCODE_DOMAIN              Public domain name for Traefik routing.
+                               Required when OPENCODE_TRAEFIK=true
+                               Example: opencode.example.com
+  PROXY_NETWORK                Name of the external Docker network Traefik listens on.
+                               Default: proxy
+
+EXAMPLES
+  # Systemd mode with auto-generated password:
+  sudo bash setup-opencode-server.sh
+
+  # Systemd mode with explicit password:
+  OPENCODE_SERVER_PASSWORD=mysecret sudo bash setup-opencode-server.sh
+
+  # Docker mode with Traefik:
+  USE_DOCKER=true OPENCODE_TRAEFIK=true OPENCODE_DOMAIN=opencode.example.com \
+    sudo bash setup-opencode-server.sh
+
+  # Docker mode, direct port binding:
+  USE_DOCKER=true OPENCODE_PORT=4096 sudo bash setup-opencode-server.sh
+
+  # Uninstall (systemd mode):
+  sudo bash setup-opencode-server.sh --uninstall
+
+  # Uninstall (Docker mode):
+  USE_DOCKER=true sudo bash setup-opencode-server.sh --uninstall
+EOF
+}
+
+main() {
+    if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+        usage
+        exit 0
+    fi
+
+    load_config
+
+    if [[ "${1:-}" == "--uninstall" ]]; then
+        if [[ "$USE_DOCKER" == "true" ]]; then
+            uninstall_docker
+        else
+            uninstall_systemd
+        fi
+        exit 0
+    fi
+
+    print_config
+    maybe_generate_password
+
+    if [[ "$USE_DOCKER" == "true" ]]; then
+        preflight_docker
+        setup_docker
+        summary_docker
+    else
+        preflight_systemd
+        install_opencode_npm
+        setup_systemd
+        summary_systemd
+    fi
+}
+
+main "$@"
