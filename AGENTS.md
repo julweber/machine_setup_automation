@@ -10,10 +10,17 @@ Automation scripts for installing and configuring a
   - integration examples: [setup-forgejo.sh](tasks/setup-forgejo.sh) and [setup-openwebui.sh](tasks/setup-openwebui.sh)
 - target service data base directory: `/srv` , e.g. for forgejo: `/srv/forgejo`
 
-## Instructions
+## Implementation Instructions
+
+### Linting
+
 ALWAYS lint created or modified files with the following tools:
 
 - bash files (`.sh`) -> use `shellcheck`
 - `.yml` -> use `yamllint`
 - json (`.js`, `.json`) -> use `jq`
 - `Dockerfile` -> use hadolint via executing: docker run --rm -i hadolint/hadolint < Dockerfile
+
+### lib usage
+
+Always check the `lib/` directory for existing functionality when implementing setup scripts in the `tasks/` directory. Try reusing existing functionality.
