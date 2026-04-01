@@ -5,7 +5,36 @@
 
 set -e
 
+# Default configuration (can be overridden via arguments)
 MODELS_BASE_DIR="$HOME/.lmstudio/models"
+
+# Model path
+MODEL_PATH="${MODEL_PATH:-/home/verfeinerer/.lmstudio/models/HauhauCS/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf}"
+
+# Server binding
+HOST="${HOST:-0.0.0.0}"
+PORT="${PORT:-1236}"
+
+# Generation parameters
+TEMPERATURE="${TEMPERATURE:-0.6}"
+TOP_K="${TOP_K:-40}"
+TOP_P="${TOP_P:-0.95}"
+REPEAT_PENALTY="${REPEAT_PENALTY:-1.00}"
+PRESENCE_PENALTY="${PRESENCE_PENALTY:-0.00}"
+PARALLEL="${PARALLEL:-1}"
+
+# Performance parameters
+THREADS_COUNT="${THREADS_COUNT:-14}"
+PRIO="${PRIO:-1}"
+CONTEXT_SIZE="${CONTEXT_SIZE:-100000}"
+BATCH_SIZE="${BATCH_SIZE:-512}"
+FLASH_ATTENTION="${FLASH_ATTENTION:-on}"
+GPU_LAYERS="${GPU_LAYERS:-all}"
+KV_CACHE_TYPE="${KV_CACHE_TYPE:-q4_0}"
+
+# Memory parameters
+NO_MMAP="${NO_MMAP:-true}"
+KV_UNIFIED="${KV_UNIFIED:-true}"
 
 # Function to list all available model files
 list_models() {
@@ -48,9 +77,6 @@ list_models() {
     exit 0
 }
 
-DEFAULT_PORT=1236
-DEFAULT_HOST="127.0.0.1"
-
 # Parse arguments into associative array and collect extra args
 declare -A arg_map
 llama_args=()
@@ -73,6 +99,70 @@ while [[ $# -gt 0 ]]; do
             arg_map["--model-base-dir"]="$2"
             shift 2
             ;;
+        --temperature|-t)
+            arg_map["--temperature"]="$2"
+            shift 2
+            ;;
+        --top-k)
+            arg_map["--top-k"]="$2"
+            shift 2
+            ;;
+        --top-p)
+            arg_map["--top-p"]="$2"
+            shift 2
+            ;;
+        --repeat-penalty)
+            arg_map["--repeat-penalty"]="$2"
+            shift 2
+            ;;
+        --presence-penalty)
+            arg_map["--presence-penalty"]="$2"
+            shift 2
+            ;;
+        --threads)
+            arg_map["--threads"]="$2"
+            shift 2
+            ;;
+        --prio)
+            arg_map["--prio"]="$2"
+            shift 2
+            ;;
+        --ctx-size)
+            arg_map["--ctx-size"]="$2"
+            shift 2
+            ;;
+        --batch-size)
+            arg_map["--batch-size"]="$2"
+            shift 2
+            ;;
+        --flash-attn|-fa)
+            arg_map["--flash-attn"]="$2"
+            shift 2
+            ;;
+        --n-gpu-layers|-ngl)
+            arg_map["--n-gpu-layers"]="$2"
+            shift 2
+            ;;
+        --cache-type-k-draft)
+            arg_map["--cache-type-k-draft"]="$2"
+            shift 2
+            ;;
+        --cache-type-v-draft)
+            arg_map["--cache-type-v-draft"]="$2"
+            shift 2
+            ;;
+        --kv-unified)
+            arg_map["--kv-unified"]="true"
+            shift
+            ;;
+        --no-mmap)
+            arg_map["--no-mmap"]="true"
+            shift
+            ;;
+        --parallel)
+            arg_map["--parallel"]="$2"
+            shift 2
+            ;;
         *)
             llama_args+=("$1")
             shift
@@ -80,18 +170,9 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Default behavior: if no model specified (and no other args), show available models
-if [[ ${#llama_args[@]} -eq 0 ]] && [[ -z "${arg_map[--model]}" ]]; then
-    list_models "${arg_map[--model-base-dir]:-}"
-fi
-
-# Check if model is specified
+# Default behavior: if no model specified, show available models
 if [[ -z "${arg_map[--model]}" ]]; then
-    echo "Error: No model specified."
-    echo ""
-    echo "Usage: ./run-llama-server.sh [llama-server args...]"
-    echo "       ./run-llama-server.sh --model /path/to/model.gguf [args...]"
-    exit 1
+    list_models "${arg_map[--model-base-dir]:-}"
 fi
 
 # Set model_to_use from parsed args
@@ -102,6 +183,56 @@ final_args=()
 
 # Add model (required, no default)
 final_args+=("--model" "$model_to_use")
+
+# Add temperature (default: 0.6)
+final_args+=("--temperature" "${arg_map[--temperature]:-$TEMPERATURE}")
+
+# Add top-k (default: 40)
+final_args+=("--top-k" "${arg_map[--top-k]:-$TOP_K}")
+
+# Add top-p (default: 0.95)
+final_args+=("--top-p" "${arg_map[--top-p]:-$TOP_P}")
+
+# Add repeat-penalty (default: 1.00)
+final_args+=("--repeat-penalty" "${arg_map[--repeat-penalty]:-$REPEAT_PENALTY}")
+
+# Add presence-penalty (default: 0.00)
+final_args+=("--presence-penalty" "${arg_map[--presence-penalty]:-$PRESENCE_PENALTY}")
+
+# Add threads (default: 14)
+final_args+=("--threads" "${arg_map[--threads]:-$THREADS_COUNT}")
+
+# Add prio (default: 1)
+final_args+=("--prio" "${arg_map[--prio]:-$PRIO}")
+
+# Add ctx-size (default: 100000)
+final_args+=("--ctx-size" "${arg_map[--ctx-size]:-$CONTEXT_SIZE}")
+
+# Add batch-size (default: 512)
+final_args+=("--batch-size" "${arg_map[--batch-size]:-$BATCH_SIZE}")
+
+# Add flash-attn (default: on)
+final_args+=("--flash-attn" "${arg_map[--flash-attn]:-$FLASH_ATTENTION}")
+
+# Add no-mmap (default: true)
+final_args+=("--no-mmap")
+
+# Add n-gpu-layers (default: all)
+final_args+=("--n-gpu-layers" "${arg_map[--n-gpu-layers]:-$GPU_LAYERS}")
+
+# Add cache-type-k-draft (default: q4_0)
+final_args+=("--cache-type-k-draft" "${arg_map[--cache-type-k-draft]:-$KV_CACHE_TYPE}")
+
+# Add cache-type-v-draft (default: q4_0)
+final_args+=("--cache-type-v-draft" "${arg_map[--cache-type-v-draft]:-$KV_CACHE_TYPE}")
+
+# Add kv-unified (default: true)
+if [[ "${arg_map[--kv-unified]}" == "true" ]] || [[ "$KV_UNIFIED" == "true" ]]; then
+    final_args+=("--kv-unified")
+fi
+
+# Add parallel (default: 1)
+final_args+=("--parallel" "${arg_map[--parallel]:-$PARALLEL}")
 
 # Flash attention enabled by default (can be overridden with -fa or --flash-attn)
 has_fa=false
@@ -129,19 +260,11 @@ if [ "$has_gpu_layers_parameter" = false ]; then
     final_args+=("-ngl" "auto")
 fi
 
-# Add port from arg_map or default if not specified
-if [[ -n "${arg_map[--port]}" ]]; then
-    final_args+=("--port" "${arg_map[--port]}")
-else
-    final_args+=("--port" "$DEFAULT_PORT")
-fi
+# Add port (default: 1236)
+final_args+=("--port" "${arg_map[--port]:-$PORT}")
 
-# Add host from arg_map or default if not specified
-if [[ -n "${arg_map[--host]}" ]]; then
-    final_args+=("--host" "${arg_map[--host]}")
-else
-    final_args+=("--host" "$DEFAULT_HOST")
-fi
+# Add host (default: 0.0.0.0)
+final_args+=("--host" "${arg_map[--host]:-$HOST}")
 
 # Add any remaining llama-server args
 for arg in "${llama_args[@]}"; do
@@ -156,9 +279,12 @@ fi
 
 # Print startup info
 echo "###### Starting llama-server #######"
-echo "- Port: ${arg_map[--port]:-$DEFAULT_PORT}"
-echo "- Host: ${arg_map[--host]:-$DEFAULT_HOST}"
+echo "- Port: ${arg_map[--port]:-$PORT}"
+echo "- Host: ${arg_map[--host]:-$HOST}"
 echo "- Model: $model_to_use"
+echo "- Temperature: ${arg_map[--temperature]:-$TEMPERATURE}"
+echo "- Context Size: ${arg_map[--ctx-size]:-$CONTEXT_SIZE}"
+echo "- GPU Layers: ${arg_map[--n-gpu-layers]:-$GPU_LAYERS}"
 echo ""
 echo "###################################"
 echo ""
