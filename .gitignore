@@ -3,5 +3,6 @@
 .claude/
 .pi/
 .opencode/
+.codex/
 node_modules/
 CLAUDE.md

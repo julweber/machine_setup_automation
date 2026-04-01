@@ -1,0 +1,227 @@
+#!/bin/bash
+# ──────────────────────────────────────────────────────────────────────────────
+# spec — Spec-Driven Development CLI
+#
+# Usage: spec <subcommand> [options] [arguments]
+#
+# Subcommands:
+#   init                 Initialize a new project with the spec framework
+#   feature-brainstorm   Launch feature specification brainstorming
+#   review               Review a feature specification
+#   generate-tasks       Generate tasks from a reviewed feature spec
+#   implement            Launch Ralph loop implementation for a feature
+#   status               Display project status and feature progress
+#   list-features        List all features with optional status info
+#   new-feature          Interactive guided wizard to create a new feature
+#   monitor-tasks        Monitor task progress (with --json flag for CI/CD)
+# ──────────────────────────────────────────────────────────────────────────────
+
+set -e
+
+# ── Paths ──────────────────────────────────────────────────────────────────────
+
+# Resolve SCRIPT_DIR using bash parameter expansion (avoids external dirname)
+_SPEC_BIN="${BASH_SOURCE[0]}"
+_SPEC_BIN_DIR="${_SPEC_BIN%/*}"
+SCRIPT_DIR="$(cd "${_SPEC_BIN_DIR}/../scripts" && pwd)"
+
+# ── Usage ──────────────────────────────────────────────────────────────────────
+
+print_usage() {
+    cat >&2 <<'EOF'
+Usage: spec <subcommand> [options] [arguments]
+
+Subcommands:
+  init                 Initialize a new project with the spec framework
+                       Usage: spec init <project-name> [directory]
+                              spec init --update
+
+  feature-brainstorm   Launch feature specification brainstorming
+                       Usage: spec feature-brainstorm [feature-name]
+
+  review               Review a feature specification
+                       Usage: spec review [feature-name]
+
+  generate-tasks       Generate tasks from a reviewed feature spec
+                       Usage: spec generate-tasks [feature-name]
+
+  implement            Launch Ralph loop implementation for a feature
+                       Usage: spec implement <feature-name> [options]
+                         --agent <opencode|claude|pi|codex>  (default: opencode)
+                         --max-iterations <n>          (default: 5)
+                         --provider <provider>         (pi only)
+                         --model <model>
+
+  status               Display project status and feature progress
+                       Usage: spec status [--json]
+
+  list-features        List all features with optional status info
+                       Usage: spec list-features [--status] [--json]
+
+  new-feature          Interactive guided wizard to create a new feature
+                       Usage: spec new-feature
+
+  monitor-tasks        Monitor task progress in JSON format
+                       Usage: spec monitor-tasks --json <path-to-tasks.yaml>
+
+Run 'spec <subcommand> --help' for subcommand-specific help.
+EOF
+}
+
+# ── Subcommand handlers ────────────────────────────────────────────────────────
+
+cmd_init() {
+    # Delegate to init handler script
+    local handler="${SCRIPT_DIR}/cli/init.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec init is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_feature_brainstorm() {
+    local handler="${SCRIPT_DIR}/cli/feature-brainstorm-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec feature-brainstorm is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_review() {
+    local handler="${SCRIPT_DIR}/cli/review-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec review is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_generate_tasks() {
+    local handler="${SCRIPT_DIR}/cli/generate-tasks-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec generate-tasks is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_implement() {
+    local handler="${SCRIPT_DIR}/cli/implement-cmd.sh"
+    if [ -f "$handler" ]; then
+        # Use $BASH (the running interpreter) to invoke the handler so that
+        # a restricted PATH (e.g. in tests) does not prevent bash from being found.
+        exec "$BASH" "$handler" "$@"
+    else
+        echo "Error: spec implement is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_status() {
+    local handler="${SCRIPT_DIR}/cli/status-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec status is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_list_features() {
+    local handler="${SCRIPT_DIR}/cli/status-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" list-features "$@"
+    else
+        echo "Error: spec list-features is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_new_feature() {
+    local handler="${SCRIPT_DIR}/cli/new-feature-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec new-feature is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+cmd_monitor_tasks() {
+    local handler="${SCRIPT_DIR}/cli/monitor-tasks-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec monitor-tasks is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
+# ── Main dispatch ──────────────────────────────────────────────────────────────
+
+main() {
+    if [ $# -eq 0 ]; then
+        print_usage
+        exit 1
+    fi
+
+    local subcommand="$1"
+    shift
+
+    case "$subcommand" in
+        init)
+            cmd_init "$@"
+            ;;
+        feature-brainstorm)
+            cmd_feature_brainstorm "$@"
+            ;;
+        review)
+            cmd_review "$@"
+            ;;
+        generate-tasks)
+            cmd_generate_tasks "$@"
+            ;;
+        implement)
+            cmd_implement "$@"
+            ;;
+        status)
+            cmd_status "$@"
+            ;;
+        list-features)
+            cmd_list_features "$@"
+            ;;
+        new-feature)
+            cmd_new_feature "$@"
+            ;;
+        monitor-tasks)
+            cmd_monitor_tasks "$@"
+            ;;
+        --help|-h|help)
+            print_usage
+            exit 0
+            ;;
+        *)
+            echo "Error: Unknown subcommand '$subcommand'" >&2
+            echo "" >&2
+            print_usage
+            exit 1
+            ;;
+    esac
+}
+
+main "$@"

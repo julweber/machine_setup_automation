@@ -5,6 +5,9 @@
 
 set -euo pipefail
 
+# maximum line output length
+LINE_MAX_LENGTH="1000"
+
 # ── Argument handling ──────────────────────────────────────────────────────────
 if [[ $# -lt 1 ]]; then
     echo "Usage: $0 <session_file>" >&2
@@ -92,7 +95,7 @@ parse_event() {
                 text)
                     content_text=$(echo "$line" \
                         | jq -r '.message.content[0].text // ""' \
-                        | head -c 120 | tr '\n' ' ')
+                        | head -c $LINE_MAX_LENGTH | tr '\n' ' ')
                     color="$GREEN"
                     text="MSG [$role/text]     ${content_text}…"
                     ;;
@@ -100,8 +103,8 @@ parse_event() {
                     tool_name=$(echo "$line" | jq -r '.message.content[0].name // ""')
                     local tool_arg_summary
                     tool_arg_summary=$(echo "$line" \
-                        | jq -r '(.message.content[0].arguments // {}) | to_entries | map("\(.key)=\(.value | tostring | .[0:40])") | join(", ")' \
-                        2>/dev/null | head -c 120)
+                        | jq -r '(.message.content[0].arguments // {}) | to_entries | map("\(.key)=\(.value | tostring)") | join(", ")' \
+                        2>/dev/null | head -c $LINE_MAX_LENGTH)
                     color="$YELLOW"
                     text="MSG [$role/toolCall] ${tool_name}($tool_arg_summary)"
                     ;;
@@ -109,7 +112,7 @@ parse_event() {
                     local result_text
                     result_text=$(echo "$line" \
                         | jq -r '.message.content[0].content[0].text // ""' \
-                        | head -c 120 | tr '\n' ' ')
+                        | head -c $LINE_MAX_LENGTH | tr '\n' ' ')
                     local is_error
                     is_error=$(echo "$line" | jq -r '.message.isError // false')
                     if [[ "$is_error" == "true" ]]; then
