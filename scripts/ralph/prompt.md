@@ -20,7 +20,11 @@ After emitting a signal: output NOTHING else. STOP IMMEDIATELY.
 
 ## Context
 
-The project specs (description, concepts, architecture, conventions, test strategy) were injected above this prompt.
+The following layers have been injected above these instructions:
+
+1. **Available Specification Files** — a listing of project-level and feature-level spec files (paths relative to project root). Do NOT read them all upfront. Only read a file when the task requires information from it.
+2. **Implementation Progress** — tasks/<feature-name>/progress.txt (omitted if absent); apply patterns and insights throughout your implementation
+3. **Agent Instructions** — this file (scripts/ralph/prompt.md)
 
 ---
 
@@ -31,8 +35,6 @@ The project specs (description, concepts, architecture, conventions, test strate
 Determine the feature name from the current git branch: strip the `feat/` prefix (e.g., `feat/user-authentication` → `user-authentication`).
 
 Read `tasks/<feature-name>/tasks.yaml`.
-
-If `tasks/<feature-name>/progress.txt` exists, read it. Apply those patterns and insights throughout your implementation.
 
 ### 2. Select ONE Task
 
@@ -53,11 +55,9 @@ Increment `attempts` for the selected task in `tasks.yaml`. Write the file immed
 
 ### 4. Implement
 
-Read spec sections referenced in the task's `source` array. Implement based on:
-- Task `description`
-- Referenced spec sections
-- `successCriteria`
-- Project conventions from the injected spec
+Start from the task's `description` and `successCriteria`. Read spec files from the listing only when you need more information — prioritise files referenced in the task's `source` array. Read convention or architecture files only if the task touches unfamiliar patterns. Implement based on what you've read.
+
+Do NOT read spec files preemptively.
 
 Keep changes focused and minimal. Follow existing code patterns. Do NOT implement beyond what this single task requires.
 
@@ -114,6 +114,6 @@ Then self-evaluate every entry in `successCriteria`:
 2. **Never ask questions.** Run autonomously.
 3. **Never commit broken code.** Quality checks must pass before any commit.
 4. **Always increment attempts** before implementing.
-5. **Always read source refs** listed in the task's `source` array before implementing.
+5. **Read spec files on demand.** Start from the task description. Read `source`-referenced files when you need their content. Read other spec files only if the task requires it.
 6. **Always emit exactly one signal** before stopping: `<promise>SUB-TASK-COMPLETE</promise>`, `<promise>COMPLETE</promise>`, or `<promise>FAILED</promise>`.
 7. **After emitting a signal, output NOTHING else. STOP IMMEDIATELY.**

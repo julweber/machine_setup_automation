@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
 # Ralph Loop - Autonomous AI coding agent loop
 # Usage: ./ralph.sh [--agent <agent>] [--max-iterations <n>] [--provider <provider>] [--model <model>] <feature-name>
@@ -15,13 +15,14 @@ set -e
 # ========================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-PROMPT_FILE="$SCRIPT_DIR/prompt.md"
+# Allow env overrides (used by test harness to inject fixture paths)
+PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+PROMPT_FILE="${PROMPT_FILE:-$SCRIPT_DIR/prompt.md}"
 
 # Defaults
 AGENT="opencode"
 MAX_ITERATIONS=5
-FEATURE_NAME=""
+FEATURE_NAME="${FEATURE_NAME:-}"
 CONTEXT=""
 LOG_FILE=""
 DETECTED_SIGNAL=""
@@ -123,14 +124,65 @@ validate_prompt_file() {
 # ========================================
 
 build_context() {
-  local context=""
-  for spec_file in "$PROJECT_ROOT"/specification/project/*.md; do
-    if [ -f "$spec_file" ]; then
-      context+="$(cat "$spec_file")"$'\n\n'
+  local proj_dir="$PROJECT_ROOT/specification/project"
+  local output=""
+
+  # ── Layer 1: Available Specification Files ────────────────────────────────────
+  # List all available spec files so the agent can read them on demand.
+  output+="# Available Specification Files"$'\n\n'
+  output+="Read any of these files as needed. Paths are relative to the project root."$'\n\n'
+
+  # Project spec files
+  output+="## Project Specification"$'\n\n'
+  local proj_files=(description concepts architecture conventions test-strategy lessons-learned)
+  for name in "${proj_files[@]}"; do
+    local f="$proj_dir/$name.md"
+    if [ -f "$f" ]; then
+      output+="- specification/project/$name.md"$'\n'
     fi
   done
-  context+="$(cat "$PROMPT_FILE")"
-  echo "$context"
+  output+=$'\n'
+
+  # Feature spec files
+  local feat_dir="$PROJECT_ROOT/specification/features/$FEATURE_NAME"
+  local behaviors_file="$feat_dir/behaviors.md"
+  if [ ! -f "$behaviors_file" ]; then
+    echo "Error: behaviors.md not found for feature '$FEATURE_NAME'." >&2
+    echo "Run 'spec feature-brainstorm $FEATURE_NAME' to create the feature specification first." >&2
+    return 1
+  fi
+
+  output+="## Feature Specification ($FEATURE_NAME)"$'\n\n'
+  output+="- specification/features/$FEATURE_NAME/behaviors.md"$'\n'
+
+  local tests_file="$feat_dir/tests.md"
+  if [ -f "$tests_file" ]; then
+    output+="- specification/features/$FEATURE_NAME/tests.md"$'\n'
+  fi
+
+  while IFS= read -r -d '' f; do
+    local base
+    base="$(basename "$f")"
+    output+="- specification/features/$FEATURE_NAME/$base"$'\n'
+  done < <(find "$feat_dir" -maxdepth 1 -name '*.md' -not -name 'behaviors.md' -not -name 'tests.md' | sort -z)
+  output+=$'\n'
+
+  # ── Layer 2: Implementation Progress ─────────────────────────────────────────
+  # Inject progress.txt; silently skip if absent.
+  local progress_file="$PROJECT_ROOT/tasks/$FEATURE_NAME/progress.txt"
+  if [ -f "$progress_file" ]; then
+    output+="# Implementation Progress"$'\n\n'
+    output+="## progress"$'\n\n'
+    output+="$(cat "$progress_file")"$'\n\n'
+  fi
+
+  # ── Layer 3: Agent Instructions ───────────────────────────────────────────────
+  # Always present (validated by validate_prompt_file before build_context is called).
+  output+="# Agent Instructions"$'\n\n'
+  output+="## instructions"$'\n\n'
+  output+="$(cat "$PROMPT_FILE")"$'\n'
+
+  printf '%s' "$output"
 }
 
 run_agent_streaming() {
@@ -335,5 +387,5 @@ main() {
   exit 1
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
 
