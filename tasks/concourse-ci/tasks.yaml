@@ -85,6 +85,8 @@ tasks:
 
   - id: "task-006"
     title: "Implement RSA key generation with idempotency"
+    status: passed
+    attempts: 1
     description: "Generate three pairs of RSA keys (TSA host, session signing, worker) using OpenSSL with empty passphrases. Preserve existing keys to maintain session continuity. This implements RSA Key Generation (behaviors.md#4-rsa-key-generation)."
     source:
       - "specification/features/concourse-ci/behaviors.md#4-rsa-key-generation"
@@ -98,8 +100,6 @@ tasks:
       - "Keys are only created if they don't already exist"
       - "chmod -R 700 is applied to keys directory after generation"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
 
   - id: "task-007"
     title": "Generate .env file with configuration and secrets"
@@ -116,8 +116,8 @@ tasks:
       - ".env file has permissions 600 after creation"
       - "User-provided values take precedence over auto-generated ones"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
+    status: passed
+    attempts: 1
 
   - id: "task-008"
     title": "Dynamically generate docker-compose.yml"
@@ -134,8 +134,8 @@ tasks:
       - "Traefik network and labels are added when CONCOURSE_TRAEFIK=true"
       - "Port exposure is omitted for web UI in Traefik mode"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
+    status: passed
+    attempts: 1
 
   - id: "task-009"
     title": "Implement Docker image pull and stack start"
@@ -152,8 +152,8 @@ tasks:
       - "Script exits with error on image pull failure"
       - "Docker logs are displayed on service startup failure"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
+    status: passed
+    attempts: 1
 
   - id: "task-010"
     title": "Implement health check loop for Concourse web UI"
@@ -170,8 +170,8 @@ tasks:
       - "Docker exec is used for health check in Traefik mode"
       - "Connection refused errors are handled gracefully"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
+    status: passed
+    attempts: 1
 
   - id: "task-011"
     title": "Download and install Fly CLI tool"
@@ -189,7 +189,7 @@ tasks:
       - "Installation is skipped if fly is already in PATH"
       - "All existing tests continue to pass"
     status: pending
-    attempts: 0
+    attempts: 1
 
   - id: "task-012"
     title": "Configure Fly target for authenticated access"
