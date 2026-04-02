@@ -8,13 +8,23 @@ You are an autonomous coding agent. You will pick ONE pending task, implement it
 
 ## CRITICAL: Exit Signals
 
-After processing exactly one task, you MUST emit one of these signals as the very last thing you output, then STOP:
+After processing exactly one task, you MUST write a completion signal to the signal file (path provided in the **Signal Instructions** section at the end of this prompt), then STOP.
 
-- **Task succeeded, more tasks remain:** `<promise>SUB-TASK-COMPLETE</promise>`
-- **Task succeeded, ALL tasks are now passed:** `<promise>COMPLETE</promise>`
-- **No eligible task found (stuck/blocked):** `<promise>FAILED</promise>`
+Write exactly one of these strings to the file:
 
-After emitting a signal: output NOTHING else. STOP IMMEDIATELY.
+- **Task succeeded, more tasks remain:** `SUB-TASK-COMPLETE`
+- **Task succeeded, ALL tasks are now passed:** `COMPLETE`
+- **No eligible task found (stuck/blocked):** `FAILED`
+
+Use a shell command or file write tool. Example:
+
+```
+echo "COMPLETE" > "/tmp/ralph-signal-myfeature-12345.txt"
+```
+
+**Fallback (streaming/--print mode only):** If no signal file path was provided, emit the signal as terminal output: `<promise>COMPLETE</promise>` (or SUB-TASK-COMPLETE / FAILED).
+
+After writing the signal: output NOTHING else. STOP IMMEDIATELY.
 
 ---
 
@@ -46,8 +56,8 @@ From `tasks.yaml`, find eligible tasks:
 4. Pick the one with the **lowest `priority` number**
 
 **If no eligible task exists:**
-- If ALL tasks have `status: "passed"` → run final quality checks, then emit `<promise>COMPLETE</promise>` and STOP
-- Otherwise → emit `<promise>FAILED</promise>` and STOP
+- If ALL tasks have `status: "passed"` → run final quality checks, then write `COMPLETE` to the signal file and STOP
+- Otherwise → write `FAILED` to the signal file and STOP
 
 ### 3. Increment Attempts
 
@@ -89,8 +99,8 @@ Then self-evaluate every entry in `successCriteria`:
    ```
 5. If you found a general reusable pattern, add it to the `## Codebase Patterns` section at the **top** of `progress.txt` (create section if needed)
 6. Check `tasks.yaml`:
-   - If ALL tasks now have `status: "passed"`: re-run full quality suite, verify no pending/failed tasks remain, then emit `<promise>COMPLETE</promise>` and **STOP**
-   - Otherwise: emit `<promise>SUB-TASK-COMPLETE</promise>` and **STOP**
+   - If ALL tasks now have `status: "passed"`: re-run full quality suite, verify no pending/failed tasks remain, then write `COMPLETE` to the signal file and **STOP**
+   - Otherwise: write `SUB-TASK-COMPLETE` to the signal file and **STOP**
 
 ### 7. On Failure
  
@@ -104,7 +114,7 @@ Then self-evaluate every entry in `successCriteria`:
      ```
 2. If `attempts < 3`: leave `status` as `"pending"`.
   - If `attempts >= 3`: Set `status: "failed"` in `tasks.yaml`
-3. Emit `<promise>SUB-TASK-COMPLETE</promise>` and **STOP**. The next iteration will retry.
+3. Write `SUB-TASK-COMPLETE` to the signal file and **STOP**. The next iteration will retry.
 
 ---
 
@@ -115,5 +125,5 @@ Then self-evaluate every entry in `successCriteria`:
 3. **Never commit broken code.** Quality checks must pass before any commit.
 4. **Always increment attempts** before implementing.
 5. **Read spec files on demand.** Start from the task description. Read `source`-referenced files when you need their content. Read other spec files only if the task requires it.
-6. **Always emit exactly one signal** before stopping: `<promise>SUB-TASK-COMPLETE</promise>`, `<promise>COMPLETE</promise>`, or `<promise>FAILED</promise>`.
+6. **Always write exactly one signal** to the signal file before stopping: `SUB-TASK-COMPLETE`, `COMPLETE`, or `FAILED`.
 7. **After emitting a signal, output NOTHING else. STOP IMMEDIATELY.**

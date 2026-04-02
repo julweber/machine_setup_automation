@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
 # spec — Spec-Driven Development CLI
 #
@@ -13,7 +13,8 @@
 #   status               Display project status and feature progress
 #   list-features        List all features with optional status info
 #   new-feature          Interactive guided wizard to create a new feature
-#   monitor-tasks        Monitor task progress (with --json flag for CI/CD)
+#   monitor-tasks        Monitor task progress for a feature
+#   watch                Attach to a running Ralph tmux session
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -47,7 +48,7 @@ Subcommands:
 
   implement            Launch Ralph loop implementation for a feature
                        Usage: spec implement <feature-name> [options]
-                         --agent <opencode|claude|pi|codex>  (default: opencode)
+                         --agent <opencode|claude|pi>  (default: opencode)
                          --max-iterations <n>          (default: 5)
                          --provider <provider>         (pi only)
                          --model <model>
@@ -61,8 +62,11 @@ Subcommands:
   new-feature          Interactive guided wizard to create a new feature
                        Usage: spec new-feature
 
-  monitor-tasks        Monitor task progress in JSON format
-                       Usage: spec monitor-tasks --json <path-to-tasks.yaml>
+  monitor-tasks        Monitor task progress for a feature
+                       Usage: spec monitor-tasks <feature-name> [--print]
+
+  watch                Attach to a running Ralph tmux session
+                       Usage: spec watch [feature-name] [--list]
 
 Run 'spec <subcommand> --help' for subcommand-specific help.
 EOF
@@ -172,6 +176,17 @@ cmd_monitor_tasks() {
     fi
 }
 
+cmd_watch() {
+    local handler="${SCRIPT_DIR}/cli/watch-cmd.sh"
+    if [ -f "$handler" ]; then
+        exec "$handler" "$@"
+    else
+        echo "Error: spec watch is not yet implemented." >&2
+        echo "       Handler not found: $handler" >&2
+        exit 1
+    fi
+}
+
 # ── Main dispatch ──────────────────────────────────────────────────────────────
 
 main() {
@@ -210,6 +225,9 @@ main() {
             ;;
         monitor-tasks)
             cmd_monitor_tasks "$@"
+            ;;
+        watch)
+            cmd_watch "$@"
             ;;
         --help|-h|help)
             print_usage

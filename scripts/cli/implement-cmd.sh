@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────────────────────
 # spec-implement-cmd.sh — Implement the `spec implement` subcommand
 #
@@ -6,13 +6,12 @@
 #   spec implement <feature-name> [options]
 #
 # Options:
-#   --agent <opencode|claude|pi|codex>  Agent to use (default: opencode)
-#   --max-iterations <n>                Max Ralph loop iterations (default: 5)
-#   --provider <provider>               Provider (pi only)
-#   --model <model>                     Model to use (passed through to agent)
-#   --tmux                              Run agents in TUI mode inside tmux
-#   --keep-tmux                         Keep tmux session alive after ralph exits
-#   --idle-timeout <s>                  Idle timeout in seconds (default: 120)
+#   --agent <opencode|claude|pi|codex>   Agent to use (default: opencode)
+#   --max-iterations <n>           Max Ralph loop iterations (default: 5)
+#   --no-tmux                      Disable tmux mode (tmux is on by default)
+#   --keep-tmux                    Keep tmux session alive after completion
+#   --provider <provider>          Provider (pi only)
+#   --model <model>                Model to use (passed through to agent)
 # ──────────────────────────────────────────────────────────────────────────────
 
 set -e
@@ -22,12 +21,20 @@ set -e
 AGENT="opencode"
 MAX_ITERATIONS=5
 FEATURE_NAME=""
-TASK_FILE=""
 PROVIDER=""
 MODEL=""
-USE_TMUX=false
+MAX_ITERATION_DURATION=""
+NO_TMUX=false
 KEEP_TMUX=false
-IDLE_TIMEOUT=""
+
+LIB_SH="${BASH_SOURCE[0]%/*}/lib.sh"
+if [ ! -f "$LIB_SH" ]; then
+    echo "Error: Shared CLI library not found at '${LIB_SH}'." >&2
+    echo "       Restore scripts/cli/lib.sh or refresh the framework with: spec init --update" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$LIB_SH"
 
 # ── Usage ─────────────────────────────────────────────────────────────────────
 
@@ -35,29 +42,25 @@ print_usage() {
     cat >&2 <<'EOF'
 Usage:
   spec implement <feature-name> [options]
-  spec implement --task-file <path> [options]
 
 Arguments:
-  feature-name   Name of the feature to implement (mutually exclusive with --task-file).
+  feature-name   Name of the feature to implement (kebab-case, required).
 
 Options:
-  --agent <agent>                Agent to use for the Ralph loop (default: opencode)
-                                 Valid: opencode, claude, pi, codex
-  --max-iterations <n>           Maximum number of Ralph loop iterations (default: 5)
-  --provider <provider>          LLM provider — only valid when --agent pi
-  --model <model>                Model to use (passed through to the agent CLI)
-  --task-file <path>             Path to tasks YAML file (alternative to feature-name).
-                                 Skips worktree setup; runs in-place.
-  --tmux                         Run agents in TUI mode inside a tmux session
-  --keep-tmux                    Keep tmux session alive after ralph exits
-  --idle-timeout <s>             Seconds of no output before agent is considered done (default: 120)
+  --agent <opencode|claude|pi|codex>   Agent to use for the Ralph loop (default: opencode)
+  --max-iterations <n>                 Maximum number of Ralph loop iterations (default: 5)
+  --max-iteration-duration <s>
+  -mid <s>                             Cancel an iteration after this many seconds and start the next (default: disabled)
+  --no-tmux                            Disable tmux mode (tmux is enabled by default)
+  --keep-tmux                          Keep tmux session alive after ralph exits
+  --provider <provider>                LLM provider — only valid when --agent pi
+  --model <model>                      Model to use (passed through to the agent CLI)
 
 Examples:
   spec implement user-authentication
   spec implement user-authentication --agent claude --max-iterations 10
-  spec implement user-authentication --agent claude --tmux
   spec implement user-authentication --agent pi --provider openai --model gpt-4o
-  spec implement --task-file /path/to/tasks/my-feature/tasks.yaml
+  spec implement user-authentication --agent codex --model gpt-4o
 EOF
 }
 
@@ -102,31 +105,22 @@ parse_args() {
                 MODEL="$2"
                 shift 2
                 ;;
-            --tmux)
-                USE_TMUX=true
+            --max-iteration-duration|-mid)
+                if [ -z "${2:-}" ]; then
+                    echo "Error: --max-iteration-duration requires a value." >&2
+                    print_usage
+                    exit 1
+                fi
+                MAX_ITERATION_DURATION="$2"
+                shift 2
+                ;;
+            --no-tmux)
+                NO_TMUX=true
                 shift
                 ;;
             --keep-tmux)
                 KEEP_TMUX=true
                 shift
-                ;;
-            --idle-timeout)
-                if [ -z "${2:-}" ]; then
-                    echo "Error: --idle-timeout requires a value." >&2
-                    print_usage
-                    exit 1
-                fi
-                IDLE_TIMEOUT="$2"
-                shift 2
-                ;;
-            --task-file)
-                if [ -z "${2:-}" ]; then
-                    echo "Error: --task-file requires a value." >&2
-                    print_usage
-                    exit 1
-                fi
-                TASK_FILE="$2"
-                shift 2
                 ;;
             --help|-h)
                 print_usage
@@ -154,13 +148,8 @@ parse_args() {
 # ── Validation ─────────────────────────────────────────────────────────────────
 
 validate_feature_name() {
-    if [ -n "$TASK_FILE" ] && [ -n "$FEATURE_NAME" ]; then
-        echo "Error: --task-file and <feature-name> are mutually exclusive." >&2
-        print_usage
-        exit 1
-    fi
-    if [ -z "$FEATURE_NAME" ] && [ -z "$TASK_FILE" ]; then
-        echo "Error: either <feature-name> or --task-file is required." >&2
+    if [ -z "$FEATURE_NAME" ]; then
+        echo "Error: feature-name is required." >&2
         print_usage
         exit 1
     fi
@@ -187,6 +176,16 @@ validate_max_iterations() {
     if [ "$MAX_ITERATIONS" -le 0 ]; then
         echo "Error: --max-iterations must be a positive integer greater than 0, got '${MAX_ITERATIONS}'." >&2
         echo "       Valid range: any positive integer (e.g. 1, 5, 20)" >&2
+        exit 1
+    fi
+}
+
+validate_max_iteration_duration() {
+    if [ -z "$MAX_ITERATION_DURATION" ]; then
+        return
+    fi
+    if ! [[ "$MAX_ITERATION_DURATION" =~ ^[0-9]+$ ]] || [ "$MAX_ITERATION_DURATION" -le 0 ]; then
+        echo "Error: --max-iteration-duration must be a positive integer (seconds), got '${MAX_ITERATION_DURATION}'." >&2
         exit 1
     fi
 }
@@ -255,39 +254,12 @@ validate_agent_cli() {
             pi)
                 echo "       Install pi: https://github.com/mariozechner/pi-coding-agent" >&2
                 ;;
+            codex)
+                echo "       Install Codex CLI: https://github.com/openai/codex" >&2
+                ;;
         esac
         exit 1
     fi
-}
-
-# ── Configuration display ──────────────────────────────────────────────────────
-
-# print_config [branch_name [worktree_path [task_file]]]
-# All positional args are optional; omit to skip those lines.
-print_config() {
-    local branch_name="${1:-}"
-    local worktree_path="${2:-}"
-    local task_file="${3:-}"
-
-    echo ""
-    echo "###### CONFIGURATION ######"
-    echo ""
-    if [ -n "$task_file" ]; then
-        echo "Feature:         ${FEATURE_NAME} (derived from task file)"
-        echo "Task file:       ${task_file}"
-    else
-        echo "Feature:         ${FEATURE_NAME}"
-    fi
-    echo "Agent:           ${AGENT}"
-    echo "Max iterations:  ${MAX_ITERATIONS}"
-    echo "Provider:        ${PROVIDER:-default}"
-    echo "Model:           ${MODEL:-default}"
-    [ -n "${project_root:-}" ] && echo "Project root:    ${project_root}"
-    [ -n "${project_name:-}" ] && echo "Project name:    ${project_name}"
-    [ -n "$branch_name" ]      && echo "Branch:          ${branch_name}"
-    [ -n "$worktree_path" ]    && echo "Worktree path:   ${worktree_path}"
-    echo "###########################"
-    echo ""
 }
 
 # ── Worktree management ────────────────────────────────────────────────────────
@@ -308,6 +280,9 @@ setup_worktree() {
     if ! git -C "$project_root" show-ref --quiet --verify "refs/heads/${branch_name}" 2>/dev/null; then
         echo "Creating branch: ${branch_name}" >&2
         git -C "$project_root" branch "$branch_name" 2>/dev/null || true
+        echo "Branch created." >&2
+    else
+        echo "Branch already exists: ${branch_name}" >&2
     fi
 
     # Check if a worktree is already registered at that path
@@ -364,70 +339,22 @@ launch_ralph() {
         ralph_args+=("--model" "$MODEL")
     fi
 
-    if [ "$USE_TMUX" = true ]; then
-        ralph_args+=("--tmux")
+    if [ -n "$MAX_ITERATION_DURATION" ]; then
+        ralph_args+=("--max-iteration-duration" "$MAX_ITERATION_DURATION")
+    fi
+
+    if [ "$NO_TMUX" = true ]; then
+        ralph_args+=("--no-tmux")
     fi
 
     if [ "$KEEP_TMUX" = true ]; then
         ralph_args+=("--keep-tmux")
-    fi
-
-    if [ -n "$IDLE_TIMEOUT" ]; then
-        ralph_args+=("--idle-timeout" "$IDLE_TIMEOUT")
     fi
 
     ralph_args+=("$FEATURE_NAME")
 
     # Run ralph from within the worktree directory
     cd "$worktree_path"
-    exec "$ralph_script" "${ralph_args[@]}"
-}
-
-launch_ralph_with_task_file() {
-    local working_dir="$1"
-
-    local ralph_script
-    local script_dir
-    script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-    ralph_script="${script_dir}/../ralph/ralph.sh"
-
-    if [ ! -f "$ralph_script" ]; then
-        echo "Error: ralph.sh not found at: ${ralph_script}" >&2
-        exit 1
-    fi
-
-    echo ""
-    echo "Launching Ralph loop with task file: ${TASK_FILE}"
-    echo ""
-
-    # Build arguments for ralph.sh
-    local ralph_args=(
-        "--agent"          "$AGENT"
-        "--max-iterations" "$MAX_ITERATIONS"
-        "--task-file"      "$TASK_FILE"
-    )
-
-    if [ -n "$PROVIDER" ]; then
-        ralph_args+=("--provider" "$PROVIDER")
-    fi
-
-    if [ -n "$MODEL" ]; then
-        ralph_args+=("--model" "$MODEL")
-    fi
-
-    if [ "$USE_TMUX" = true ]; then
-        ralph_args+=("--tmux")
-    fi
-
-    if [ "$KEEP_TMUX" = true ]; then
-        ralph_args+=("--keep-tmux")
-    fi
-
-    if [ -n "$IDLE_TIMEOUT" ]; then
-        ralph_args+=("--idle-timeout" "$IDLE_TIMEOUT")
-    fi
-
-    cd "$working_dir"
     exec "$ralph_script" "${ralph_args[@]}"
 }
 
@@ -442,63 +369,42 @@ main() {
     # Validate options before any filesystem/git operations
     validate_agent_value
     validate_max_iterations
+    validate_max_iteration_duration
     validate_provider_flag
 
     # Validate the agent CLI is available in PATH (before git ops)
     validate_agent_cli
 
-    if [ -n "$TASK_FILE" ]; then
-        # --task-file mode: validate the file exists, skip worktree
-        if [ ! -f "$TASK_FILE" ]; then
-            echo "Error: task file not found: ${TASK_FILE}" >&2
-            exit 1
-        fi
+    # Validate tasks.yaml exists and is committed (relative to CWD = project root)
+    validate_tasks_file
+    validate_tasks_committed
 
-        # Derive feature name for display
-        local task_file_dir
-        task_file_dir="$(cd "$(dirname "$TASK_FILE")" && pwd)"
-        FEATURE_NAME="$(basename "$task_file_dir")"
-        TASK_FILE="$task_file_dir/$(basename "$TASK_FILE")"
+    # Resolve project root and name
+    local project_root
+    project_root="$(pwd)"
+    local project_name
+    project_name="$(basename "$project_root")"
 
-        print_config "" "" "$TASK_FILE"
+    echo ""
+    echo "###### CONFIGURATION ######"
+    echo ""
+    echo "Feature:         ${FEATURE_NAME}"
+    echo "Agent:           ${AGENT}"
+    echo "Max iterations:  ${MAX_ITERATIONS}"
+    echo "Provider:        ${PROVIDER:-default}"
+    echo "Model:           ${MODEL:-default}"
+    echo "tmux mode:       $( [ "$NO_TMUX" = true ] && echo "disabled" || echo "enabled" )"
+    echo "Project root:    ${project_root}"
+    echo "Project name:    ${project_name}"
+    echo "###########################"
+    echo ""
 
-        # Launch ralph directly (no worktree)
-        launch_ralph_with_task_file "$task_file_dir"
-    else
-        # Resolve project root and name up front (needed for worktree existence check)
-        local project_root
-        project_root="$(pwd)"
-        local project_name
-        project_name="$(basename "$project_root")"
+    # Set up worktree (create branch + worktree if needed, reuse if exists)
+    local worktree_path
+    worktree_path="$(setup_worktree "$project_root" "$project_name")"
 
-        local branch_name="feat/${FEATURE_NAME}"
-        local worktree_path
-        worktree_path="$(cd "${project_root}/.." && pwd)/${project_name}-feat-${FEATURE_NAME}"
-
-        local existing_worktree
-        existing_worktree="$(git -C "$project_root" worktree list --porcelain 2>/dev/null \
-            | grep -F "worktree ${worktree_path}" || true)"
-
-        if [ -d "$worktree_path" ] || [ -n "$existing_worktree" ]; then
-            # Resume path: worktree already exists — skip validation and creation
-            print_config "$branch_name" "$worktree_path"
-            echo "Worktree already present at: ${worktree_path} — skipping creation."
-
-            launch_ralph "$worktree_path"
-        else
-            # First-run path: validate, create branch + worktree, then launch
-            validate_tasks_file
-            validate_tasks_committed
-
-            print_config
-
-            # Set up worktree (create branch + worktree)
-            worktree_path="$(setup_worktree "$project_root" "$project_name")"
-
-            # Launch the Ralph loop (exec — replaces this process)
-            launch_ralph "$worktree_path"
-        fi
-    fi
+    # Launch the Ralph loop (exec — replaces this process)
+    launch_ralph "$worktree_path"
 }
 
 main "$@"

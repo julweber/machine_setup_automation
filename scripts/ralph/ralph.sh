@@ -22,7 +22,7 @@ PROJECT_ROOT="${PROJECT_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
 PROMPT_FILE="${PROMPT_FILE:-$SCRIPT_DIR/prompt.md}"
 
 # Defaults
-AGENT="opencode"
+AGENT="pi"
 MAX_ITERATIONS=5
 FEATURE_NAME="${FEATURE_NAME:-}"
 TASK_FILE=""
@@ -30,9 +30,10 @@ CONTEXT=""
 LOG_FILE=""
 DETECTED_SIGNAL=""
 VERBOSE=false
-USE_TMUX=false
+USE_TMUX=true
 KEEP_TMUX=false
-IDLE_TIMEOUT=120
+RALPH_SIGNAL_FILE=""
+MAX_ITERATION_DURATION=""
 
 # ========================================
 # 2. ARGUMENT PARSING
@@ -61,16 +62,16 @@ parse_args() {
         VERBOSE=true
         shift
         ;;
-      --tmux)
-        USE_TMUX=true
+      --no-tmux)
+        USE_TMUX=false
         shift
         ;;
       --keep-tmux)
         KEEP_TMUX=true
         shift
         ;;
-      --idle-timeout)
-        IDLE_TIMEOUT="$2"
+      --max-iteration-duration)
+        MAX_ITERATION_DURATION="$2"
         shift 2
         ;;
       --task-file)
@@ -104,10 +105,11 @@ print_usage() {
   echo "  --model <model>          Model to use (passed through to agent)" >&2
   echo "  --task-file <path>       Path to tasks YAML file (alternative to feature-name)" >&2
   echo "" >&2
-  echo "tmux mode:" >&2
-  echo "  --tmux                   Run agents in TUI mode inside a tmux session" >&2
+  echo "tmux mode (enabled by default):" >&2
+  echo "  --no-tmux                Run agents in non-tmux streaming mode" >&2
   echo "  --keep-tmux              Keep tmux session alive after ralph exits" >&2
-  echo "  --idle-timeout <s>       Seconds of no output before treating agent as done (default: 120)" >&2
+  echo "  --max-iteration-duration <seconds>" >&2
+  echo "                           Cancel an iteration after this many seconds and start the next (default: disabled)" >&2
 }
 
 # Parse arguments from command line
@@ -152,6 +154,16 @@ validate_tmux() {
 validate_agent_cli() {
   if ! command -v "$AGENT" &>/dev/null; then
     echo "Error: agent CLI '$AGENT' not found in PATH" >&2
+    exit 1
+  fi
+}
+
+validate_max_iteration_duration() {
+  if [ -z "$MAX_ITERATION_DURATION" ]; then
+    return
+  fi
+  if ! [[ "$MAX_ITERATION_DURATION" =~ ^[0-9]+$ ]] || [ "$MAX_ITERATION_DURATION" -le 0 ]; then
+    echo "Error: --max-iteration-duration must be a positive integer (seconds), got '${MAX_ITERATION_DURATION}'." >&2
     exit 1
   fi
 }
@@ -227,7 +239,24 @@ build_context() {
   # Always present (validated by validate_prompt_file before build_context is called).
   output+="# Agent Instructions"$'\n\n'
   output+="## instructions"$'\n\n'
-  output+="$(cat "$PROMPT_FILE")"$'\n'
+  output+="$(cat "$PROMPT_FILE")"$'\n\n'
+
+  # ── Layer 4: Signal Instructions ──────────────────────────────────────────────
+  # Inject the runtime signal file path so the agent can write it directly.
+  output+="# Signal Instructions"$'\n\n'
+  output+="After completing the task, write your signal to this exact file path:"$'\n\n'
+  output+='```'$'\n'
+  output+="SIGNAL_FILE=$RALPH_SIGNAL_FILE"$'\n'
+  output+='```'$'\n\n'
+  output+="Write exactly one of these strings to the file using a shell command or file write tool:"$'\n\n'
+  output+="- Task succeeded, more tasks remain: \`SUB-TASK-COMPLETE\`"$'\n'
+  output+="- Task succeeded, ALL tasks are now passed: \`COMPLETE\`"$'\n'
+  output+="- No eligible task found (stuck/blocked): \`FAILED\`"$'\n\n'
+  output+="Example shell command:"$'\n\n'
+  output+='```'$'\n'
+  output+="echo \"COMPLETE\" > \"$RALPH_SIGNAL_FILE\""$'\n'
+  output+='```'$'\n\n'
+  output+="Replace \`COMPLETE\` with the appropriate signal. After writing the file, output NOTHING else. STOP IMMEDIATELY."$'\n'
 
   printf '%s' "$output"
 }
@@ -256,13 +285,13 @@ run_agent_streaming() {
       agent_cmd="opencode run --dir \"$PROJECT_ROOT\""
       ;;
     claude)
-      agent_cmd="claude --print"
+      agent_cmd="claude --dangerously-skip-permissions --print "
       ;;
     pi)
       agent_cmd="pi --print --session-dir \"$PROJECT_ROOT/tasks/agent_logs\""
       ;;
     codex)
-      agent_cmd="codex exec"
+      agent_cmd="codex exec --dangerously-bypass-approvals-and-sandbox"
       ;;
   esac
 
@@ -283,8 +312,19 @@ run_agent_streaming() {
       ;;
   esac
 
+  rm -f "$RALPH_SIGNAL_FILE"
+
   eval "$agent_cmd" < <(echo "$CONTEXT") > "$fifo" 2>&1 &
   agent_pid=$!
+
+  # Start timeout watchdog if enabled
+  local timeout_pid=""
+  local timeout_flag=""
+  if [ -n "$MAX_ITERATION_DURATION" ] && [ "$MAX_ITERATION_DURATION" -gt 0 ]; then
+    timeout_flag="/tmp/ralph-timeout-${FEATURE_NAME}-$$-${iteration}.flag"
+    (sleep "$MAX_ITERATION_DURATION"; touch "$timeout_flag"; kill "$agent_pid" 2>/dev/null; sleep 1; kill -9 "$agent_pid" 2>/dev/null) &
+    timeout_pid=$!
+  fi
 
   # Read from FIFO line-by-line, log everything, kill on signal
   while IFS= read -r line; do
@@ -302,8 +342,26 @@ run_agent_streaming() {
     fi
   done < "$fifo"
 
+  # Cancel timeout watchdog if agent finished in time
+  if [ -n "$timeout_pid" ]; then
+    kill "$timeout_pid" 2>/dev/null || true
+    wait "$timeout_pid" 2>/dev/null || true
+  fi
+
   # Kill the agent process if it's still running
   kill_agent_if_running "$agent_pid"
+
+  # Fallback: if no signal detected from stdout, check if agent wrote the signal file
+  if [ -z "$DETECTED_SIGNAL" ] && [ -f "$RALPH_SIGNAL_FILE" ]; then
+    DETECTED_SIGNAL=$(cat "$RALPH_SIGNAL_FILE")
+  fi
+  rm -f "$RALPH_SIGNAL_FILE"
+
+  # If still no signal and timeout fired, mark as TIMEOUT
+  if [ -z "$DETECTED_SIGNAL" ] && [ -n "$timeout_flag" ] && [ -f "$timeout_flag" ]; then
+    DETECTED_SIGNAL="TIMEOUT"
+  fi
+  rm -f "$timeout_flag"
 
   # Write log footer with timestamp
   {
@@ -334,7 +392,6 @@ kill_agent_if_running() {
 
 setup_tmux_session() {
   local session="ralph-${FEATURE_NAME}"
-  TMUX_SESSION="$session"
 
   if tmux has-session -t "$session" 2>/dev/null; then
     # Reuse existing session, clear agent pane
@@ -350,7 +407,7 @@ setup_tmux_session() {
     if tmux split-window -t "$session" -v -l 15 -c "$PROJECT_ROOT" 2>/dev/null; then
       # Start task monitor in bottom pane
       tmux send-keys -t "${session}:0.1" \
-        "watch -n2 'yq e \".tasks[] | [.id, .status, .title]\" \"${TASK_FILE:-$PROJECT_ROOT/tasks/$FEATURE_NAME/tasks.yaml}\"'" Enter
+        "\"$SCRIPT_DIR/../task-monitor.sh\" \"${TASK_FILE:-$PROJECT_ROOT/tasks/$FEATURE_NAME/tasks.yaml}\"" Enter
       # Select agent pane
       tmux select-pane -t "${session}:0.0"
     else
@@ -371,19 +428,30 @@ cleanup_tmux_session() {
     tmux kill-session -t "$session" 2>/dev/null || true
   fi
   # Clean up temp files
-  rm -f "/tmp/ralph-signal-$$" "/tmp/ralph-context-$$.md"
+  rm -f "$RALPH_SIGNAL_FILE" "/tmp/ralph-context-$$.md"
 }
 
 kill_tmux_agent() {
   local target="$1"
   local pane_pid
   pane_pid=$(tmux display-message -t "$target" -p '#{pane_pid}' 2>/dev/null) || return 0
-  local agent_pid
-  agent_pid=$(pgrep -P "$pane_pid" 2>/dev/null | head -1) || true
-  if [ -n "$agent_pid" ]; then
-    kill "$agent_pid" 2>/dev/null || true
+
+  # Send C-c first to gracefully interrupt any running TUI
+  tmux send-keys -t "$target" C-c
+  sleep 1
+
+  # Kill direct children of the pane shell (e.g. claude, pi) and their children
+  # (e.g. codex which may spawn an extra shell layer)
+  local child_pids
+  child_pids=$(pgrep -P "$pane_pid" 2>/dev/null) || true
+  if [ -n "$child_pids" ]; then
+    echo "$child_pids" | xargs -r kill 2>/dev/null || true
+    # Also kill grandchildren for agents with an extra process layer (e.g. codex)
+    echo "$child_pids" | while read -r cpid; do
+      pgrep -P "$cpid" 2>/dev/null | xargs -r kill 2>/dev/null || true
+    done
     sleep 1
-    kill -9 "$agent_pid" 2>/dev/null || true
+    echo "$child_pids" | xargs -r kill -9 2>/dev/null || true
   fi
 }
 
@@ -393,7 +461,7 @@ build_tmux_agent_cmd() {
 
   case "$AGENT" in
     claude)
-      agent_cmd="claude --permission-mode auto"
+      agent_cmd="claude --permission-mode bypassPermissions --allow-dangerously-skip-permissions --dangerously-skip-permissions"
       [ -n "${MODEL:-}" ] && agent_cmd="$agent_cmd --model $MODEL"
       agent_cmd="$agent_cmd --system-prompt \"\$(cat $context_file)\" \"Begin working on the next task per the system prompt instructions\""
       ;;
@@ -408,7 +476,7 @@ build_tmux_agent_cmd() {
       [ -n "${MODEL:-}" ] && agent_cmd="$agent_cmd --model $MODEL"
       ;;
     codex)
-      agent_cmd="codex --full-auto"
+      agent_cmd="codex --dangerously-bypass-approvals-and-sandbox"
       [ -n "${MODEL:-}" ] && agent_cmd="$agent_cmd --model $MODEL"
       agent_cmd="$agent_cmd \"\$(cat $context_file)\""
       ;;
@@ -423,10 +491,9 @@ run_agent_streaming_tmux() {
 
   local session="ralph-${FEATURE_NAME}"
   local target="${session}:0.0"
-  local signal_file="/tmp/ralph-signal-$$"
   local context_file="/tmp/ralph-context-$$.md"
 
-  rm -f "$signal_file"
+  rm -f "$RALPH_SIGNAL_FILE"
 
   # Write context to temp file (tmux send-keys can't pipe stdin)
   printf '%s' "$CONTEXT" > "$context_file"
@@ -449,14 +516,27 @@ run_agent_streaming_tmux() {
   tmux send-keys -t "$target" "$agent_tui_cmd" Enter
 
   # Start watcher in background
-  "$SCRIPT_DIR/tmux-watcher.sh" "$target" "$signal_file" "$IDLE_TIMEOUT" &
+  "$SCRIPT_DIR/tmux-watcher.sh" "$target" "$RALPH_SIGNAL_FILE" &
   local watcher_pid=$!
 
-  # Poll signal file
-  while [ ! -f "$signal_file" ]; do
+  # Poll signal file (with optional per-iteration timeout)
+  local start_time
+  start_time=$(date +%s)
+  while [ ! -f "$RALPH_SIGNAL_FILE" ]; do
+    if [ -n "$MAX_ITERATION_DURATION" ] && [ "$MAX_ITERATION_DURATION" -gt 0 ]; then
+      local elapsed=$(( $(date +%s) - start_time ))
+      if [ "$elapsed" -ge "$MAX_ITERATION_DURATION" ]; then
+        break
+      fi
+    fi
     sleep 0.5
   done
-  DETECTED_SIGNAL=$(cat "$signal_file")
+
+  if [ -f "$RALPH_SIGNAL_FILE" ]; then
+    DETECTED_SIGNAL=$(cat "$RALPH_SIGNAL_FILE")
+  else
+    DETECTED_SIGNAL="TIMEOUT"
+  fi
 
   # Stop watcher
   kill "$watcher_pid" 2>/dev/null || true
@@ -482,7 +562,7 @@ run_agent_streaming_tmux() {
   } >> "$LOG_FILE"
 
   # Clean up signal file (keep context file for next iteration overwrite)
-  rm -f "$signal_file"
+  rm -f "$RALPH_SIGNAL_FILE"
 }
 
 display_configuration() {
@@ -501,10 +581,12 @@ display_configuration() {
   fi
   echo "Log file:        $LOG_FILE"
   echo "Agent CLI:       $(command -v "$AGENT")"
+  if [ -n "$MAX_ITERATION_DURATION" ] && [ "$MAX_ITERATION_DURATION" -gt 0 ]; then
+    echo "Maximum Iteration duration:   ${MAX_ITERATION_DURATION}s"
+  fi
   if [ "$USE_TMUX" = true ]; then
     echo "tmux mode:       enabled"
     echo "tmux session:    ralph-${FEATURE_NAME}"
-    echo "Idle timeout:    ${IDLE_TIMEOUT}s"
     echo "Keep session:    $KEEP_TMUX"
   fi
   echo "###########################"
@@ -543,6 +625,13 @@ handle_signal_failed() {
 handle_signal_subtask_complete() {
   echo ""
   echo "  Task completed. Moving to next iteration..."
+  echo ""
+}
+
+handle_signal_timeout() {
+  local iteration="$1"
+  echo ""
+  echo "  Iteration $iteration was terminated after the configured max-iteration-duration of ${MAX_ITERATION_DURATION}s — starting next iteration..."
   echo ""
 }
 
@@ -590,9 +679,12 @@ main() {
     exit 1
   fi
 
+  RALPH_SIGNAL_FILE="/tmp/ralph-signal-${FEATURE_NAME}-$$.txt"
+
   validate_yq
   validate_agent
   validate_agent_cli
+  validate_max_iteration_duration
   validate_prompt_file
 
   if [ "$USE_TMUX" = true ]; then
@@ -640,11 +732,8 @@ main() {
       SUB-TASK-COMPLETE)
         handle_signal_subtask_complete
         ;;
-      IDLE)
-        echo ""
-        echo "  Agent idle for ${IDLE_TIMEOUT}s — treating as task complete."
-        echo "  Continuing to next iteration..."
-        echo ""
+      TIMEOUT)
+        handle_signal_timeout "$i"
         ;;
       *)
         handle_signal_unrecognized "$i"

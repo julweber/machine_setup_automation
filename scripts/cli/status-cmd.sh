@@ -39,19 +39,16 @@ else
     COLOR_DIM=""
 fi
 
-# ── Helpers ───────────────────────────────────────────────────────────────────
+LIB_SH="${BASH_SOURCE[0]%/*}/lib.sh"
+if [ ! -f "$LIB_SH" ]; then
+    echo "Error: Shared CLI library not found at '${LIB_SH}'." >&2
+    echo "       Restore scripts/cli/lib.sh or refresh the framework with: spec init --update" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$LIB_SH"
 
-# list_features: echo the names of all features that have a spec directory under
-# specification/features/, sorted alphabetically.
-list_features() {
-    local features_dir="${PWD}/specification/features"
-    if [ ! -d "$features_dir" ]; then
-        return
-    fi
-    find "$features_dir" -mindepth 1 -maxdepth 1 -type d | sort | while read -r dir; do
-        basename "$dir"
-    done
-}
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 # get_worktree_list: output the list of known worktree paths from git.
 # Returns empty string if git is not available or this is not a git repo.
@@ -129,10 +126,7 @@ status_color() {
 read_tasks_yaml() {
     local yaml_file="$1"
 
-    if ! yq --version > /dev/null 2>&1; then
-        echo "Warning: yq is not installed; cannot parse tasks.yaml" >&2
-        return 1
-    fi
+    check_yq
 
     local feature_name passed pending failed
     feature_name="$(yq '.featureName // ""' "$yaml_file" 2>/dev/null)" || {
@@ -302,7 +296,7 @@ print_json() {
     # Build the JSON features array
     local first=1
     printf '{\n'
-    printf '  "project": %s,\n' "$(printf '%s' "$proj_name" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+    printf '  "project": %s,\n' "$(json_string "$proj_name")"
     printf '  "features": [\n'
 
     local feature
@@ -345,9 +339,9 @@ print_json() {
         first=0
 
         local feature_json
-        feature_json="$(printf '%s' "$feature" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+        feature_json="$(json_string "$feature")"
         local branch_json
-        branch_json="$(printf '%s' "$branch" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')"
+        branch_json="$(json_string "$branch")"
 
         printf '    {\n'
         printf '      "featureName": %s,\n' "$feature_json"

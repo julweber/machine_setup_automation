@@ -13,6 +13,15 @@
 
 set -e
 
+LIB_SH="${BASH_SOURCE[0]%/*}/lib.sh"
+if [ ! -f "$LIB_SH" ]; then
+    echo "Error: Shared CLI library not found at '${LIB_SH}'." >&2
+    echo "       Restore scripts/cli/lib.sh or refresh the framework with: spec init --update" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$LIB_SH"
+
 # ── Usage ─────────────────────────────────────────────────────────────────────
 
 print_usage() {
@@ -32,32 +41,6 @@ EOF
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-# detect_feature_from_branch: echo the feature name extracted from the current
-# git branch (feat/<name> pattern), or empty string if not on a feature branch.
-detect_feature_from_branch() {
-    local branch
-    branch="$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-    case "$branch" in
-        feat/*)
-            echo "${branch#feat/}"
-            ;;
-        *)
-            echo ""
-            ;;
-    esac
-}
-
-# list_features: echo the names of all features with a spec directory, sorted.
-list_features() {
-    local features_dir="${PWD}/specification/features"
-    if [ ! -d "$features_dir" ]; then
-        return
-    fi
-    find "$features_dir" -mindepth 1 -maxdepth 1 -type d | sort | while read -r dir; do
-        basename "$dir"
-    done
-}
 
 # validate_spec_reviewed: error and exit if behaviors.md or tests.md are missing
 # or empty for the given feature.
@@ -107,7 +90,7 @@ validate_spec_reviewed() {
 }
 
 # check_existing_tasks: if tasks/<feature>/tasks.yaml already exists, warn and
-# offer the user the option to cancel (anything other than 'y'/'Y' = cancel).
+# offer the user the option to cancel.
 check_existing_tasks() {
     local feature_name="$1"
     local tasks_file="${PWD}/tasks/${feature_name}/tasks.yaml"
@@ -117,13 +100,7 @@ check_existing_tasks() {
         echo "Warning: tasks.yaml already exists for '${feature_name}':" >&2
         echo "  ${tasks_file}" >&2
         echo "" >&2
-        printf "Overwrite existing tasks.yaml? [y/N] " >&2
-        local answer
-        read -r answer || answer="n"
-        if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-            echo "Cancelled." >&2
-            exit 0
-        fi
+        confirm_overwrite "tasks.yaml" "$tasks_file"
     fi
 }
 

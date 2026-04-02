@@ -10,6 +10,15 @@
 
 set -e
 
+LIB_SH="${BASH_SOURCE[0]%/*}/lib.sh"
+if [ ! -f "$LIB_SH" ]; then
+    echo "Error: Shared CLI library not found at '${LIB_SH}'." >&2
+    echo "       Restore scripts/cli/lib.sh or refresh the framework with: spec init --update" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$LIB_SH"
+
 # ── Usage ─────────────────────────────────────────────────────────────────────
 
 print_usage() {
@@ -29,51 +38,8 @@ EOF
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
-# is_kebab_case: return 0 if the name contains only lowercase letters, digits,
-# and hyphens, and does not start or end with a hyphen.
-is_kebab_case() {
-    local name="$1"
-    # Must be non-empty, only [a-z0-9-], not start/end with '-'
-    if [[ "$name" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || [[ "$name" =~ ^[a-z0-9]$ ]]; then
-        return 0
-    fi
-    return 1
-}
-
-# validate_kebab: print an error and exit 1 if name is not valid kebab-case.
-validate_kebab() {
-    local name="$1"
-    if ! is_kebab_case "$name"; then
-        echo "Error: Invalid feature name '${name}'." >&2
-        echo "       Feature names must be kebab-case (lowercase letters, digits, and hyphens)." >&2
-        echo "       Example: user-authentication" >&2
-        exit 1
-    fi
-}
-
-# validate_project: ensure specification/project/ exists with at least one .md file.
-validate_project() {
-    local spec_project_dir="${PWD}/specification/project"
-    if [ ! -d "$spec_project_dir" ]; then
-        echo "Error: No project specs found. '${spec_project_dir}' does not exist." >&2
-        echo "       Initialize this project first:" >&2
-        echo "         spec init <project-name>" >&2
-        exit 1
-    fi
-
-    local md_count
-    md_count="$(find "$spec_project_dir" -maxdepth 1 -name '*.md' | wc -l)"
-    if [ "$md_count" -eq 0 ]; then
-        echo "Error: No project spec files found in '${spec_project_dir}'." >&2
-        echo "       Initialize this project first:" >&2
-        echo "         spec init <project-name>" >&2
-        exit 1
-    fi
-}
-
 # check_existing_spec: if the feature spec directory already exists, warn and
-# offer the user the option to cancel (pressing anything other than 'y'/'Y'
-# or just hitting Enter = cancel).
+# offer the user the option to cancel.
 check_existing_spec() {
     local feature_name="$1"
     local spec_dir="${PWD}/specification/features/${feature_name}"
@@ -92,13 +58,7 @@ check_existing_spec() {
             done
         fi
         echo "" >&2
-        printf "Overwrite existing spec? [y/N] " >&2
-        local answer
-        read -r answer || answer="n"
-        if [[ "$answer" != "y" && "$answer" != "Y" ]]; then
-            echo "Cancelled." >&2
-            exit 0
-        fi
+        confirm_overwrite "spec" "$spec_dir"
     fi
 }
 

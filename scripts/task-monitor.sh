@@ -92,7 +92,8 @@ build_display() {
     local total passed_count pending_count pct
     total=$(echo "$yaml_content" | yq '.tasks | length')
     passed_count=$(echo "$yaml_content" | yq '[.tasks[] | select(.status == "passed")] | length')
-    pending_count=$(echo "$yaml_content" | yq '[.tasks[] | select(.status == "pending")] | length')
+    # A task is pending if status is "pending" OR status is null/not set
+    pending_count=$(echo "$yaml_content" | yq '[.tasks[] | select(.status == "pending" or (.status | type == "null"))] | length')
 
     if [[ $total -gt 0 ]]; then
         pct=$(echo "scale=1; $passed_count * 100 / $total" | bc)
@@ -101,8 +102,9 @@ build_display() {
     fi
 
     local passed_list pending_list
-    passed_list=$(echo "$yaml_content" | yq -r '.tasks[] | select(.status == "passed") | "  [✓] \(.id): \(.title)"')
-    pending_list=$(echo "$yaml_content" | yq -r '.tasks[] | select(.status == "pending") | "  [ ] \(.id): \(.title)"')
+    passed_list=$(echo "$yaml_content" | yq -r '.tasks[] | select(.status == "passed") | "  [✓] \(.id): \(.title)"' | sed '/^$/d')
+    # A task is pending if status is "pending" OR status is null/not set
+    pending_list=$(echo "$yaml_content" | yq -r '.tasks[] | select(.status == "pending" or (.status | type == "null")) | "  [ ] \(.id): \(.title)"' | sed '/^$/d')
 
     # Progress bar
     local bar_width=40
@@ -110,7 +112,7 @@ build_display() {
     filled=$(echo "$passed_count * $bar_width / $total" | bc 2>/dev/null || echo 0)
     empty=$((bar_width - filled))
     bar="["
-    bar+=$(printf '%0.s█' $(seq 1 $filled) 2>/dev/null || true)
+    bar+=$(printf '%0.s█' $(seq 1 "$filled") 2>/dev/null || true)
     bar+=$(printf '%0.s░' $(seq 1 $empty) 2>/dev/null || true)
     bar+="]"
 

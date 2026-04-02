@@ -12,6 +12,15 @@
 
 set -e
 
+LIB_SH="${BASH_SOURCE[0]%/*}/lib.sh"
+if [ ! -f "$LIB_SH" ]; then
+    echo "Error: Shared CLI library not found at '${LIB_SH}'." >&2
+    echo "       Restore scripts/cli/lib.sh or refresh the framework with: spec init --update" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$LIB_SH"
+
 # ── Usage ─────────────────────────────────────────────────────────────────────
 
 print_usage() {
@@ -31,35 +40,6 @@ EOF
 }
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-# detect_feature_from_branch: echo the feature name extracted from the current
-# git branch (feat/<name> pattern), or empty string if not on a feature branch.
-# Uses symbolic-ref to work correctly even in repos with no commits yet.
-detect_feature_from_branch() {
-    local branch
-    branch="$(git symbolic-ref --short HEAD 2>/dev/null || git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-    case "$branch" in
-        feat/*)
-            echo "${branch#feat/}"
-            ;;
-        *)
-            echo ""
-            ;;
-    esac
-}
-
-# list_features: echo the names of all features that have a spec directory under
-# specification/features/, sorted alphabetically.
-list_features() {
-    local features_dir="${PWD}/specification/features"
-    if [ ! -d "$features_dir" ]; then
-        return
-    fi
-    # Only list directories (each one is a feature)
-    find "$features_dir" -mindepth 1 -maxdepth 1 -type d | sort | while read -r dir; do
-        basename "$dir"
-    done
-}
 
 # count_features: echo the number of feature directories.
 count_features() {

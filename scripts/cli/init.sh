@@ -39,14 +39,15 @@ validate_agent() {
         fi
     done
     
-    echo "Error: Unknown agent '$agent'. Supported agents: opencode, claude, pi, codex" >&2
+    echo "Error: Unknown agent '$agent'. Supported agents: pi, opencode, claude, codex" >&2
     return 1
 }
 
 parse_agent_list() {
     local input="$1"
+    local normalized
     # Normalize to lowercase and split by comma
-    local normalized=$(echo "$input" | tr '[:upper:]' '[:lower:]')
+    normalized="$(echo "$input" | tr '[:upper:]' '[:lower:]')"
     
     IFS=',' read -ra agents <<< "$normalized"
     
@@ -80,7 +81,7 @@ Arguments:
 Options:
   --update                    Refresh framework in an existing project
   --interactive               Run guided wizard with prompts
-  --agent <name>              Agent(s) to link: opencode, claude, pi, codex (comma-separated)
+  --agent <name>              Agent(s) to link: pi, opencode, claude, codex (comma-separated)
   --all-agents                Link all three agents (default for update mode)
   --force                     Bypass safety checks (e.g., existing content detection)
   --no-git                    Skip git initialization and staging
@@ -100,7 +101,7 @@ Examples:
   spec init --interactive
 
   # Update existing project with specific agents
-  spec init --update --agent opencode,claude,pi,codex
+  spec init --update --agent opencode,claude
 
   # Force initialize (dangerous if content exists)
   spec init my-project --force
@@ -180,6 +181,7 @@ create_agent_symlinks() {
             local target="${skills_dir}/${skill}"
             local rel
             rel="$(rel_path "$target" "$full_agent_dir")"
+            echo "Creating symlink for $skill: $link -> $rel"
             ln -sfn "$rel" "$link"
         done
     done
@@ -206,7 +208,6 @@ create_agent_symlinks_for() {
         python3 -c "import os.path; print(os.path.relpath('$target', '$link_dir'))"
     }
 
-    # Populate skills array for this function
     local skills=()
     mapfile -t skills < <(find "$skills_dir" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | sort)
 
@@ -223,7 +224,7 @@ create_agent_symlinks_for() {
             codex)    local agent_rel_dir=".codex/skills" ;;
             *) echo "Error: Unknown agent '$agent' in symlink creation" >&2; continue ;;
         esac
-        
+
         local full_agent_dir="${project_dir}/${agent_rel_dir}"
         mkdir -p "$full_agent_dir"
 
@@ -232,6 +233,7 @@ create_agent_symlinks_for() {
             local target="${skills_dir}/${skill}"
             local rel
             rel="$(rel_path "$target" "$full_agent_dir")"
+            echo "Creating symlink for $skill: $link -> $rel"
             ln -sfn "$rel" "$link"
         done
         
@@ -254,7 +256,8 @@ check_existing_content() {
         fpath="${spec_project_dir}/${file}"
         if [ -f "$fpath" ]; then
             # Count non-comment, non-header, non-empty lines
-            local content_lines=$(grep -v '^<!--' "$fpath" | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' | wc -l)
+            local content_lines
+            content_lines="$(awk '!/^<!--/ && !/^[[:space:]]*#/ && !/^[[:space:]]*$/{count++} END{print count+0}' "$fpath")"
             
             if [ "$content_lines" -gt 2 ]; then
                 errors+=("  - ${spec_project_dir}/${file} (${content_lines} non-empty lines)")
@@ -407,8 +410,8 @@ cmd_update() {
     else
         # Interactive prompt for update mode
         echo "Which agents to link?" >&2
-        echo "  Options: opencode, claude, pi, codex (comma-separated)" >&2
-        echo "  Default: all three agents" >&2
+        echo "  Options: pi, opencode, claude, codex (comma-separated)" >&2
+        echo "  Default: all agents" >&2
         read -r -p "> " user_input
         
         case "$(echo "$user_input" | tr '[:upper:]' '[:lower:]')" in
@@ -419,7 +422,7 @@ cmd_update() {
             all|"")      agents_to_link=("opencode" "claude" "pi" "codex") ;;
             *) 
                 echo "Invalid input, using default: all three agents" >&2
-                agents_to_link=("opencode" "claude" "pi" "codex")
+                agents_to_link=("opencode" "claude" "pi " "codex")
                 ;;
         esac
     fi
@@ -433,34 +436,33 @@ cmd_update() {
     echo "" >&2
     echo "Agents to link: ${agents_to_link[*]}" >&2
     echo ""
-    
-    # Refresh Ralph loop files
-    echo "Copying ralph loop files..."
-    mkdir -p "${project_dir}/scripts/ralph"
-    cp -r "${FRAMEWORK_DIR}/scripts/ralph/." "${project_dir}/scripts/ralph/" || true
-    chmod +x "${project_dir}"/scripts/ralph/*.sh
-    
-    # Refresh scripts
-    echo "Copying framework scripts..."
-    cp -f "${FRAMEWORK_DIR}/scripts"/*.sh "${project_dir}/scripts/" || true
-    chmod +x "${project_dir}"/scripts/*.sh
 
-    # Refresh spec cli
-    echo "Copying spec cli ..."
-    mkdir -p "${project_dir}/bin"
-    mkdir -p "${project_dir}/scripts/cli"
-    cp -f "${FRAMEWORK_DIR}/bin/spec" "${project_dir}/bin/spec" || true
-    cp -f "${FRAMEWORK_DIR}/scripts/cli"/*.sh "${project_dir}/scripts/cli"/ || true
-    chmod +x "${project_dir}/bin/spec"
-    
-    # Refresh skills directory (replace entirely)
-    echo "Refreshing skills directory..."
-    # When FRAMEWORK_DIR == project_dir, use cp -a to handle in-place replacement
-    if [ "${FRAMEWORK_DIR}" = "${project_dir}" ]; then
-        cp -a "${FRAMEWORK_DIR}/skills/*" "${project_dir}/.skills-temp" || true
-        mv "${project_dir}/.skills-temp" "${project_dir}/skills" || true
+    if [[ "$FRAMEWORK_DIR" == "$project_dir" ]]; then
+        echo "We are within the framework. No copying required!"
     else
-        cp -r "${FRAMEWORK_DIR}/skills/*" "${project_dir}/skills/" || true
+        # Refresh Ralph loop files
+        echo "Copying ralph loop files..."
+        mkdir -p "${project_dir}/scripts/ralph"
+        cp -r "${FRAMEWORK_DIR}/scripts/ralph/." "${project_dir}/scripts/ralph/"
+        chmod +x "${project_dir}/scripts/ralph/ralph.sh"
+        
+        # Refresh scripts
+        echo "Copying framework scripts..."
+        cp -f "${FRAMEWORK_DIR}/scripts"/*.sh "${project_dir}/scripts/"
+        chmod +x "${project_dir}"/scripts/*.sh
+
+        # Refresh spec cli
+        echo "Copying spec cli ..."
+        mkdir -p "${project_dir}/bin"
+        mkdir -p "${project_dir}/scripts/cli"
+        cp -f "${FRAMEWORK_DIR}/bin/spec" "${project_dir}/bin/spec"
+        cp -f "${FRAMEWORK_DIR}/scripts/cli"/*.sh "${project_dir}/scripts/cli"/
+        chmod +x "${project_dir}/bin/spec"
+        
+        # Refresh skills directory (replace entirely)
+        echo "Refreshing skills directory..."
+        rm -rf "${project_dir}/skills"
+        cp -r "${FRAMEWORK_DIR}/skills/." "${project_dir}/skills/"
     fi
     
     # Recreate agent symlinks for specified agents only
@@ -582,9 +584,9 @@ cmd_init() {
     
     # Copy framework files
     echo "Copying ralph loop files..." >&2
-    mkdir -p "${project_dir}/scripts/ralph"
-    cp -r "${FRAMEWORK_DIR}/scripts/ralph/." "${project_dir}/scripts/ralph/"
-    chmod +x "${project_dir}"/scripts/ralph/*.sh
+    cp -f "${FRAMEWORK_DIR}/scripts/ralph/ralph.sh" "${project_dir}/scripts/ralph/ralph.sh"
+    cp -f "${FRAMEWORK_DIR}/scripts/ralph/prompt.md" "${project_dir}/scripts/ralph/prompt.md"
+    chmod +x "${project_dir}/scripts/ralph/ralph.sh"
 
     echo "Copying framework scripts..." >&2
     cp -f "${FRAMEWORK_DIR}/scripts"/*.sh "${project_dir}/scripts/"
@@ -699,7 +701,7 @@ cmd_interactive() {
     # Prompt 3: Agent selection
     echo "" >&2
     echo "Which agents to link?" >&2
-    echo "  Options: opencode, claude, pi, codex (comma-separated)" >&2
+    echo "  Options: opencode, claude, pi (comma-separated)" >&2
     echo "  Default: all three agents" >&2
     read -r -p "> " agent_input
     
@@ -748,8 +750,8 @@ cmd_interactive() {
         cmd_init "$project_name"
     fi
     
-    # Update symlinks for specific agents (init creates all three by default)
-    if [ ${#agents_to_link[@]} -lt 3 ]; then
+    # Update symlinks for specific agents (init creates all by default)
+    if [ ${#agents_to_link[@]} -lt 4 ]; then
         local resolved_project_dir="$display_dir"
         echo "" >&2
         echo "Updating agent symlinks to use only: ${agents_to_link[*]}" >&2
@@ -785,7 +787,7 @@ main() {
                 ;;
             --agent)
                 if [ -z "${2:-}" ] || [[ "${2:-}" == --* ]]; then
-                    echo "Error: --agent requires an argument (e.g., pi,opencode,claude)" >&2
+                    echo "Error: --agent requires an argument (e.g., opencode,claude)" >&2
                     exit 1
                 fi
                 AGENT_LIST="$2"

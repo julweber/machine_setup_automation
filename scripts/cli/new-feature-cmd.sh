@@ -16,39 +16,16 @@
 
 set -e
 
+LIB_SH="${BASH_SOURCE[0]%/*}/lib.sh"
+if [ ! -f "$LIB_SH" ]; then
+    echo "Error: Shared CLI library not found at '${LIB_SH}'." >&2
+    echo "       Restore scripts/cli/lib.sh or refresh the framework with: spec init --update" >&2
+    exit 1
+fi
+# shellcheck disable=SC1090,SC1091
+source "$LIB_SH"
+
 # ── Helpers ───────────────────────────────────────────────────────────────────
-
-# is_kebab_case: return 0 if name is valid kebab-case, 1 otherwise.
-is_kebab_case() {
-    local name="$1"
-    if [[ "$name" =~ ^[a-z0-9]([a-z0-9-]*[a-z0-9])?$ ]] || [[ "$name" =~ ^[a-z0-9]$ ]]; then
-        return 0
-    fi
-    return 1
-}
-
-# validate_project: ensure specification/project/ exists with at least one .md file.
-# Exits 1 with guidance if the project is not initialized.
-validate_project() {
-    local spec_project_dir="${PWD}/specification/project"
-    if [ ! -d "$spec_project_dir" ]; then
-        echo "Error: Project not initialized. '${spec_project_dir}' does not exist." >&2
-        echo "" >&2
-        echo "       Initialize the project first:" >&2
-        echo "         spec init <project-name>" >&2
-        exit 1
-    fi
-
-    local md_count
-    md_count="$(find "$spec_project_dir" -maxdepth 1 -name '*.md' | wc -l)"
-    if [ "$md_count" -eq 0 ]; then
-        echo "Error: Project not initialized. No spec files in '${spec_project_dir}'." >&2
-        echo "" >&2
-        echo "       Initialize the project first:" >&2
-        echo "         spec init <project-name>" >&2
-        exit 1
-    fi
-}
 
 # prompt_feature_name: prompt for a kebab-case feature name, looping on invalid
 # input until the user provides a valid name or cancels (empty + EOF).
