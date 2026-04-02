@@ -79,51 +79,28 @@ CONCOURSE_DOMAIN="${CONCOURSE_DOMAIN:-}"                    # e.g. concourse.exa
 PROXY_NETWORK="${PROXY_NETWORK:-proxy}"                     # Traefik's network name
 
 # ─────────────────────────────────────────────────────────────────────────────
-# COLOURS & HELPERS
+# SOURCE SHARED LIBRARIES
 # ─────────────────────────────────────────────────────────────────────────────
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/helpers.sh"
 
-info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
-success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
-error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
-step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
+# Source core library for Traefik integration (optional)
+if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
+  # shellcheck disable=SC1091
+  source "${SCRIPT_DIR}/../lib/core.sh" || true
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Running pre-flight checks"
-
-if ! command -v docker &>/dev/null; then
-  error "Docker is not installed or not in PATH. Run setup-docker.sh first."
-fi
-
-if ! docker info &>/dev/null; then
-  error "Docker daemon is not running. Start it with: sudo systemctl start docker"
-fi
-
-success "Docker $(docker --version | awk '{print $3}' | tr -d ',') detected and running."
-
-# OpenSSL check
-if ! command -v openssl &>/dev/null; then
-  error "OpenSSL not found. Required for password/key generation."
-fi
-
-# Curl check
-if ! command -v curl &>/dev/null; then
-  error "curl not found. Required for health checks."
-fi
-
-success "Dependencies verified (docker, openssl, curl)."
+run_preflight_checks
 
 # Traefik pre-flight (only when opt-in)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
-  # shellcheck disable=SC1091
-  source "${SCRIPT_DIR}/../lib/helpers.sh"
   ensure_proxy_network
   if [[ -z "$CONCOURSE_DOMAIN" ]]; then
     error "CONCOURSE_DOMAIN must be set when CONCOURSE_TRAEFIK=true."
@@ -153,11 +130,21 @@ ENV_FILE="${CONCOURSE_HOME}/.env"
 
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
-  read -rp "    Re-create stack? Existing data in ${CONCOURSE_HOME} will be preserved. [y/N] " answer
+  warn "This will re-create the Concourse stack."
+  
+  # Preserve RSA keys - they are bind-mounted and will survive re-deployment
+  if [[ -d "${CONCOURSE_HOME}/keys" ]]; then
+    info "RSA keys in ${CONCOURSE_HOME}/keys/ will be preserved for session continuity."
+  fi
+  
+  # PostgreSQL data is in a named volume and will persist automatically
+  info "PostgreSQL data volume will persist across re-deployment."
+  
+  read -rp "    Re-create stack? [y/N] " answer
   if [[ "${answer,,}" == "y" ]]; then
     info "Stopping and removing existing stack..."
     docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-    success "Old stack removed."
+    success "Old stack removed. Keys and database data preserved."
   else
     info "Keeping existing stack. Exiting."
     exit 0

@@ -14,8 +14,8 @@ tasks:
       - "Script checks OpenSSL availability with command -v openssl"
       - "Script checks curl availability with command -v curl"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
+    status: passed
+    attempts: 1
 
   - id: "task-002"
     title: "Implement Traefik integration pre-checks"
@@ -30,8 +30,8 @@ tasks:
       - "Script verifies proxy network exists when Traefik integration is enabled"
       - "Script exits with error if CONCOURSE_DOMAIN is not set in Traefik mode"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
+    status: passed
+    attempts: 3
 
   - id: "task-003"
     title: "Add port availability check for direct access mode"
@@ -46,8 +46,8 @@ tasks:
       - "When port is in use, user is warned and prompted to confirm proceeding"
       - "Script exits gracefully if user declines to proceed"
       - "All existing tests continue to pass"
-    status: pending
-    attempts: 0
+    status: passed
+    attempts: 1
 
   - id: "task-004"
     title: "Implement existing deployment detection with user confirmation"
@@ -64,7 +64,7 @@ tasks:
       - "PostgreSQL data volume persists across re-deployments"
       - "All existing tests continue to pass"
     status: pending
-    attempts: 0
+    attempts: 1
 
   - id: "task-005"
     title: "Create directory structure for Concourse configuration"
