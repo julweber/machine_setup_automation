@@ -9,8 +9,9 @@ This repository provides a collection of **Bash automation scripts** to quickly 
 - forgejo as gitlab/github alternative
 - Deploying LM Studio, Open WebUI, Opencode and other LLM-related services.
 - Providing helper utilities for SSH tunneling
-- Setting up Kanboard project management board
 - Setting up NextCloud cloud storage
+- Setting up Concourse CI/CD pipeline server
+- Setting up Obsidian Livesync for collaborative note-taking
 
 The goal is to let a developer **run a single entrypoint script** and end up with a fully functional LLM development environment that can be further customized.
 
@@ -58,8 +59,10 @@ The agent will read the README and discover available scripts on its own, then g
 ```text
 machine_setup_automation/
 ├── README.md                     # ← This file (documentation)
+├── AGENTS.md                      # Agent-specific guidelines and instructions
 ├── setup-server.sh                # Main entry for server-side setup
 ├── setup-dev-machine.sh           # Main entry for a developer workstation
+├── docs/                          # Additional documentation files
 ├── lib/                           # Shared helper libraries (sourced by task scripts)
 │   └── helpers.sh                 # Common logging, colour output, and utility functions
 ├── tasks/                         # Core provisioning scripts (sourced by the entrypoints)
@@ -78,10 +81,9 @@ machine_setup_automation/
 │   ├── setup-nanobot.sh           # Clone, build and onboard the Nanobot MCP gateway
 │   ├── setup-nextcloud.sh         # NextCloud cloud storage via Docker Compose
 │   ├── setup-opencode-server.sh   # Opencode AI agent server installation and configuration
-│   ├── setup-openwebui.sh         # *Deprecated* - see `old/` for historic version
+│   ├── setup-openwebui.sh         # Open WebUI with LM Studio integration
 │   ├── setup-pi.sh                # Install the Pi coding agent via npm
 │   ├── setup-planka.sh            # Planka Kanban board via Docker Compose
-│   ├── setup-kanboard.sh          # Kanboard project management board via Docker Compose
 │   ├── setup-rocm.sh              # Install ROCm for AMD GPU support (optional)
 │   ├── setup-samba.sh             # Install and configure Samba file sharing (optional)
 │   ├── setup-ssh-tunnel-user.sh   # Create a restricted tunnel-only SSH user
@@ -111,76 +113,249 @@ Additional documentation:
 ---
 
 ## Core Task Scripts (`tasks/`)
-| Script                           | Primary purpose                                                                                                                                                                                | Key environment variables                                                                                                                                                                                                                                                                                                |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| ----------------------------------| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| -----------| ---------------------------------------------------------------------------------| -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------| -----| -----|
-| `setup-anydesk.sh`               | Installs AnyDesk remote desktop from the official apt repository.                                                                                                                              | None                                                                                                                                                                                                                                                                                                                     |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-basics.sh`                | Installs common system packages (curl, git, python3, etc.), **uv** Python package manager, and Node.js/npm.                                                                                    | None                                                                                                                                                                                                                                                                                                                     |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-brave.sh`                 | Installs the Brave browser from its official apt repository.                                                                                                                                   | None                                                                                                                                                                                                                                                                                                                     |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-comfy.sh` *(placeholder)* | Placeholder for future ComfyUI setup.                                                                                                                                                          | -                                                                                                                                                                                                                                                                                                                        |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-docker.sh`                | Installs Docker Engine from the official Docker repository, adds the current user to the `docker` group and verifies the installation.                                                         | None                                                                                                                                                                                                                                                                                                                     |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-excalidraw.sh`            | Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `always` restart policy.                                                                                        | `HOST_PORT` (default `5005`)                                                                                                                                                                                                                                                                                             |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-forgejo.sh`               | Installs Forgejo (a Gitea fork) as a Docker container. Supports optional Traefik reverse-proxy integration via `FORGEJO_TRAEFIK_ENABLED`.                                                      | `FORGEJO_TRAEFIK_ENABLED` (default `false`), `FORGEJO_DOMAIN`, `FORGEJO_HTTP_PORT` (default `3000`), `FORGEJO_SSH_PORT` (default `222`), `PROXY_NETWORK` (default `proxy`)                                                                                                                                               |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-hyprwhspr.sh`             | Installs **hyprwhspr** — native Wayland speech-to-text dictation for Linux. Handles ydotool 1.0+ backport (Ubuntu ships a broken 0.1.x), clones the repo, and runs the automated setup wizard. | `HYPRWHSPR_INSTALL_DIR` (default `~/hyprwhspr`), `HYPRWHSPR_BACKEND` (`nvidia`\                                                                                                                                                                                                                                          | `vulkan`\ | `cpu`\                                                                          | `onnx-asr`, auto-detected), `HYPRWHSPR_MODEL`, `HYPRWHSPR_WAYBAR` (default `false`), `HYPRWHSPR_MIC_OSD` (default `true`), `HYPRWHSPR_SYSTEMD` (default `true`), `HYPRWHSPR_HYPR_BINDINGS` (default `false`), `HYPRWHSPR_SKIP_DEPS` (default `false`) |     |     |
-| `setup-kubernetes.sh`            | Installs a lightweight **k3s** cluster and the `k9s` TUI for Kubernetes management.                                                                                                            | `K9S_VERSION` (default `0.50.7`)                                                                                                                                                                                                                                                                                         |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-lm-studio.sh`             | Downloads the specified LM Studio AppImage, creates a desktop entry, an optional start script, and optionally installs the **llmster** CLI (`lms`).                                            | `LM_STUDIO_VERSION` (default `0.4.2-2`), `INSTALL_LLMSTER_ENABLED` (default `true`)                                                                                                                                                                                                                                      |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-llama-cpp.sh`             | Builds and installs llama.cpp from source with auto or manual GPU backend selection. Skips install if binaries are already present.                                                            | `INSTALL_DIR` (default `$HOME/llama.cpp`), `BACKEND` (`nvidia`\                                                                                                                                                                                                                                                          | `amd`\    | `cpu`, auto-detected if empty), `FORCE` (default `0`), `JOBS` (default `nproc`) |                                                                                                                                                                                                                                                       |     |     |
-| `setup-nanobot.sh`               | Clones the Nanobot MCP gateway repository, builds the Docker image, and runs the onboarding flow.                                                                                              | `NANOBOT_TARGET_REPO_DIRECTORY` (default `$HOME/nanobot`)                                                                                                                                                                                                                                                                |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-planka.sh`                | Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL. Auto-generates a secret key and supports interactive or headless admin user creation.                         | `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD` (empty = trust auth), `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME` |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-kanboard.sh`              | Installs Kanboard, a lightweight project management tool, via Docker Compose with SQLite. Supports interactive or headless admin user creation.                                                | `KANBOARD_HOME` (default `/srv/kanboard`), `HTTP_PORT` (default `4500`), `BASE_URL` (default `http://localhost:4500`), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_USERNAME`                                                                                                                                                 |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-opencode-server.sh`       | Installs and configures the Opencode AI coding agent server with systemd integration.                                                                                                          | `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`)                                                       |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-traefik.sh`               | Deploys production-ready Traefik v3 reverse proxy with Docker Compose, TLS via Let's Encrypt, security headers, rate limiting, and optional protected dashboard.                               | `TRAEFIK_HOME`, `TRAEFIK_DOMAIN`, `TRAEFIK_DASHBOARD`, `ACME_EMAIL` (**required**), `ACME_STAGING`, `DNS_PROVIDER`, `CF_DNS_API_TOKEN`, `TRAEFIK_ADMIN_USER`, `TRAEFIK_ADMIN_PASS`, `PROXY_NETWORK`, `HTTP_PORT`, `HTTPS_PORT`, `USE_SOCKET_PROXY`                                                                       |           | See [README_TRAEFIK.md](tasks/README_TRAEFIK.md) for full documentation         |                                                                                                                                                                                                                                                       |     |     |
-| `setup-pi.sh`                    | Installs the latest Node.js via nvm and the **Pi coding agent** npm package globally.                                                                                                          | None                                                                                                                                                                                                                                                                                                                     |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-nextcloud.sh`             | Deploys NextCloud cloud storage platform via Docker Compose with MariaDB backend. Provides file syncing, sharing, and collaboration features.                                                  | `NEXTCLOUD_HOME` (default `/srv/nextcloud`), `HTTP_PORT` (default `4600`), `BASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `NEXTCLOUD_VERSION`                                                                                                                                                    |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-rocm.sh`                  | Installs ROCm for AMD GPU acceleration support.                                                                                                                                                | None (hardcodes ROCm 7.0 alpha repo)                                                                                                                                                                                                                                                                                     |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-samba.sh`                 | Installs and configures Samba file sharing.                                                                                                                                                    | `BASE_SHARE_PATH`, `SAMBA_SHARE_NAME`, `SHARE_PATH`, `SAMBA_USER`, `DEVELOPER_GROUP_NAME`                                                                                                                                                                                                                                |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-ssh-tunnel-user.sh`       | Creates a locked-down SSH user with no shell access, configured exclusively for port-forwarding tunnels.                                                                                       | `RESTRICTED_USER` (default `tunneluser`)                                                                                                                                                                                                                                                                                 |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-sshd.sh`                  | Installs OpenSSH server, ensures it runs on a custom port, adds safe defaults (`PubkeyAuthentication yes`, `PasswordAuthentication no`).                                                       | `SSHD_PORT` (default 2224)                                                                                                                                                                                                                                                                                               |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `configure-firewall.sh`          | Sets up **UFW** rules for the ports used by other services.                                                                                                                                    | `SSHD_PORT`, `LM_STUDIO_PORT` (default 1234), `OPENWEBUI_PORT` (default 3333), `KUBERNETES_API_PORT` (default 6443), `GNOME_REMOTE_PORT` (default 3389), `OPENCODE_PORT` (default 4096)                                                                                                                                  |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-vscode.sh`                | Installs VS Code from Microsoft's official repository.                                                                                                                                         | None                                                                                                                                                                                                                                                                                                                     |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
-| `setup-whispering.sh`            | Downloads the Whispering speech-to-text AppImage, creates a start script (`~/whispering`) and a desktop shortcut. Backs up any existing binary before downloading.                             | `WHISPERING_VERSION` (default `7.11.0`)                                                                                                                                                                                                                                                                                  |           |                                                                                 |                                                                                                                                                                                                                                                       |     |     |
+
+### System & Infrastructure
+
+#### `setup-basics.sh`
+Installs common system packages (curl, git, python3, etc.), **uv** Python package manager, and Node.js/npm.
+
+**Environment variables:** None
+
+#### `setup-docker.sh`
+Installs Docker Engine from the official Docker repository, adds the current user to the `docker` group and verifies the installation.
+
+**Environment variables:** None
+
+#### `setup-kubernetes.sh`
+Installs a lightweight **k3s** cluster and the `k9s` TUI for Kubernetes management.
+
+**Environment variables:** `K9S_VERSION` (default `0.50.7`)
+
+#### `setup-traefik.sh`
+Deploys production-ready Traefik v3 reverse proxy with Docker Compose, TLS via Let's Encrypt, security headers, rate limiting, and optional protected dashboard.
+
+**Environment variables:** `TRAEFIK_HOME`, `TRAEFIK_DOMAIN`, `TRAEFIK_DASHBOARD`, `ACME_EMAIL` (**required**), `ACME_STAGING`, `DNS_PROVIDER`, `CF_DNS_API_TOKEN`, `TRAEFIK_ADMIN_USER`, `TRAEFIK_ADMIN_PASS`, `PROXY_NETWORK`, `HTTP_PORT`, `HTTPS_PORT`, `USE_SOCKET_PROXY`
+
+**See also:** [README_TRAEFIK.md](README_TRAEFIK.md) for full documentation
+
+#### `setup-sshd.sh`
+Installs OpenSSH server, ensures it runs on a custom port, adds safe defaults (`PubkeyAuthentication yes`, `PasswordAuthentication no`).
+
+**Environment variables:** `SSHD_PORT` (default 2224)
+
+#### `configure-firewall.sh`
+Sets up **UFW** rules for the ports used by other services.
+
+**Environment variables:** `SSHD_PORT`, `LM_STUDIO_PORT` (default 1234), `OPENWEBUI_PORT` (default 3333), `KUBERNETES_API_PORT` (default 6443), `GNOME_REMOTE_PORT` (default 3389), `OPENCODE_PORT` (default 4096)
+
+### AI & LLM Services
+
+#### `setup-lm-studio.sh`
+Downloads the specified LM Studio AppImage, creates a desktop entry, an optional start script, and optionally installs the **llmster** CLI (`lms`).
+
+**Environment variables:** `LM_STUDIO_VERSION` (default `0.4.2-2`), `INSTALL_LLMSTER_ENABLED` (default `true`)
+
+#### `setup-llama-cpp.sh`
+Builds and installs llama.cpp from source with auto or manual GPU backend selection. Skips install if binaries are already present.
+
+**Environment variables:** `INSTALL_DIR` (default `$HOME/llama.cpp`), `BACKEND` (`nvidia`, `amd`, `cpu`, auto-detected if empty), `FORCE` (default `0`), `JOBS` (default `nproc`)
+
+#### `setup-openwebui.sh`
+Deploys Open WebUI using Docker Compose, connecting to an external LM Studio instance for AI model inference. Supports both direct access mode and Traefik reverse-proxy integration.
+
+**Environment variables:** `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `$HOME/open-webui`), `WEBUI_SECRET_KEY` (auto-generated if not set), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
+
+**Features:**
+- Direct mode: Accessible at `http://localhost:3333`
+- Traefik mode: Accessible via custom domain with TLS
+- Auto-generates secure secret key stored in `.env` file
+- Creates convenience start script
+
+#### `setup-opencode-server.sh`
+Installs and configures the Opencode AI coding agent server with systemd integration.
+
+**Environment variables:** `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`)
+
+#### `setup-nanobot.sh`
+Clones the Nanobot MCP gateway repository, builds the Docker image, and runs the onboarding flow.
+
+**Environment variables:** `NANOBOT_TARGET_REPO_DIRECTORY` (default `$HOME/nanobot`)
+
+#### `setup-pi.sh`
+Installs the latest Node.js via nvm and the **Pi coding agent** npm package globally.
+
+**Environment variables:** None
+
+### Speech & Dictation
+
+#### `setup-hyprwhspr.sh`
+Installs **hyprwhspr** — native Wayland speech-to-text dictation for Linux. Handles ydotool 1.0+ backport (Ubuntu ships a broken 0.1.x), clones the repo, and runs the automated setup wizard.
+
+**Environment variables:** `HYPRWHSPR_INSTALL_DIR` (default `~/hyprwhspr`), `HYPRWHSPR_BACKEND` (`nvidia`, `vulkan`, `cpu`, `onnx-asr`, auto-detected), `HYPRWHSPR_MODEL`, `HYPRWHSPR_WAYBAR` (default `false`), `HYPRWHSPR_MIC_OSD` (default `true`), `HYPRWHSPR_SYSTEMD` (default `true`), `HYPRWHSPR_HYPR_BINDINGS` (default `false`), `HYPRWHSPR_SKIP_DEPS` (default `false`)
+
+#### `setup-whispering.sh`
+Downloads the Whispering speech-to-text AppImage, creates a start script (`~/whispering`) and a desktop shortcut. Backs up any existing binary before downloading.
+
+**Environment variables:** `WHISPERING_VERSION` (default `7.11.0`)
+
+### Project Management & Collaboration
+
+#### `setup-forgejo.sh`
+Installs Forgejo (a Gitea fork) as a Docker container. Supports optional Traefik reverse-proxy integration via `FORGEJO_TRAEFIK_ENABLED`.
+
+**Environment variables:** `FORGEJO_TRAEFIK_ENABLED` (default `false`), `FORGEJO_DOMAIN`, `FORGEJO_HTTP_PORT` (default `3000`), `FORGEJO_SSH_PORT` (default `222`), `PROXY_NETWORK` (default `proxy`)
+
+#### `setup-planka.sh`
+Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL. Auto-generates a secret key and supports interactive or headless admin user creation.
+
+**Environment variables:** `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD`, `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME`
+
+### Storage & File Sharing
+
+#### `setup-nextcloud.sh`
+Deploys NextCloud cloud storage platform via Docker Compose with MariaDB backend. Provides file syncing, sharing, and collaboration features.
+
+**Environment variables:** `NEXTCLOUD_HOME` (default `/srv/nextcloud`), `HTTP_PORT` (default `4600`), `BASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `NEXTCLOUD_VERSION`
+
+#### `setup-samba.sh`
+Installs and configures Samba file sharing.
+
+**Environment variables:** `BASE_SHARE_PATH`, `SAMBA_SHARE_NAME`, `SHARE_PATH`, `SAMBA_USER`, `DEVELOPER_GROUP_NAME`
+
+### Graphics & Whiteboarding
+
+#### `setup-excalidraw.sh`
+Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `always` restart policy.
+
+**Environment variables:** `HOST_PORT` (default `5005`)
+
+#### `setup-comfy.sh` *(placeholder)*
+Placeholder for future ComfyUI setup.
+
+**Environment variables:** None
+
+### Remote Access & Desktop
+
+#### `setup-anydesk.sh`
+Installs AnyDesk remote desktop from the official apt repository.
+
+**Environment variables:** None
+
+#### `setup-brave.sh`
+Installs the Brave browser from its official apt repository.
+
+**Environment variables:** None
+
+#### `setup-vscode.sh`
+Installs VS Code from Microsoft's official repository.
+
+**Environment variables:** None
+
+### Hardware & GPU
+
+#### `setup-rocm.sh`
+Installs ROCm for AMD GPU acceleration support.
+
+**Environment variables:** None (hardcodes ROCm 7.0 alpha repo)
+
+### SSH Utilities
+
+#### `setup-ssh-tunnel-user.sh`
+Creates a locked-down SSH user with no shell access, configured exclusively for port-forwarding tunnels.
+
+**Environment variables:** `RESTRICTED_USER` (default `tunneluser`)
+
+> **Note:** See `utilities/ssh-port-forward.sh` for SSH tunneling utilities.
 
 > **How the entrypoints work**: Both `setup-server.sh` and `setup-dev-machine.sh` simply `source` a selected subset of these task scripts, allowing you to run them in order within a single Bash process.
 
 ---
 
 ## Utility Scripts (`utilities/`)
-- **`run-llama-server.sh`** - A generalized launcher for llama.cpp's llama-server. Automatically enables flash attention and GPU layers, lists available models when run without arguments, and forwards any additional args to llama-server.
-  ```bash
-  # List all available .gguf models in ~/.lmstudio/models/
-  ./run-llama-server.sh
 
-  # Start server with a specific model (flash attention enabled by default)
-  ./run-llama-server.sh --model ~/models/Qwen2.5-7B-Instruct.gguf
+### `run-llama-server.sh`
+A generalized launcher for llama.cpp's llama-server with sensible defaults based on your manual configuration. Automatically enables flash attention, GPU layers, and KV cache settings. When run without `--model`, it lists all available `.gguf` models in `$HOME/.lmstudio/models/`.
 
-  # Custom port and host
-  ./run-llama-server.sh --model ~/models/model.gguf --port 1236 --host 0.0.0.0
+**Key features:**
+- Uses your default parameters (temperature, context size, GPU layers, etc.)
+- Automatically enables `--no-mmap`, `--kv-unified`, and `--flash-attn`
+- Lists models on `$HOME/.lmstudio/models/` when `--model` is omitted
+- All parameters can be overridden via arguments or environment variables
 
-  # Disable flash attention (override default)
-  ./run-llama-server.sh --model model.gguf -fa off
-  ```
-- **`ssh-port-forward.sh`** - A tiny wrapper that creates an SSH tunnel forwarding a local port to a remote host/port. Usage:
-  ```bash
-  ./ssh-port-forward.sh <local_port> <remote_host> <remote_port> <ssh_user> [ssh_port]
-  # Example: forward localhost:3333 to 192.168.0.3:3333 via user "myuser" on port 2224
-  ./ssh-port-forward.sh 3333 192.168.0.3 3333 myuser 2224
-  ```
-  The script prints colour-coded status messages and keeps the tunnel alive until you interrupt it with **Ctrl+C**.
+**Default parameters:**
+| Parameter | Default |
+|-----------|---------|
+| HOST | `0.0.0.0` |
+| PORT | `1236` |
+| TEMPERATURE | `0.6` |
+| TOP_K | `40` |
+| TOP_P | `0.95` |
+| REPEAT_PENALTY | `1.00` |
+| PRESENCE_PENALTY | `0.00` |
+| PARALLEL | `1` |
+| THREADS_COUNT | `14` |
+| PRIO | `1` |
+| CONTEXT_SIZE | `100000` |
+| BATCH_SIZE | `512` |
+| FLASH_ATTENTION | `on` |
+| GPU_LAYERS | `all` |
+| KV_CACHE_TYPE | `q4_0` |
 
-Useful tunnel commands:
-   ```bash
-   REMOTE_HOST=myserver.example.com
-   REMOTE_USER="myuser"
-   PORT="2224"
+**Usage examples:**
+```bash
+# List all available .gguf models in ~/.lmstudio/models/ and exit
+./utilities/run-llama-server.sh
 
-   # lmstudio
-   ./ssh-port-forward.sh 1234 "$REMOTE_HOST" 1234 "$REMOTE_USER" "$PORT"
+# Start server with your default model and parameters
+./utilities/run-llama-server.sh
 
-   # openwebui
-   ./ssh-port-forward.sh 3333 "$REMOTE_HOST" 3333 "$REMOTE_USER" "$PORT"
+# Start server with a specific model (uses all defaults)
+./utilities/run-llama-server.sh --model ~/models/Qwen2.5-7B-Instruct.gguf
 
-   # opencode
-   ./ssh-port-forward.sh 4096 "$REMOTE_HOST" 4096 "$REMOTE_USER" "$PORT"
-   ```
+# Custom port and host
+./utilities/run-llama-server.sh --model ~/models/model.gguf --port 1236 --host 0.0.0.0
+
+# Override specific parameters
+./utilities/run-llama-server.sh --model model.gguf --temperature 0.8 --ctx-size 50000
+
+# Disable flash attention (override default)
+./utilities/run-llama-server.sh --model model.gguf -fa off
+
+# Set environment variables for customization
+export PORT=1237
+export TEMPERATURE=0.7
+./utilities/run-llama-server.sh --model model.gguf
+```
+
+**Environment variables (all optional):**
+- `MODEL_PATH` - Default model path
+- `HOST`, `PORT` - Server binding
+- `TEMPERATURE`, `TOP_K`, `TOP_P`, `REPEAT_PENALTY`, `PRESENCE_PENALTY`, `PARALLEL` - Generation parameters
+- `THREADS_COUNT`, `PRIO`, `CONTEXT_SIZE`, `BATCH_SIZE`, `FLASH_ATTENTION`, `GPU_LAYERS`, `KV_CACHE_TYPE` - Performance parameters
+- `KV_UNIFIED` - Enable unified KV cache (default: true)
+
+### `ssh-port-forward.sh`
+Simple SSH tunnel wrapper for creating secure port forwards from a local machine to a remote server.
+
+**Usage:**
+```bash
+./ssh-port-forward.sh <local_port> <remote_host> <remote_port> <ssh_user> [ssh_port]
+```
+
+**Parameters:**
+- `local_port` - Local port to forward from
+- `remote_host` - Remote server hostname or IP
+- `remote_port` - Port on the remote server to forward to
+- `ssh_user` - SSH username for the remote server
+- `ssh_port` - SSH port on the remote server (optional, defaults to 22)
+
+**Example:**
+```bash
+# Forward local port 3333 to remote server 192.168.0.3 port 3333
+./ssh-port-forward.sh 3333 192.168.0.3 3333 myuser 2224
+```
+
+This creates an SSH tunnel that forwards connections from `localhost:3333` through the SSH connection to `192.168.0.3:3333`. The tunnel remains active until you press Ctrl+C.
 
 ---
 
@@ -194,41 +369,6 @@ The scripts are deliberately **parameterised via environment variables** that yo
    ./setup-dev-machine.sh
    ```
 2. **Edit the default values directly** at the top of each task script (e.g., change `LM_STUDIO_VERSION="0.4.0-18"` in `setup-lm-studio.sh`). This is handy for a permanent change across all runs.
-
-### Frequently overridden variables
-| Variable                  | Default   | Where it's used                                                         |
-| ---------------------------| -----------| -------------------------------------------------------------------------|
-| `SSHD_PORT`               | `2224`    | `setup-sshd.sh`, `configure-firewall.sh`                                |
-| `LM_STUDIO_PORT`          | `1234`    | `configure-firewall.sh` (firewall rule), optional OpenWebUI integration |
-| `OPENWEBUI_PORT`          | `3333`    | `configure-firewall.sh`                                                 |
-| `KUBERNETES_API_PORT`     | `6443`    | `configure-firewall.sh`                                                 |
-| `GNOME_REMOTE_PORT`       | `3389`    | `configure-firewall.sh`                                                 |
-| `OPENCODE_PORT`           | `4096`    | `setup-opencode-server.sh`, `configure-firewall.sh`                     |
-| `LM_STUDIO_VERSION`       | `0.4.2-2` | `setup-lm-studio.sh`                                                    |
-| `INSTALL_LLMSTER_ENABLED` | `true`    | `setup-lm-studio.sh`                                                    |
-| `K9S_VERSION`             | `0.50.7`  | `setup-kubernetes.sh`                                                   |
-
----
-
-## Optional / Advanced Components
-- **Kubernetes (k3s)** – Uncomment the line `# source tasks/setup-kubernetes.sh` in either entrypoint if you need a local cluster. The script will install k3s and the `k9s` CLI.
-- **Brave Browser** – Uncomment `# source tasks/setup-brave.sh` to add Brave to the setup.
-- **VS Code** – Uncomment `# source tasks/setup-vscode.sh` to install VS Code from Microsoft's official repository.
-- **ROCm** – Uncomment `# source tasks/setup-rocm.sh` for AMD GPU acceleration support (requires compatible AMD hardware).
-- **Samba file sharing** – Uncomment `# source tasks/setup-samba.sh` to enable network file sharing.
-- **OpenWebUI** – The original script lives in `old/`. If you wish to re-enable it, copy it into `tasks/` and source it from the entrypoint. It currently builds a Docker Compose stack that connects OpenWebUI to LM Studio.
-- **Opencode Server** – Uncomment `# source tasks/setup-opencode-server.sh` to install and configure the Opencode AI coding agent server with systemd integration.
-- **AnyDesk** – Uncomment `# source tasks/setup-anydesk.sh` to install the AnyDesk remote desktop client.
-- **Excalidraw** – Uncomment `# source tasks/setup-excalidraw.sh` to spin up a self-hosted Excalidraw whiteboard (Docker required). Accessible at `http://localhost:5005` by default.
-- **Nanobot** – Uncomment `# source tasks/setup-nanobot.sh` to clone, build, and onboard the Nanobot agent gateway (Docker required).
-- **Pi coding agent** – Uncomment `# source tasks/setup-pi.sh` to install the Pi AI coding assistant globally via npm (requires nvm).
-- **SSH Tunnel User** – Uncomment `# source tasks/setup-ssh-tunnel-user.sh` to create a locked-down SSH user for secure port-forwarding tunnels. Set `RESTRICTED_USER` to choose the username.
-- **Planka** – Uncomment `# source tasks/setup-planka.sh` to deploy a self-hosted Planka Kanban board (Docker required). Accessible at `http://localhost:4444` by default. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` for a fully non-interactive setup.
-- **Kanboard** – Uncomment `# source tasks/setup-kanboard.sh` to deploy a lightweight Kanboard project management board (Docker required). Accessible at `http://localhost:4500` by default. Set `ADMIN_EMAIL` and `ADMIN_PASSWORD` for headless setup.
-- **NextCloud** – Uncomment `# source tasks/setup-nextcloud.sh` to install NextCloud cloud storage platform with file syncing and sharing (Docker required). Accessible at your configured BASE_URL.
-- **llama.cpp** – Uncomment `# source tasks/setup-llama-cpp.sh` to build and install llama.cpp from source. The script auto-detects your GPU (NVIDIA CUDA, AMD Vulkan, or CPU-only) and skips the build if binaries are already present. Pass `--nvidia`, `--amd`, or `--cpu` to force a specific backend.
-- **Whispering** – Uncomment `# source tasks/setup-whispering.sh` to install the Whispering speech-to-text AppImage. A start script is placed at `~/whispering` and a desktop shortcut at `~/Desktop/Whispering.desktop`. Override `WHISPERING_VERSION` to select a specific release.
-- **hyprwhspr** – Uncomment `# source tasks/setup-hyprwhspr.sh` to install hyprwhspr, a native Wayland speech-to-text dictation tool. The script automatically backports the required ydotool 1.0+ package (Ubuntu ships a broken 0.1.x), installs all Python dependencies, clones the repository, and runs the setup wizard. Set `HYPRWHSPR_BACKEND` to `nvidia`, `vulkan`, `cpu`, or `onnx-asr` to force a specific inference backend (auto-detected by default). Requires a Wayland session (GNOME, KDE, Hyprland, or Sway).
 
 ---
 
