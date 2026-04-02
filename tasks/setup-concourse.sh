@@ -157,8 +157,35 @@ fi
 
 step "Creating directory structure under ${CONCOURSE_HOME}"
 
+# Create the base CONCOURSE_HOME directory if it doesn't exist
+if [[ ! -d "${CONCOURSE_HOME}" ]]; then
+  if ! mkdir -p "${CONCOURSE_HOME}" 2>/dev/null; then
+    error "Failed to create ${CONCOURSE_HOME}. Check permissions."
+    exit 1
+  fi
+fi
+
+# Create subdirectories for keys
 mkdir -p "${CONCOURSE_HOME}/keys/web"
 mkdir -p "${CONCOURSE_HOME}/keys/worker"
+
+# Ensure directories are accessible by Docker daemon
+# Add current user to docker group if not already a member
+if ! id -nG | grep -qw "$USER" | grep -qw docker; then
+  # Note: This may fail if not running as root, but that's expected
+  # The user will need to add themselves to docker group manually if needed
+  if id -u &>/dev/null; then
+    if ! groups "$USER" | grep -qw docker; then
+      info "Note: Add user '$USER' to docker group for Docker access: sudo usermod -aG docker $USER"
+    fi
+  fi
+fi
+
+# Verify directories were created successfully
+if [[ ! -d "${CONCOURSE_HOME}/keys/web" ]] || [[ ! -d "${CONCOURSE_HOME}/keys/worker" ]]; then
+  error "Failed to create required subdirectories under ${CONCOURSE_HOME}"
+  exit 1
+fi
 
 success "Directories created."
 
