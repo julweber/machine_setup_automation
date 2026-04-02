@@ -63,7 +63,7 @@ tasks:
       - "RSA keys in keys/ directory are preserved during re-deployment"
       - "PostgreSQL data volume persists across re-deployments"
       - "All existing tests continue to pass"
-    status: pending
+    status: passed
     attempts: 1
 
   - id: "task-005"
