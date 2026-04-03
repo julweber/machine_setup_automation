@@ -86,11 +86,6 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/helpers.sh"
 
-# Source core library for Traefik integration (optional)
-if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
-  # shellcheck disable=SC1091
-  source "${SCRIPT_DIR}/../lib/core.sh" || true
-fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS
@@ -191,11 +186,6 @@ if ! groups "$USER" 2>/dev/null | grep -qw docker; then
   info "Note: Add user '$USER' to docker group for Docker access: sudo usermod -aG docker $USER"
 fi
 
-# Verify directories were created successfully
-if [[ ! -d "${CONCOURSE_HOME}/keys/web" ]] || [[ ! -d "${CONCOURSE_HOME}/keys/worker" ]]; then
-  error "Failed to create required subdirectories under ${CONCOURSE_HOME}"
-  exit 1
-fi
 
 success "Directories created."
 
@@ -626,4 +616,9 @@ echo -e "  Target           : ${CONCOURSE_FLY_TARGET}"
 echo -e "  Login command    : fly -t ${CONCOURSE_FLY_TARGET} login -c ${CONCOURSE_EXTERNAL_URL} -u ${CONCOURSE_ADMIN_USER} -p <password>"
 echo -e "  List pipelines   : fly -t ${CONCOURSE_FLY_TARGET} pipelines"
 echo -e "  Trigger job      : fly -t ${CONCOURSE_FLY_TARGET} trigger-job -j pipeline/job --watch"
+echo ""
+echo ""
+echo -e "${BOLD}Example pipeline:${RESET}"
+echo -e "  Find an example in templates/concourse/hello-world-pipeline.yml"
+echo ""
 echo ""

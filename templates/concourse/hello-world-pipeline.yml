@@ -1,0 +1,25 @@
+# fly -t concourse set-pipeline -p hello-world -c hello-world-pipeline.yml
+# # pipelines are paused when first created
+# fly -t concourse unpause-pipeline -p hello-world
+# # trigger the job and watch it run to completion
+# fly -t concourse trigger-job --job hello-world/hello-world-job --watch
+
+jobs:
+  - name: hello-world-job
+    plan:
+      - task: hello-world-task
+        config:
+          # Tells Concourse which type of worker this task should run on
+          platform: linux
+          # This is one way of telling Concourse which container image to use for a
+          # task. We'll explain this more when talking about resources
+          image_resource:
+            type: registry-image
+            source:
+              repository: busybox # images are pulled from docker hub by default
+              tag: latest
+          # The command Concourse will run inside the container
+          # echo "Hello world!"
+          run:
+            path: echo
+            args: [ "Hello world!" ]
