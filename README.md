@@ -1,19 +1,6 @@
 # LLM Dev/Server Setup Automation Scripts
 
-## Overview
-This repository provides a collection of **Bash automation scripts** to quickly provision a development or production machine for Large Language Model (LLM) workflows on **Ubuntu 24.04**. The scripts handle common tasks such as:
-- Installing system dependencies and developer tools.
-- Setting up SSH with a custom port.
-- Configuring the firewall.
-- Installing Docker and optional Kubernetes (k3s).
-- forgejo as gitlab/github alternative
-- Deploying LM Studio, Open WebUI, Opencode and other LLM-related services.
-- Providing helper utilities for SSH tunneling
-- Setting up NextCloud cloud storage
-- Setting up Concourse CI/CD pipeline server
-- Setting up Obsidian Livesync for collaborative note-taking
-
-The goal is to let a developer **run a single entrypoint script** and end up with a fully functional LLM development environment that can be further customized.
+Bash automation scripts to provision development and production machines for Large Language Model (LLM) workflows on **Ubuntu 24.04**.
 
 ---
 
@@ -55,64 +42,17 @@ The agent will read the README and discover available scripts on its own, then g
 
 ---
 
-## Directory Structure
-```text
-machine_setup_automation/
-├── README.md                     # ← This file (documentation)
-├── AGENTS.md                      # Agent-specific guidelines and instructions
-├── setup-server.sh                # Main entry for server-side setup
-├── setup-dev-machine.sh           # Main entry for a developer workstation
-├── docs/                          # Additional documentation files
-├── lib/                           # Shared helper libraries (sourced by task scripts)
-│   └── helpers.sh                 # Common logging, colour output, and utility functions
-├── tasks/                         # Core provisioning scripts (sourced by the entrypoints)
-│   ├── configure-firewall.sh      # UFW rules for SSH, LM Studio, OpenWebUI …
-│   ├── setup-anydesk.sh           # Install AnyDesk remote desktop (optional)
-│   ├── setup-basics.sh            # System packages & basic Python tooling
-│   ├── setup-brave.sh             # Install Brave browser (optional)
-│   ├── setup-comfy.sh             # Placeholder for ComfyUI install (future work)
-│   ├── setup-docker.sh            # Docker Engine + group permissions
-│   ├── setup-excalidraw.sh        # Run Excalidraw whiteboard as a Docker container
-│   ├── setup-forgejo.sh           # Forgejo (Gitea fork) installation via Docker
-│   ├── setup-hyprwhspr.sh         # hyprwhspr native Wayland speech-to-text dictation
-│   ├── setup-kubernetes.sh        # k3s cluster + k9s CLI (optional)
-│   ├── setup-llama-cpp.sh         # Build and install llama.cpp (NVIDIA/AMD/CPU)
-│   ├── setup-lm-studio.sh         # Download LM Studio AppImage, optional llmster cli
-│   ├── setup-nanobot.sh           # Clone, build and onboard the Nanobot MCP gateway
-│   ├── setup-nextcloud.sh         # NextCloud cloud storage via Docker Compose
-│   ├── setup-opencode-server.sh   # Opencode AI agent server installation and configuration
-│   ├── setup-openwebui.sh         # Open WebUI with LM Studio integration
-│   ├── setup-pi.sh                # Install the Pi coding agent via npm
-│   ├── setup-planka.sh            # Planka Kanban board via Docker Compose
-│   ├── setup-rocm.sh              # Install ROCm for AMD GPU support (optional)
-│   ├── setup-samba.sh             # Install and configure Samba file sharing (optional)
-│   ├── setup-ssh-tunnel-user.sh   # Create a restricted tunnel-only SSH user
-│   ├── setup-sshd.sh              # OpenSSH server with configurable port
-│   ├── setup-traefik.sh           # Traefik v3 reverse proxy with TLS (Let's Encrypt)
-│   ├── setup-vscode.sh            # Install VS Code (optional)
-│   └── setup-whispering.sh        # Whispering speech-to-text AppImage setup
-├── utilities/                     # Miscellaneous helper tools
-│   ├── run-llama-server.sh        # Generalized llama-server launcher with auto flash attention and model listing
-│   └── ssh-port-forward.sh        # Simple SSH tunnel wrapper
-```
-
-*Only the files under `tasks/`, `utilities/`, and the two top-level entrypoint scripts are required for a minimal LLM workstation.
-
-Additional documentation:
-- **[README_TRAEFIK.md](tasks/README_TRAEFIK.md)** - Complete guide for the Traefik v3 reverse proxy setup script (`setup-traefik.sh`)
-
----
-
-## Directory Structure Principles
+## How It Works
 - **Modular task scripts** - Each `setup_*.sh` script is self-contained and idempotent; it can be sourced individually from an entrypoint or run on its own.
 - **Single-shell execution** - The entrypoint scripts (`setup-server.sh`, `setup-dev-machine.sh`) use `source` so that environment variables defined in earlier tasks are visible to later ones (e.g., custom ports).
 - **Configuration via env vars** - All tunable values have sensible defaults and can be overridden by exporting the variable before invoking an entrypoint, making it easy to adapt the automation to different environments.
 - **Optional components are commented out** - Features like Kubernetes, Brave or VS Code are included but disabled by default; developers simply uncomment the corresponding `source` line in the entrypoint to enable them.
-- **Separate concerns** - Helper utilities (`utilities/`) live outside of `tasks/` to keep the core provisioning flow focused and maintainable.
 
 ---
 
-## Core Task Scripts (`tasks/`)
+## Service Setup Scripts (`tasks/`)
+
+All service setup scripts are located in the `tasks/` directory. Below is a complete list of available services organized by category.
 
 ### System & Infrastructure
 
@@ -138,6 +78,16 @@ Deploys production-ready Traefik v3 reverse proxy with Docker Compose, TLS via L
 
 **See also:** [README_TRAEFIK.md](README_TRAEFIK.md) for full documentation
 
+#### `setup-upstream-kernel.sh`
+Prepares the Zabbly mainline kernel apt repository on Ubuntu 22.04/24.04 LTS, providing access to the latest stable Linux kernels.
+
+**Environment variables:** None (uses defaults from Zabbly repository)
+
+**Notes:**
+- Requires Secure Boot to be disabled in BIOS/UEFI
+- May require DKMS rebuild for NVIDIA proprietary drivers
+- Officially supports Ubuntu Noble (24.04) and Jammy (22.04)
+
 #### `setup-sshd.sh`
 Installs OpenSSH server, ensures it runs on a custom port, adds safe defaults (`PubkeyAuthentication yes`, `PasswordAuthentication no`).
 
@@ -147,6 +97,8 @@ Installs OpenSSH server, ensures it runs on a custom port, adds safe defaults (`
 Sets up **UFW** rules for the ports used by other services.
 
 **Environment variables:** `SSHD_PORT`, `LM_STUDIO_PORT` (default 1234), `OPENWEBUI_PORT` (default 3333), `KUBERNETES_API_PORT` (default 6443), `GNOME_REMOTE_PORT` (default 3389), `OPENCODE_PORT` (default 4096)
+
+---
 
 ### AI & LLM Services
 
@@ -176,6 +128,18 @@ Installs and configures the Opencode AI coding agent server with systemd integra
 
 **Environment variables:** `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`)
 
+#### `setup-agent-docker-runner.sh`
+Installs the Agent Docker Runner (ADR) CLI, a tool that runs coding agents inside isolated Docker containers with a single command. Supports multiple agents: pi, opencode, claude, codex.
+
+**Environment variables:** `ADR_REPO_URL` (default official repo), `ADR_INSTALL_DIR` (default `$HOME/tools/agent-docker-runner`), `ADR_BUILD_AGENTS` (default `pi,opencode,claude,codex`)
+
+**Features:**
+- Runs any supported agent in isolated Docker containers
+- Single CLI command: `adr run <agent> -- <args>`
+- Auto-builds container images for all agents
+- Configuration examples included
+- Supports pi, opencode, claude code, and GitHub Copilot Workspace (codex)
+
 #### `setup-nanobot.sh`
 Clones the Nanobot MCP gateway repository, builds the Docker image, and runs the onboarding flow.
 
@@ -185,6 +149,8 @@ Clones the Nanobot MCP gateway repository, builds the Docker image, and runs the
 Installs the latest Node.js via nvm and the **Pi coding agent** npm package globally.
 
 **Environment variables:** None
+
+---
 
 ### Speech & Dictation
 
@@ -198,6 +164,8 @@ Downloads the Whispering speech-to-text AppImage, creates a start script (`~/whi
 
 **Environment variables:** `WHISPERING_VERSION` (default `7.11.0`)
 
+---
+
 ### Project Management & Collaboration
 
 #### `setup-forgejo.sh`
@@ -205,10 +173,26 @@ Installs Forgejo (a Gitea fork) as a Docker container. Supports optional Traefik
 
 **Environment variables:** `FORGEJO_TRAEFIK_ENABLED` (default `false`), `FORGEJO_DOMAIN`, `FORGEJO_HTTP_PORT` (default `3000`), `FORGEJO_SSH_PORT` (default `222`), `PROXY_NETWORK` (default `proxy`)
 
+#### `setup-concourse.sh`
+Deploys Concourse CI, a continuous integration platform, using Docker Compose. Includes TSA key generation, PostgreSQL database, web UI (ATC), and worker node configuration. Also installs the fly CLI on the host machine.
+
+**Environment variables:** `CONCOURSE_HOME` (default `/srv/concourse`), `CONCOURSE_WEB_PORT` (default 8089), `CONCOURSE_ADMIN_USER` (default `admin`), `CONCOURSE_ADMIN_PASSWORD` (auto-generated), `CONCOURSE_DB_PASSWORD` (auto-generated), `CONCOURSE_CLUSTER_NAME` (default `denkfabrik`), `CONCOURSE_DNS_SERVER` (default `8.8.8.8`), `CONCOURSE_EXTERNAL_URL` (auto-detected), `CONCOURSE_FLY_TARGET` (default `concourse`), `CONCOURSE_TRAEFIK` (default `false`), `CONCOURSE_DOMAIN`, `PROXY_NETWORK`
+
+**Features:**
+- Complete CI/CD pipeline platform with web UI
+- PostgreSQL database for persistence
+- Worker node for job execution
+- TSA key generation for secure worker registration
+- fly CLI installation and auto-configuration
+- Optional Traefik reverse-proxy integration
+- Auto-generates admin password and database credentials
+
 #### `setup-planka.sh`
 Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL. Auto-generates a secret key and supports interactive or headless admin user creation.
 
 **Environment variables:** `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD`, `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME`
+
+---
 
 ### Storage & File Sharing
 
@@ -217,10 +201,24 @@ Deploys NextCloud cloud storage platform via Docker Compose with MariaDB backend
 
 **Environment variables:** `NEXTCLOUD_HOME` (default `/srv/nextcloud`), `HTTP_PORT` (default `4600`), `BASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `NEXTCLOUD_VERSION`
 
+#### `setup-n8n.sh`
+Deploys n8n, a workflow automation platform, via Docker Compose with PostgreSQL backend. Supports optional Traefik reverse-proxy integration for secure HTTPS access.
+
+**Environment variables:** `N8N_DIR` (default `/srv/n8n`), `TRAEFIK_ENABLED` (default `false`), `DOMAIN_NAME`, `SUBDOMAIN`, `N8N_PORT` (default 5678), `GENERIC_TIMEZONE`, `SSL_EMAIL`
+
+**Features:**
+- Visual workflow builder with 200+ integrations
+- Self-hosted with full data control
+- Supports webhooks, schedules, and triggers
+- PostgreSQL backend for persistence
+- Optional Traefik reverse-proxy integration
+
 #### `setup-samba.sh`
 Installs and configures Samba file sharing.
 
 **Environment variables:** `BASE_SHARE_PATH`, `SAMBA_SHARE_NAME`, `SHARE_PATH`, `SAMBA_USER`, `DEVELOPER_GROUP_NAME`
+
+---
 
 ### Graphics & Whiteboarding
 
@@ -229,10 +227,24 @@ Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `
 
 **Environment variables:** `HOST_PORT` (default `5005`)
 
+#### `setup-hermes.sh`
+Sets up the Hermes Agent environment using the official prebuilt Docker image. Creates configuration files and provides convenience scripts for management.
+
+**Environment variables:** `HERMES_TARGET_REPO_DIRECTORY` (default `/srv/hermes`), `BUILD_ONLY` flag via command line (`--build-only`)
+
+**Features:**
+- Official Hermes Agent MCP gateway
+- Prebuilt Docker image from nousresearch
+- Setup wizard for initial configuration
+- Hermes Gateway and Chat services
+- Data persistence in `.hermes` directory
+
 #### `setup-comfy.sh` *(placeholder)*
 Placeholder for future ComfyUI setup.
 
 **Environment variables:** None
+
+---
 
 ### Remote Access & Desktop
 
@@ -251,12 +263,16 @@ Installs VS Code from Microsoft's official repository.
 
 **Environment variables:** None
 
+---
+
 ### Hardware & GPU
 
 #### `setup-rocm.sh`
 Installs ROCm for AMD GPU acceleration support.
 
 **Environment variables:** None (hardcodes ROCm 7.0 alpha repo)
+
+---
 
 ### SSH Utilities
 
@@ -266,8 +282,6 @@ Creates a locked-down SSH user with no shell access, configured exclusively for 
 **Environment variables:** `RESTRICTED_USER` (default `tunneluser`)
 
 > **Note:** See `utilities/ssh-port-forward.sh` for SSH tunneling utilities.
-
-> **How the entrypoints work**: Both `setup-server.sh` and `setup-dev-machine.sh` simply `source` a selected subset of these task scripts, allowing you to run them in order within a single Bash process.
 
 ---
 
@@ -383,6 +397,11 @@ The scripts are deliberately **parameterised via environment variables** that yo
 4. **LM Studio AppImage does not launch** - Ensure the file at `$HOME/lmstudio_bin` has execute permission (`chmod +x`). The start script `$HOME/lmstudio` runs `./lmstudio_bin --no-sandbox`; you can add additional flags there.
 5. **UFW refuses to enable** - Check if another firewall manager (e.g., `firewalld`) is active; disable it or stick with UFW for this automation.
 6. **k3s installation fails** - The script uses the official get.k3s.io installer which requires a clean system without conflicting container runtimes. Remove any existing Docker/Kubernetes installations before re-running, or run k3s on a separate VM.
+
+---
+
+## Additional Documentation
+- **[README_TRAEFIK.md](README_TRAEFIK.md)** - Complete guide for the Traefik v3 reverse proxy setup script (`setup-traefik.sh`)
 
 ---
 
