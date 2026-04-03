@@ -27,7 +27,7 @@
 #   CONCOURSE_ADMIN_USER - Admin username (default: admin)
 #   CONCOURSE_ADMIN_PASSWORD - Admin password (auto-generated if not set)
 #   CONCOURSE_DB_PASSWORD - Database password (auto-generated if not set)
-#   CONCOURSE_CLUSTER_NAME - Display name in UI (default: homelab)
+#   CONCOURSE_CLUSTER_NAME - Display name in UI (default: denkfabrik)
 #   CONCOURSE_DNS_SERVER - DNS for worker containers (default: 8.8.8.8)
 #   CONCOURSE_TRAEFIK    - Enable Traefik integration (default: false)
 #   CONCOURSE_DOMAIN     - Domain for Traefik routing (required when TRAEFIK=true)
@@ -68,7 +68,7 @@ CONCOURSE_WEB_PORT="${CONCOURSE_WEB_PORT:-8089}"            # Host port for web 
 CONCOURSE_ADMIN_USER="${CONCOURSE_ADMIN_USER:-admin}"       # Admin username
 CONCOURSE_ADMIN_PASSWORD="${CONCOURSE_ADMIN_PASSWORD:-}"    # Auto-generated if empty
 CONCOURSE_DB_PASSWORD="${CONCOURSE_DB_PASSWORD:-}"          # Auto-generated if empty
-CONCOURSE_CLUSTER_NAME="${CONCOURSE_CLUSTER_NAME:-homelab}" # Display name in UI
+CONCOURSE_CLUSTER_NAME="${CONCOURSE_CLUSTER_NAME:-denkfabrik}" # Display name in UI
 CONCOURSE_DNS_SERVER="${CONCOURSE_DNS_SERVER:-8.8.8.8}"     # DNS for workers
 CONCOURSE_EXTERNAL_URL="${CONCOURSE_EXTERNAL_URL:-}"        # Auto-detected if empty
 CONCOURSE_FLY_TARGET="${CONCOURSE_FLY_TARGET:-concourse}"   # Target name in ~/.flyrc
@@ -99,6 +99,11 @@ fi
 step "Running pre-flight checks"
 run_preflight_checks
 
+# Verify ssh-keygen is available (required for RSA key generation)
+if ! command -v ssh-keygen &>/dev/null; then
+  error "ssh-keygen is not installed. Install OpenSSH: sudo apt-get install -y openssh-client"
+fi
+
 # Traefik pre-flight (only when opt-in)
 if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
   ensure_proxy_network
@@ -119,6 +124,14 @@ if [[ "$CONCOURSE_TRAEFIK" == "false" ]]; then
   fi
 fi
 
+# TSA port check (always required for worker registration)
+if ss -tln 2>/dev/null | grep -qE ":2225[[:space:]]"; then
+  warn "Port 2225 (TSA) is already in use."
+  warn "The worker will fail to register until port 2225 is free."
+  read -rp "    Continue anyway? [y/N] " answer
+  [[ "${answer,,}" == "y" ]] || exit 0
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # IDEMPOTENCY DETECTION
 # ─────────────────────────────────────────────────────────────────────────────
@@ -136,18 +149,22 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   if [[ -d "${CONCOURSE_HOME}/keys" ]]; then
     info "RSA keys in ${CONCOURSE_HOME}/keys/ will be preserved for session continuity."
   fi
-  
-  # PostgreSQL data is in a named volume and will persist automatically
-  info "PostgreSQL data volume will persist across re-deployment."
-  
+
   read -rp "    Re-create stack? [y/N] " answer
-  if [[ "${answer,,}" == "y" ]]; then
-    info "Stopping and removing existing stack..."
-    docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-    success "Old stack removed. Keys and database data preserved."
+  [[ "${answer,,}" == "y" ]] || { info "Keeping existing stack. Exiting."; exit 0; }
+
+  read -rp "    Also wipe the PostgreSQL data volume? Credentials will be regenerated. [y/N] " wipe_answer
+  WIPE_VOLUMES=false
+  [[ "${wipe_answer,,}" == "y" ]] && WIPE_VOLUMES=true
+
+  info "Stopping and removing existing stack..."
+  if [[ "$WIPE_VOLUMES" == "true" ]]; then
+    sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+    success "Old stack and database volume removed."
   else
-    info "Keeping existing stack. Exiting."
-    exit 0
+    sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" down 2>/dev/null || true
+    info "Existing credentials from ${ENV_FILE} will be reused to match the preserved volume."
+    success "Old stack removed. Database volume and keys preserved."
   fi
 fi
 
@@ -159,26 +176,19 @@ step "Creating directory structure under ${CONCOURSE_HOME}"
 
 # Create the base CONCOURSE_HOME directory if it doesn't exist
 if [[ ! -d "${CONCOURSE_HOME}" ]]; then
-  if ! mkdir -p "${CONCOURSE_HOME}" 2>/dev/null; then
+  if ! sudo mkdir -p "${CONCOURSE_HOME}" 2>/dev/null; then
     error "Failed to create ${CONCOURSE_HOME}. Check permissions."
     exit 1
   fi
 fi
 
 # Create subdirectories for keys
-mkdir -p "${CONCOURSE_HOME}/keys/web"
-mkdir -p "${CONCOURSE_HOME}/keys/worker"
+sudo mkdir -p "${CONCOURSE_HOME}/keys/web"
+sudo mkdir -p "${CONCOURSE_HOME}/keys/worker"
 
 # Ensure directories are accessible by Docker daemon
-# Add current user to docker group if not already a member
-if ! id -nG | grep -qw "$USER" | grep -qw docker; then
-  # Note: This may fail if not running as root, but that's expected
-  # The user will need to add themselves to docker group manually if needed
-  if id -u &>/dev/null; then
-    if ! groups "$USER" | grep -qw docker; then
-      info "Note: Add user '$USER' to docker group for Docker access: sudo usermod -aG docker $USER"
-    fi
-  fi
+if ! groups "$USER" 2>/dev/null | grep -qw docker; then
+  info "Note: Add user '$USER' to docker group for Docker access: sudo usermod -aG docker $USER"
 fi
 
 # Verify directories were created successfully
@@ -196,35 +206,30 @@ success "Directories created."
 step "Generating RSA key pairs for TSA authentication"
 
 # Generate keys only if they don't exist (idempotent)
+# ssh-keygen is used (not openssl) to produce the OpenSSH key format Concourse requires
 if [[ ! -f "${CONCOURSE_HOME}/keys/web/tsa_host_key" ]]; then
   info "Generating TSA host key pair..."
-  openssl genrsa -out "${CONCOURSE_HOME}/keys/web/tsa_host_key" 2048
-  openssl rsa -in "${CONCOURSE_HOME}/keys/web/tsa_host_key" \
-    -pubout -out "${CONCOURSE_HOME}/keys/web/tsa_host_key.pub"
+  sudo ssh-keygen -t rsa -b 4096 -m PEM -f "${CONCOURSE_HOME}/keys/web/tsa_host_key" -N ""
 fi
 
 if [[ ! -f "${CONCOURSE_HOME}/keys/web/session_signing_key" ]]; then
   info "Generating session signing key pair..."
-  openssl genrsa -out "${CONCOURSE_HOME}/keys/web/session_signing_key" 2048
-  openssl rsa -in "${CONCOURSE_HOME}/keys/web/session_signing_key" \
-    -pubout -out "${CONCOURSE_HOME}/keys/web/session_signing_key.pub"
+  sudo ssh-keygen -t rsa -b 4096 -m PEM -f "${CONCOURSE_HOME}/keys/web/session_signing_key" -N ""
 fi
 
 if [[ ! -f "${CONCOURSE_HOME}/keys/worker/worker_key" ]]; then
   info "Generating worker key pair..."
-  openssl genrsa -out "${CONCOURSE_HOME}/keys/worker/worker_key" 2048
-  openssl rsa -in "${CONCOURSE_HOME}/keys/worker/worker_key" \
-    -pubout -out "${CONCOURSE_HOME}/keys/worker/worker_key.pub"
+  sudo ssh-keygen -t rsa -b 4096 -m PEM -f "${CONCOURSE_HOME}/keys/worker/worker_key" -N ""
 fi
 
 # Create authorized_worker_keys (copy of worker public key)
 if [[ ! -f "${CONCOURSE_HOME}/keys/web/authorized_worker_keys" ]]; then
-  cp "${CONCOURSE_HOME}/keys/worker/worker_key.pub" \
+  sudo cp "${CONCOURSE_HOME}/keys/worker/worker_key.pub" \
      "${CONCOURSE_HOME}/keys/web/authorized_worker_keys"
 fi
 
 # Set permissions
-chmod -R 700 "${CONCOURSE_HOME}/keys/"
+sudo chmod -R 700 "${CONCOURSE_HOME}/keys/"
 
 success "Keys generated and permissions set."
 
@@ -234,7 +239,16 @@ success "Keys generated and permissions set."
 
 step "Generating ${ENV_FILE}"
 
-# Generate passwords if not already set
+# If .env already exists, source the existing passwords so they are preserved across re-runs.
+# PostgreSQL ignores POSTGRES_PASSWORD once the data volume is initialized, so changing the
+# password would break authentication against an existing volume.
+if [[ -f "${ENV_FILE}" ]]; then
+  info "Existing .env found — reusing stored credentials to match the postgres volume."
+  # shellcheck disable=SC1090
+  source <(sudo grep -E '^CONCOURSE_(DB_PASSWORD|ADMIN_PASSWORD)=' "${ENV_FILE}")
+fi
+
+# Generate passwords if not already set (first run, or env vars were pre-set by caller)
 if [[ -z "$CONCOURSE_ADMIN_PASSWORD" ]]; then
   CONCOURSE_ADMIN_PASSWORD=$(openssl rand -base64 32 | tr -dc 'a-zA-Z0-9' | head -c 32)
 fi
@@ -250,7 +264,7 @@ if [[ -z "$CONCOURSE_EXTERNAL_URL" ]]; then
 fi
 
 # Write .env file
-cat > "${ENV_FILE}" <<EOF
+sudo tee "${ENV_FILE}" > /dev/null <<EOF
 # Concourse CI Configuration
 # Generated: $(date -Iseconds)
 
@@ -271,7 +285,7 @@ CONCOURSE_ADMIN_PASSWORD=${CONCOURSE_ADMIN_PASSWORD}
 CONCOURSE_DNS_SERVER=${CONCOURSE_DNS_SERVER}
 EOF
 
-chmod 600 "${ENV_FILE}"
+sudo chmod 600 "${ENV_FILE}"
 
 success "Environment file written with auto-generated credentials."
 
@@ -300,11 +314,11 @@ SECTION_WEB_PORTS="    ports:"
 if [[ "$CONCOURSE_TRAEFIK" == "false" ]]; then
   SECTION_WEB_PORTS+="
       - \"${CONCOURSE_WEB_PORT}:8080\"  # Web UI (HTTP)
-      - \"2222:2222\"                   # TSA (internal worker registration)"
+      - \"2225:2222\"                   # TSA (internal worker registration)"
 else
   # When using Traefik, ports are exposed via labels
   SECTION_WEB_PORTS+="
-      - \"2222:2222\"                   # TSA (internal worker registration)"
+      - \"2225:2222\"                   # TSA (internal worker registration)"
 fi
 
 # Build web service labels section (Traefik only)
@@ -321,7 +335,7 @@ fi
 
 # Build compose file - use temp script approach to avoid heredoc nesting issues
 # Write directly to a temp file, then move it into place
-COMPOSE_TEMP=$(mktempfile)
+COMPOSE_TEMP=$(mktemp -t "concourse-compose.XXXXXX")
 
 cat > "$COMPOSE_TEMP" <<'EOF'
 version: "3.9"
@@ -332,17 +346,17 @@ services:
   concourse-db:
     image: postgres:15
     container_name: concourse-db
-    restart: always
+    restart: unless-stopped
     environment:
-      - POSTGRES_USER=concourse
-      - POSTGRES_PASSWORD=\${CONCOURSE_DB_PASSWORD}
+      - POSTGRES_USER=${CONCOURSE_DB_USER}
+      - POSTGRES_PASSWORD=${CONCOURSE_DB_PASSWORD}
       - POSTGRES_DB=concourse
     networks:
       - concourse-net
     volumes:
       - concourse-db-data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U concourse -d concourse"]
+      test: ["CMD-SHELL", "pg_isready -U ${CONCOURSE_DB_USER} -d concourse"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -354,46 +368,47 @@ services:
 
   concourse-web:
     image: concourse/concourse:latest
+    command: web
     container_name: concourse-web
-    restart: always
+    restart: unless-stopped
     depends_on:
       concourse-db:
         condition: service_healthy
     environment:
       - CONCOURSE_POSTGRES_HOST=concourse-db
-      - CONCOURSE_EXTERNAL_URL=\${CONCOURSE_EXTERNAL_URL}
+      - CONCOURSE_POSTGRES_USER=${CONCOURSE_DB_USER}
+      - CONCOURSE_POSTGRES_PASSWORD=${CONCOURSE_DB_PASSWORD}
+      - CONCOURSE_POSTGRES_DATABASE=concourse
+      - CONCOURSE_EXTERNAL_URL=${CONCOURSE_EXTERNAL_URL}
+      - CONCOURSE_ADD_LOCAL_USER=${CONCOURSE_ADMIN_USER}:${CONCOURSE_ADMIN_PASSWORD}
+      - CONCOURSE_MAIN_TEAM_LOCAL_USER=${CONCOURSE_ADMIN_USER}
       - CONCOURSE_TSA_HOST_KEY=/concourse-keys/web/tsa_host_key
       - CONCOURSE_SESSION_SIGNING_KEY=/concourse-keys/web/session_signing_key
       - CONCOURSE_TSA_AUTHORIZED_KEYS=/concourse-keys/web/authorized_worker_keys
-      - CONCOURSE_CLUSTER_NAME=\${CONCOURSE_CLUSTER_NAME}
-
-
+      - CONCOURSE_CLUSTER_NAME=${CONCOURSE_CLUSTER_NAME}
+    volumes:
+      - ./keys:/concourse-keys
+    networks:
+      - concourse-net
 
 PORTS_PLACEHOLDER
 LABELS_PLACEHOLDER
 
-  cat <<'WORKER_START'
-    volumes:
-      - ./keys:/concourse-keys
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "10"
-
   concourse-worker:
     image: concourse/concourse:latest
+    command: worker
     container_name: concourse-worker
-    restart: always
+    restart: unless-stopped
     privileged: true
     stop_signal: SIGUSR2
+    stop_grace_period: 60s
     environment:
       - CONCOURSE_TSA_HOST=concourse-web:2222
       - CONCOURSE_TSA_PUBLIC_KEY=/concourse-keys/web/tsa_host_key.pub
       - CONCOURSE_TSA_WORKER_PRIVATE_KEY=/concourse-keys/worker/worker_key
       - CONCOURSE_BAGGAGECLAIM_DRIVER=overlay
       - CONCOURSE_RUNTIME=containerd
-      - CONCOURSE_DNS_SERVER=\${CONCOURSE_DNS_SERVER}
+      - CONCOURSE_CONTAINERD_DNS_SERVER=${CONCOURSE_DNS_SERVER}
     networks:
       - concourse-net
     volumes:
@@ -409,27 +424,49 @@ volumes:
 EOF
 
 # Replace placeholders with actual values
-sed -i \
-  -e "s|NETWORKS_PLACEHOLDER|${SECTION_NETWORKS}|" \
-  -e "/^LABELS_PLACEHOLDER$/d" \
-  "$COMPOSE_TEMP"
+# Use awk for multiline replacements (sed doesn't handle newlines well)
+awk -v net="$SECTION_NETWORKS" "/NETWORKS_PLACEHOLDER/ { print net; next } { print }" "$COMPOSE_TEMP" > "${COMPOSE_TEMP}.tmp" && mv "${COMPOSE_TEMP}.tmp" "$COMPOSE_TEMP"
+
+# Remove LABELS_PLACEHOLDER placeholder line
+sed -i "/^LABELS_PLACEHOLDER$/d" "$COMPOSE_TEMP"
 
 # Handle ports section (remove placeholder if Traefik, otherwise replace)
 if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
   sed -i 's|PORTS_PLACEHOLDER||' "$COMPOSE_TEMP"
 else
-  # Replace PORTS_PLACEHOLDER with actual ports, but remove leading newline
-  sed -i "s|PORTS_PLACEHOLDER|\
-${SECTION_WEB_PORTS}|" "$COMPOSE_TEMP"
+  # Replace PORTS_PLACEHOLDER with actual ports
+  # Use awk to handle multiline replacement properly
+  awk -v ports="$SECTION_WEB_PORTS" '
+    /PORTS_PLACEHOLDER/ {
+      print ports
+      next
+    }
+    { print }
+  ' "$COMPOSE_TEMP" > "${COMPOSE_TEMP}.tmp" && mv "${COMPOSE_TEMP}.tmp" "$COMPOSE_TEMP"
 fi
 
 # Add labels after concourse-web network section (only when Traefik enabled)
 if [[ -n "$SECTION_WEB_LABELS" ]]; then
-  sed -i "/^    networks:$/a\\${SECTION_WEB_LABELS}" "$COMPOSE_TEMP"
+  # Match the networks line under concourse-web service (after concourse-db section)
+  # Print networks: line, then the - concourse-net line, then the labels
+  awk -v labels="$SECTION_WEB_LABELS" '
+    /^  concourse-web:/ { in_web = 1 }
+    in_web && /^    networks:$/ {
+      print
+      next
+    }
+    in_web && /^      - concourse-net$/ {
+      print
+      print labels
+      next
+    }
+    /^  concourse-worker:/ { in_web = 0 }
+    { print }
+  ' "$COMPOSE_TEMP" > "${COMPOSE_TEMP}.tmp" && mv "${COMPOSE_TEMP}.tmp" "$COMPOSE_TEMP"
 fi
 
 # Move to final location
-mv "$COMPOSE_TEMP" "$COMPOSE_FILE"
+sudo mv "$COMPOSE_TEMP" "$COMPOSE_FILE"
 
 success "Docker Compose file written to ${COMPOSE_FILE}"
 
@@ -438,7 +475,7 @@ success "Docker Compose file written to ${COMPOSE_FILE}"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Pulling Docker images"
-docker compose -f "$COMPOSE_FILE" pull
+sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" pull
 success "Images pulled."
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -446,7 +483,14 @@ success "Images pulled."
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Starting Concourse stack (detached)"
-docker compose -f "$COMPOSE_FILE" up -d
+sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" up -d
+
+# Check for service startup failures
+if sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" ps --filter "status=exited" --format "{{.Name}}" | grep -q .; then
+  warn "One or more services failed to start. Displaying logs:"
+  sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" logs
+  exit 1
+fi
 success "Stack started."
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -459,22 +503,23 @@ MAX_WAIT=120
 INTERVAL=5
 ELAPSED=0
 READY=false
+HTTP_CODE=""
 
 while [[ $ELAPSED -lt $MAX_WAIT ]]; do
   # When using Traefik, check via container; otherwise use localhost
   if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
-    HTTP_CODE=$(docker exec concourse-web curl -s -o /dev/null -w "%{http_code}" \
+    HTTP_CODE=$(sudo docker exec concourse-web curl -s -o /dev/null -w "%{http_code}" \
       "http://localhost:8080/api/v1/info" 2>/dev/null) || true
   else
     HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" \
-      "http://localhost:${CONCOURSE_WEB_PORT}/api/v1/info")
+      "http://localhost:${CONCOURSE_WEB_PORT}/api/v1/info" 2>/dev/null) || true
   fi
-  
+
   if [[ "$HTTP_CODE" =~ ^(200|302|303)$ ]]; then
     READY=true
     break
   fi
-  
+
   echo -ne "\r    Waited ${ELAPSED}s / ${MAX_WAIT}s ..."
   sleep $INTERVAL
   ELAPSED=$((ELAPSED + INTERVAL))
@@ -489,9 +534,7 @@ if [[ "$READY" == "true" ]]; then
     success "Concourse is up and responding on port ${CONCOURSE_WEB_PORT}!"
   fi
 else
-  warn "Concourse did not respond within ${MAX_WAIT}s."
-  warn "It may still be starting. Check logs with:"
-  warn "  docker compose -f ${COMPOSE_FILE} logs -f"
+  error "Concourse did not respond within ${MAX_WAIT}s. Check logs with: sudo docker compose -f ${COMPOSE_FILE} logs -f"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

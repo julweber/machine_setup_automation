@@ -10,14 +10,14 @@
 #
 # USAGE:
 #   Source this file at the top of any setup script:
-#     source "$(dirname "$0")/../lib/helpers.sh"
+#     source "$(dirname "${BASH_SOURCE[0]}")/../lib/helpers.sh"
 #   or with an absolute path:
 #     source /path/to/machine_setup_automation/lib/helpers.sh
 #
 # NOTES:
 #   - This file is designed to be *sourced*, not executed directly.
 #   - All definitions are guarded so re-sourcing is safe and user additions
-#     made after the initial source will not be overwritten.
+#   - made after the initial source will not be overwritten.
 #   - No `set -eu` here; the calling script controls those options.
 # =============================================================================
 
@@ -34,7 +34,11 @@ if [[ -z "${RESET:-}" ]];  then RESET='\033[0m';     fi
 # ---------------------------------------------------------------------------
 # Logging helpers (guarded — skip if already defined)
 # ---------------------------------------------------------------------------
-if ! declare -F info    > /dev/null 2>&1; then
+if ! declare -F step > /dev/null 2>&1; then
+  step() { echo -e "\n${BOLD}▶ $*${RESET}"; }
+fi
+
+if ! declare -F info > /dev/null 2>&1; then
   info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
 fi
 
@@ -42,12 +46,45 @@ if ! declare -F success > /dev/null 2>&1; then
   success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
 fi
 
-if ! declare -F warn    > /dev/null 2>&1; then
+if ! declare -F warn > /dev/null 2>&1; then
   warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 fi
 
-if ! declare -F error   > /dev/null 2>&1; then
-  error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; }
+if ! declare -F error > /dev/null 2>&1; then
+  error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+fi
+
+# ---------------------------------------------------------------------------
+# run_preflight_checks
+#   Validates all required dependencies are available before setup proceeds.
+#   Checks: Docker installation, Docker daemon running, OpenSSL, curl.
+# ---------------------------------------------------------------------------
+if ! declare -F run_preflight_checks > /dev/null 2>&1; then
+  run_preflight_checks() {
+    # Check Docker is installed
+    if ! command -v docker &>/dev/null; then
+      echo -e "${RED}[ERROR]${RESET} Docker is not installed. Please run setup-docker.sh first." >&2
+      exit 1
+    fi
+    
+    # Check Docker daemon is running
+    if ! docker info &>/dev/null; then
+      echo -e "${RED}[ERROR]${RESET} Docker daemon is not running. Please start Docker." >&2
+      exit 1
+    fi
+    
+    # Check OpenSSL is available
+    if ! command -v openssl &>/dev/null; then
+      echo -e "${RED}[ERROR]${RESET} OpenSSL is not installed. Required for password and key generation." >&2
+      exit 1
+    fi
+    
+    # Check curl is available
+    if ! command -v curl &>/dev/null; then
+      echo -e "${RED}[ERROR]${RESET} curl is not installed. Required for health check polling." >&2
+      exit 1
+    fi
+  }
 fi
 
 # ---------------------------------------------------------------------------
@@ -82,5 +119,17 @@ if ! declare -F ensure_traefik_running > /dev/null 2>&1; then
       echo -e "${RED}[ERROR]${RESET} Please start Traefik first before running this script." >&2
       exit 1
     fi
+  }
+fi
+
+# ---------------------------------------------------------------------------
+# mktempfile
+#   Creates a temporary file and returns its path. Uses mktemp with a
+#   predictable naming pattern for easier debugging. File is not deleted
+#   automatically - caller is responsible for cleanup.
+# ---------------------------------------------------------------------------
+if ! declare -F mktempfile > /dev/null 2>&1; then
+  mktempfile() {
+    mktemp -t "$(basename "$1" | sed 's/$/.XXXXXX/')" 2>/dev/null || mktemp -t "tmp.XXXXXX"
   }
 fi
