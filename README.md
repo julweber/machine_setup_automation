@@ -26,13 +26,13 @@ The agent will read the README and discover available scripts on its own, then g
 2. **Make sure you have sudo rights** - all scripts call `sudo` where required.
 3. **Run the desired entrypoint**:
    - For a *server* (headless VM, cloud instance):
-```bash
-      ./setup-server.sh    # sources basics → sshd → docker → lm-studio → firewall → opencode …
-      ```
+    ```bash
+    ./setup-server.sh    # sources basics → sshd → docker → lm-studio → firewall → opencode …
+    ```
    - For a *development workstation* (your laptop/desktop):
-     ```bash
-     ./setup-dev-machine.sh
-     ```
+    ```bash
+    ./setup-dev-machine.sh
+    ```
 4. **Follow the on-screen prompts** - most scripts are non-interactive; they print progress and final status messages.
 5. After the script finishes you should have:
    - Docker ready (run `docker run hello-world` to double-check).
@@ -141,9 +141,22 @@ Installs the Agent Docker Runner (ADR) CLI, a tool that runs coding agents insid
 - Supports pi, opencode, claude code, and GitHub Copilot Workspace (codex)
 
 #### `setup-nanobot.sh`
-Clones the Nanobot MCP gateway repository, builds the Docker image, and runs the onboarding flow.
+Clones the Nanobot agent repository, builds the Docker image, and runs the onboarding flow.
 
 **Environment variables:** `NANOBOT_TARGET_REPO_DIRECTORY` (default `$HOME/nanobot`)
+
+
+#### `setup-hermes.sh`
+Sets up the Hermes Agent environment using the official prebuilt Docker image. Creates configuration files and provides convenience scripts for management.
+
+**Environment variables:** `HERMES_TARGET_REPO_DIRECTORY` (default `/srv/hermes`), `BUILD_ONLY` flag via command line (`--build-only`)
+
+**Features:**
+- Official Hermes Agent MCP gateway
+- Prebuilt Docker image from nousresearch
+- Setup wizard for initial configuration
+- Hermes Gateway and Chat services
+- Data persistence in `.hermes` directory
 
 #### `setup-pi.sh`
 Installs the latest Node.js via nvm and the **Pi coding agent** npm package globally.
@@ -226,18 +239,6 @@ Installs and configures Samba file sharing.
 Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `always` restart policy.
 
 **Environment variables:** `HOST_PORT` (default `5005`)
-
-#### `setup-hermes.sh`
-Sets up the Hermes Agent environment using the official prebuilt Docker image. Creates configuration files and provides convenience scripts for management.
-
-**Environment variables:** `HERMES_TARGET_REPO_DIRECTORY` (default `/srv/hermes`), `BUILD_ONLY` flag via command line (`--build-only`)
-
-**Features:**
-- Official Hermes Agent MCP gateway
-- Prebuilt Docker image from nousresearch
-- Setup wizard for initial configuration
-- Hermes Gateway and Chat services
-- Data persistence in `.hermes` directory
 
 #### `setup-comfy.sh` *(placeholder)*
 Placeholder for future ComfyUI setup.
