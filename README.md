@@ -10,7 +10,7 @@ This repository ships an [Agent Skills](https://agentskills.io)-compatible skill
 
 Point your agent at the skill file:
 ```
-skills/machine-setup-automation-assistant/SKILL.md
+Read and execute the instructions in skills/machine-setup-automation-assistant/SKILL.md
 ```
 
 The agent will read the README and discover available scripts on its own, then guide you interactively through choosing, configuring, and running the right setup for your machine.
