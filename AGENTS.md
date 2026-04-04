@@ -21,6 +21,26 @@ ALWAYS lint created or modified files with the following tools:
 - json (`.js`, `.json`) -> use `jq`
 - `Dockerfile` -> use hadolint via executing: docker run --rm -i hadolint/hadolint < Dockerfile
 
-### lib usage
+### Common logic
 
 Always check the `lib/` directory for existing functionality when implementing setup scripts in the `tasks/` directory. Try reusing existing functionality.
+When implementing a script in `tasks/` -> ALWAYS inspect the library scripts in `lib/` first.
+
+### bash Script Specifications
+
+#### Idempotency
+
+All scripts should be executable multiple times without destroying existing component data or configuration.
+
+#### Configuration
+
+Scripts use environment variables for their main configuration options and provide reasonable defaults.
+
+#### Configuration Paths
+
+- For scripts that setup services/software that is run as daemon/server or within docker containers: use the `/srv/<service-name>` directory for configuration files
+- For scripts that setup tools for the user on the host directly: use the appropriate default directory for the tool in the user's `$HOME`
+
+#### Templating
+
+If you need to use templating (e.g. for creating configuration files) you should put template files in the according `templates/<component-name>` directory. Avoid putting inline templates into the bash scripts except this is explicitly required.
