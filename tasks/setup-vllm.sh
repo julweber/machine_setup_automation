@@ -23,19 +23,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Define colors with actual ESC bytes ($'...') so they work in cat heredocs,
-# not just echo -e. helpers.sh guards will keep these values as-is.
-# shellcheck disable=SC2034
-RED=$'\033[0;31m' GREEN=$'\033[0;32m' YELLOW=$'\033[1;33m'
-# shellcheck disable=SC2034
-CYAN=$'\033[0;36m' BOLD=$'\033[1m' RESET=$'\033[0m'
-
 # shellcheck source=../lib/helpers.sh
 source "${SCRIPT_DIR}/../lib/helpers.sh"
-
-# Override error() to exit — helpers.sh version does not exit
-error() { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
-banner() { echo -e "\n${BOLD}${CYAN}==> $*${RESET}\n"; }
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 PROJECT_DIR="${PROJECT_DIR:-/srv/vllm}"
@@ -122,12 +111,11 @@ validate_tensor_parallel() {
 
 validate_dtype() {
   local dtype="$1"
-  local -a valid=(auto bfloat16 float16 float32 float8_e4m3fn float8_e5m2)
-  if [[ -n "$dtype" ]]; then
-    local ok=0
-    for v in "${valid[@]}"; do [[ "$dtype" == "$v" ]] && ok=1 && break; done
-    [[ "$ok" -eq 0 ]] && error "VLLM_DTYPE must be one of: ${valid[*]}"
-  fi
+  if [[ -z "$dtype" ]]; then return 0; fi
+  case "$dtype" in
+    auto|bfloat16|float16|float32|float8_e4m3fn|float8_e5m2) ;;
+    *) error "VLLM_DTYPE must be one of: auto bfloat16 float16 float32 float8_e4m3fn float8_e5m2" ;;
+  esac
 }
 
 validate_shm_size() {
@@ -149,47 +137,45 @@ validate_shm_size "${VLLM_SHM_SIZE}"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 usage() {
-  cat <<EOF
-${BOLD}Usage:${RESET} $0 [OPTIONS]
-
-${BOLD}Options:${RESET}
-  --nvidia              Force NVIDIA CUDA backend
-  --amd                 Force AMD ROCm backend  (amd64 only)
-  --cpu                 Force CPU-only backend
-  --port <n>            API port  (default: 8000)
-  --hf-token <token>    HuggingFace token for gated models
-  --hf-cache <path>     Host HF cache dir  (default: ~/.cache/huggingface)
-  --gpu-util <frac>     GPU memory utilization 0.0–1.0  (default: 0.90)
-  --tensor-parallel <n> Number of GPUs for tensor parallelism  (default: 1)
-  --max-model-len <n>   Max context length – reduce to save KV memory  (default: model max)
-  --dtype <dtype>       Model dtype: auto|bfloat16|float16|float32  (default: auto)
-  --shm-size <size>     Shared memory size for the container  (default: 8g)
-  --dir <path>          Installation directory  (default: /srv/vllm)
-  --traefik             Enable Traefik reverse-proxy integration
-  --domain <host>       Domain for Traefik  (required with --traefik)
-  --force               Re-create stack even if already present
-  --check               Check installation status and exit
-  --help                Show this help
-
-${BOLD}Environment variables${RESET} (all flags above have env-var equivalents):
-  PROJECT_DIR, HF_CACHE_DIR, VLLM_PORT, HF_TOKEN,
-  VLLM_GPU_UTIL, VLLM_TENSOR_PARALLEL, VLLM_MAX_MODEL_LEN,
-  VLLM_DTYPE, VLLM_SHM_SIZE, VLLM_TRAEFIK, VLLM_DOMAIN,
-  PROXY_NETWORK, VLLM_EXTRA_ARGS
-
-${BOLD}Model selection${RESET} (set after install, in ${PROJECT_DIR}/.env):
-  VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct            # HF model ID (auto-downloaded)
-  VLLM_MODEL=/root/.cache/huggingface/hub/...    # local snapshot path in container
-
-${BOLD}Examples:${RESET}
-  $0                                  # auto-detect GPU, set up vLLM
-  $0 --nvidia --port 8001             # CUDA on port 8001
-  $0 --amd                            # ROCm  (amd64 only)
-  $0 --cpu                            # CPU-only
-  $0 --traefik --domain vllm.example.com
-  $0 --check                          # show stack status
-  $0 --force --nvidia                 # re-create CUDA stack
-EOF
+  echo -e "${BOLD}Usage:${RESET} $0 [OPTIONS]"
+  echo ""
+  echo -e "${BOLD}Options:${RESET}"
+  echo "  --nvidia              Force NVIDIA CUDA backend"
+  echo "  --amd                 Force AMD ROCm backend  (amd64 only)"
+  echo "  --cpu                 Force CPU-only backend"
+  echo "  --port <n>            API port  (default: 8000)"
+  echo "  --hf-token <token>    HuggingFace token for gated models"
+  echo "  --hf-cache <path>     Host HF cache dir  (default: ~/.cache/huggingface)"
+  echo "  --gpu-util <frac>     GPU memory utilization 0.0–1.0  (default: 0.90)"
+  echo "  --tensor-parallel <n> Number of GPUs for tensor parallelism  (default: 1)"
+  echo "  --max-model-len <n>   Max context length – reduce to save KV memory  (default: model max)"
+  echo "  --dtype <dtype>       Model dtype: auto|bfloat16|float16|float32  (default: auto)"
+  echo "  --shm-size <size>     Shared memory size for the container  (default: 8g)"
+  echo "  --dir <path>          Installation directory  (default: /srv/vllm)"
+  echo "  --traefik             Enable Traefik reverse-proxy integration"
+  echo "  --domain <host>       Domain for Traefik  (required with --traefik)"
+  echo "  --force               Re-create stack even if already present"
+  echo "  --check               Check installation status and exit"
+  echo "  --help                Show this help"
+  echo ""
+  echo -e "${BOLD}Environment variables${RESET} (all flags above have env-var equivalents):"
+  echo "  PROJECT_DIR, HF_CACHE_DIR, VLLM_PORT, HF_TOKEN,"
+  echo "  VLLM_GPU_UTIL, VLLM_TENSOR_PARALLEL, VLLM_MAX_MODEL_LEN,"
+  echo "  VLLM_DTYPE, VLLM_SHM_SIZE, VLLM_TRAEFIK, VLLM_DOMAIN,"
+  echo "  PROXY_NETWORK, VLLM_EXTRA_ARGS"
+  echo ""
+  echo -e "${BOLD}Model selection${RESET} (set after install, in ${PROJECT_DIR}/.env):"
+  echo "  VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct            # HF model ID (auto-downloaded)"
+  echo "  VLLM_MODEL=/root/.cache/huggingface/hub/...    # local snapshot path in container"
+  echo ""
+  echo -e "${BOLD}Examples:${RESET}"
+  echo "  $0                                  # auto-detect GPU, set up vLLM"
+  echo "  $0 --nvidia --port 8001             # CUDA on port 8001"
+  echo "  $0 --amd                            # ROCm  (amd64 only)"
+  echo "  $0 --cpu                            # CPU-only"
+  echo "  $0 --traefik --domain vllm.example.com"
+  echo "  $0 --check                          # show stack status"
+  echo "  $0 --force --nvidia                 # re-create CUDA stack"
   exit 0
 }
 
@@ -247,7 +233,7 @@ print_found_status() {
   echo ""
 }
 
-banner "Checking for existing vLLM installation"
+step "Checking for existing vLLM installation"
 
 if [[ -f "$COMPOSE_FILE" ]]; then
   print_found_status
@@ -278,7 +264,7 @@ else
 fi
 
 # ── Pre-flight: sanity ────────────────────────────────────────────────────────
-banner "Pre-flight checks"
+step "Pre-flight checks"
 
 [[ "$(id -u)" -eq 0 ]] && warn "Running as root – not recommended."
 
@@ -317,7 +303,7 @@ fi
 
 # ── Auto-detect GPU backend ────────────────────────────────────────────────────
 detect_gpu() {
-  banner "Auto-detecting GPU"
+  step "Auto-detecting GPU"
 
   if command -v nvidia-smi &>/dev/null && nvidia-smi &>/dev/null; then
     info "NVIDIA GPU detected via nvidia-smi."
@@ -367,7 +353,7 @@ echo -e "\n${BOLD}Selected backend:${RESET} ${GREEN}${BACKEND^^}${RESET}  |  arc
 
 # ── ROCm host driver check ─────────────────────────────────────────────────────
 if [[ "$BACKEND" == "amd" ]]; then
-  banner "Checking ROCm host drivers"
+  step "Checking ROCm host drivers"
   ROCM_OK=1
 
   if [[ ! -e /dev/kfd ]]; then
@@ -414,7 +400,7 @@ esac
 info "Docker image: ${VLLM_IMAGE}"
 
 # ── Prepare directories ────────────────────────────────────────────────────────
-banner "Creating directories"
+step "Creating directories"
 
 if [[ ! -d "$PROJECT_DIR" ]]; then
   sudo mkdir -p "$PROJECT_DIR"
@@ -425,7 +411,7 @@ success "Project dir: ${PROJECT_DIR}"
 success "HF cache dir: ${HF_CACHE_DIR}"
 
 # ── Write .env ─────────────────────────────────────────────────────────────────
-banner "Writing .env"
+step "Writing .env"
 
 ENV_FILE="${PROJECT_DIR}/.env"
 if [[ -f "$ENV_FILE" ]]; then
@@ -474,7 +460,7 @@ chmod 600 "$ENV_FILE"
 success ".env written (mode 600): ${ENV_FILE}"
 
 # ── Generate docker-compose.yml ────────────────────────────────────────────────
-banner "Generating docker-compose.yml"
+step "Generating docker-compose.yml"
 
 # Header + networks
 cat > "$COMPOSE_FILE" << EOF
@@ -621,7 +607,7 @@ fi
 success "docker-compose.yml created: ${COMPOSE_FILE}"
 
 # ── Pull image ─────────────────────────────────────────────────────────────────
-banner "Pulling Docker image: ${VLLM_IMAGE}"
+step "Pulling Docker image: ${VLLM_IMAGE}"
 (cd "$PROJECT_DIR" && docker compose pull)
 success "Image pulled."
 
@@ -639,12 +625,12 @@ if [[ -z "$VLLM_MODEL" ]]; then
   info "       cd ${PROJECT_DIR} && docker compose up -d"
   echo ""
 else
-  banner "Starting vLLM stack"
+  step "Starting vLLM stack"
   (cd "$PROJECT_DIR" && docker compose up -d)
   success "Stack started."
 
   # ── Health check ──────────────────────────────────────────────────────────
-  banner "Waiting for vLLM to respond"
+  step "Waiting for vLLM to respond"
 
   if [[ "$VLLM_TRAEFIK" == "true" ]]; then
     info "Traefik mode: skipping direct health check (access via https://${VLLM_DOMAIN})."
