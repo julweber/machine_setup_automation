@@ -6,3 +6,5 @@
 .codex/
 node_modules/
 CLAUDE.md
+__pycache__/
+.ralph/
