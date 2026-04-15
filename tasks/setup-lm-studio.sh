@@ -1,123 +1,103 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+# =============================================================================
+# setup-lm-studio.sh — Install LM Studio
+# =============================================================================
 #
-# ============================================================================
-# LM Studio Installation Script
-# ============================================================================
+# Description:
+#   Installs LM Studio on Linux systems with AppImage and optionally installs
+#   the llmster CLI tool (lms).
 #
-# DESCRIPTION:
-#   Automates the installation and setup of LM Studio on Linux systems.
-#   Downloads the AppImage binary, creates startup scripts, and configures
-#   desktop integration. Optionally installs the llmster CLI tool (lms).
+# Environment Variables (optional):
+#   LM_STUDIO_VERSION       - Specific version (default: auto-detect latest)
+#   INSTALL_LLMSTER_ENABLED - Install llmster CLI (default: true)
 #
-# KEY ACTIONS:
-#   1. Detects the latest LM Studio version by following redirects from the
-#      official download URL (unless a specific version is provided)
-#   2. Creates a startup script (~/lmstudio) that launches the AppImage
-#      with --no-sandbox flag
-#   3. Creates a desktop shortcut (~/Desktop/LM-Studio.desktop) for easy access
-#   4. Downloads the LM Studio AppImage binary to ~/lmstudio_bin
-#   5. Backs up existing installation if present (to ~/lmstudio_bin_backup)
-#   6. Optionally installs llmster CLI tool via official install script
-#
-# IMPORTANT VARIABLES:
-#   LM_STUDIO_VERSION         - Version to install (default: auto-detect latest)
-#   INSTALL_LLMSTER_ENABLED   - Install llmster CLI (default: true)
-#   DEFAULT_LM_STUDIO_VERSION - Fallback version (0.4.6-1)
-#   LATEST_URL                - URL to detect latest version
-#   START_SCRIPT_TARGET_PATH  - Path to startup script (~/lmstudio)
-#   APP_IMAGE_TARGET_PATH     - Path to AppImage binary (~/lmstudio_bin)
-#   DESKTOP_LINK_TARGET_PATH  - Path to desktop shortcut (~/Desktop/LM-Studio.desktop)
-#
-# DEPENDENCIES:
-#   - curl: For downloading and version detection
-#   - wget: For downloading the AppImage
-#   - grep: For parsing version from URLs
-#   - Standard bash utilities (cat, chmod, mv)
-#
-# USAGE:
+# Usage:
 #   ./setup-lm-studio.sh
 #   LM_STUDIO_VERSION=0.4.5-2 ./setup-lm-studio.sh
 #   INSTALL_LLMSTER_ENABLED=false ./setup-lm-studio.sh
-#
-# ============================================================================
+# =============================================================================
 
-set -eu
+set -euo pipefail
 
-# === Configuration ===
-DESKTOP_LINK_TARGET_PATH="$HOME/Desktop/LM-Studio.desktop"
-START_SCRIPT_TARGET_PATH="$HOME/lmstudio"
-APP_IMAGE_TARGET_PATH="$HOME/lmstudio_bin"
-APP_IMAGE_BACKUP_PATH="$HOME/lmstudio_bin_backup"
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
 
-INSTALL_LLMSTER_ENABLED="${INSTALL_LLMSTER_ENABLED:-true}"
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
 
-# Architecture-specific URLs
+# Configuration
+: "${INSTALL_LLMSTER_ENABLED:=true}"
+DEFAULT_LM_STUDIO_VERSION="0.4.6-1"
+: "${LM_STUDIO_VERSION:=${DEFAULT_LM_STUDIO_VERSION}}"
+
+DESKTOP_LINK_TARGET_PATH="${DESKTOP_LINK_TARGET_PATH:-$HOME/Desktop/LM-Studio.desktop}"
+START_SCRIPT_TARGET_PATH="${START_SCRIPT_TARGET_PATH:-$HOME/lmstudio}"
+APP_IMAGE_TARGET_PATH="${APP_IMAGE_TARGET_PATH:-$HOME/lmstudio_bin}"
+APP_IMAGE_BACKUP_PATH="${APP_IMAGE_BACKUP_PATH:-$HOME/lmstudio_bin_backup}"
+
+# Architecture detection
 LATEST_URL_AMD64="https://lmstudio.ai/download/latest/linux/x64"
 LATEST_URL_ARM64="https://lmstudio.ai/download/latest/linux/arm64"
 
-DEFAULT_LM_STUDIO_VERSION="0.4.6-1"
-
-LM_STUDIO_VERSION="${LM_STUDIO_VERSION:-$DEFAULT_LM_STUDIO_VERSION}"
-
-# Detect system architecture and set appropriate URL path
 ARCH=$(uname -m)
-case "$ARCH" in
-    x86_64)
-        ARCH_TYPE="amd64"
-        LATEST_URL="$LATEST_URL_AMD64"
-        ;;
-    aarch64|arm64)
-        ARCH_TYPE="arm64"
-        LATEST_URL="$LATEST_URL_ARM64"
-        ;;
-    *)
-        echo "Error: Unsupported architecture: $ARCH"
-        echo "LM Studio only supports amd64 (x86_64) and arm64 (aarch64/arm64)"
-        exit 1
-        ;;
+case "${ARCH}" in
+  x86_64)
+    ARCH_TYPE="x64"
+    LATEST_URL="${LATEST_URL_AMD64}"
+    ;;
+  aarch64|arm64)
+    ARCH_TYPE="arm64"
+    LATEST_URL="${LATEST_URL_ARM64}"
+    ;;
+  *)
+    error "Unsupported architecture: ${ARCH}. Only amd64 and arm64 are supported."
+    ;;
 esac
 
-echo "Detected architecture: $ARCH ($ARCH_TYPE)"
-SOURCE_URL="https://installers.lmstudio.ai/linux/$ARCH_TYPE/$LM_STUDIO_VERSION/LM-Studio-$LM_STUDIO_VERSION-$ARCH_TYPE.AppImage"
+# =============================================================================
+# Main
+# =============================================================================
 
+step "Setting up LM Studio"
 
-# === check if not specified directly ===
-if [[ "$LM_STUDIO_VERSION" == "$DEFAULT_LM_STUDIO_VERSION" ]]; then
-    echo "Checking latest LM Studio version for $ARCH_TYPE..."
+info "Detected architecture: ${ARCH} (${ARCH_TYPE})"
 
-    # Follow redirects and grab the final URL, which contains the version number
-    FINAL_URL=$(curl -sI -L "$LATEST_URL" -o /dev/null -w '%{url_effective}')
-
-    # Extract version from the URL (e.g. .../LM-Studio-0.4.6-1-arm64.AppImage)
-    LM_STUDIO_VERSION=$(echo "$FINAL_URL" | grep -oP -m1 '[\d]+\.[\d]+\.[\d]+-[\d]+' | head -1)
-
-    echo "Latest LM Studio version: $LM_STUDIO_VERSION"
-    echo "Download URL: $FINAL_URL"
-    SOURCE_URL="$FINAL_URL"
+# Auto-detect version if using default
+if [[ "${LM_STUDIO_VERSION}" == "${DEFAULT_LM_STUDIO_VERSION}" ]]; then
+  step "Detecting latest version"
+  FINAL_URL=$(curl -sI -L "${LATEST_URL}" -o /dev/null -w '%{url_effective}')
+  LM_STUDIO_VERSION=$(echo "${FINAL_URL}" | grep -oP -m1 '[\d]+\.[\d]+\.[\d]+-[\d]+' | head -1)
+  info "Latest version: ${LM_STUDIO_VERSION}"
 fi
 
-echo "Installing version: $LM_STUDIO_VERSION"
+SOURCE_URL="https://installers.lmstudio.ai/linux/${ARCH_TYPE}/${LM_STUDIO_VERSION}/LM-Studio-${LM_STUDIO_VERSION}-${ARCH_TYPE}.AppImage"
+info "Download URL: ${SOURCE_URL}"
 
-# create start script
-if [[ -f "$START_SCRIPT_TARGET_PATH" ]]; then
-    echo "Start script exists at: $START_SCRIPT_TARGET_PATH . Skipping creation."
+# Create start script
+if [[ -f "${START_SCRIPT_TARGET_PATH}" ]]; then
+  info "Start script exists at: ${START_SCRIPT_TARGET_PATH}"
 else
-    echo "Creating start script at: $START_SCRIPT_TARGET_PATH ..."
-    cat > "$START_SCRIPT_TARGET_PATH" << EOF
+  step "Creating start script"
+  cat > "${START_SCRIPT_TARGET_PATH}" << 'EOF'
 #!/usr/bin/env bash
-cd \$HOME
+cd "$HOME"
 ./lmstudio_bin --no-sandbox
 EOF
 fi
 
-chmod +x "$START_SCRIPT_TARGET_PATH"
+chmod +x "${START_SCRIPT_TARGET_PATH}"
 
-# create desktop link
-if [[ -f "$DESKTOP_LINK_TARGET_PATH" ]]; then
-    echo "desktop link exists at: $DESKTOP_LINK_TARGET_PATH . Skipping creation."
+# Create desktop link
+if [[ -f "${DESKTOP_LINK_TARGET_PATH}" ]]; then
+  info "Desktop link exists at: ${DESKTOP_LINK_TARGET_PATH}"
 else
-    echo "Creating desktop link at: $DESKTOP_LINK_TARGET_PATH ..."
-    cat > "$DESKTOP_LINK_TARGET_PATH" << EOF
+  step "Creating desktop shortcut"
+  cat > "${DESKTOP_LINK_TARGET_PATH}" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -125,34 +105,38 @@ Terminal=false
 Name=LM Studio
 Comment=LM Studio
 Icon=utilities-terminal
-Exec=$START_SCRIPT_TARGET_PATH
+Exec=${START_SCRIPT_TARGET_PATH}
 EOF
 fi
 
-chmod +x "$DESKTOP_LINK_TARGET_PATH"
+chmod +x "${DESKTOP_LINK_TARGET_PATH}"
 
-if [[ -f "$APP_IMAGE_TARGET_PATH" ]]; then
-    echo "LM Studio binary exists: $APP_IMAGE_TARGET_PATH"
-    echo "Moving to $APP_IMAGE_BACKUP_PATH"
-    mv "$APP_IMAGE_TARGET_PATH" "$APP_IMAGE_BACKUP_PATH"
+# Handle existing binary
+if [[ -f "${APP_IMAGE_TARGET_PATH}" ]]; then
+  info "Existing binary found: ${APP_IMAGE_TARGET_PATH}"
+  info "Backing up to: ${APP_IMAGE_BACKUP_PATH}"
+  mv "${APP_IMAGE_TARGET_PATH}" "${APP_IMAGE_BACKUP_PATH}"
 fi
 
-echo "Downloading LM Studio AppImage from: $SOURCE_URL to $APP_IMAGE_TARGET_PATH ... " 
-wget "$SOURCE_URL" --output-document "$APP_IMAGE_TARGET_PATH"
-chmod +x "$APP_IMAGE_TARGET_PATH"
-echo "Finished installing version: $LM_STUDIO_VERSION"
+# Download AppImage
+step "Downloading LM Studio v${LM_STUDIO_VERSION}"
+wget --output-document "${APP_IMAGE_TARGET_PATH}" "${SOURCE_URL}"
+chmod +x "${APP_IMAGE_TARGET_PATH}"
+success "Installed version: ${LM_STUDIO_VERSION}"
 
-set +e
-
-# install llmster cli (lms)
-if [[ "$INSTALL_LLMSTER_ENABLED" == "true" ]]; then
-    echo "Installing llmster . NOT FAILING SCRIPT ON ERRORS!!!"
-    curl -fsSL https://lmstudio.ai/install.sh | bash
-    lms --help
-    lms --version
-    echo "Finished install llmster."
-    echo
+# Install llmster CLI
+if [[ "${INSTALL_LLMSTER_ENABLED}" == "true" ]]; then
+  step "Installing llmster CLI"
+  # Don't fail script on errors for this command
+  set +e
+  curl -fsSL https://lmstudio.ai/install.sh | bash
+  if command -v lms &>/dev/null; then
+    info "lms version: $(lms --version 2>/dev/null || echo 'unknown')"
+  fi
+  set -e
 else
-    echo "llmster install is disabled. Skipping installation."
-    echo
+  info "llmster install disabled"
 fi
+
+success "LM Studio installed successfully"
+info "Run '${START_SCRIPT_TARGET_PATH}' to start the application"
