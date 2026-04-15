@@ -1,101 +1,134 @@
 #!/usr/bin/env bash
-################################################################################
-# Script: setup-basics.sh
-# Description: Installs essential system packages and tools for development
-#              environment setup on Debian/Ubuntu-based systems.
+# shellcheck shell=bash
+# =============================================================================
+# setup-basics.sh — Install essential development tools
+# =============================================================================
 #
-# Key Actions:
-#   1. Updates apt package lists
-#   2. Installs core utilities (curl, wget, git, jq, yq, net-tools, gpg)
-#   3. Installs terminal tools (tldr, bat, terminator, tmux)
-#   4. Installs Python 3 (full install) and pip
-#   5. Installs system monitoring tools (nvtop, radeontop, btop, htop)
-#   6. Installs Node.js and npm via apt
-#   7. Installs Python package manager 'uv' via pip
-#   8. Installs and configures Node Version Manager (NVM)
-#   9. Loads NVM into current shell session
+# Description:
+#   Installs essential system packages and tools for development environment.
 #
-# Important Variables:
-#   NVM_VERSION - Version of NVM to install (default: 0.40.4)
+# Environment Variables (optional):
+#   NVM_VERSION - NVM version to install (default: 0.40.4)
 #   NVM_DIR     - NVM installation directory (default: $HOME/.nvm)
 #
-# Dependencies:
-#   - Debian/Ubuntu-based Linux distribution
-#   - sudo privileges for apt package installation
-#   - Internet connection for downloading packages and NVM
-#   - pip (installed during script execution)
-#
-# Notes:
-#   - Script exits on any error (set -e)
-#   - Script exits on undefined variables (set -u)
-#   - Uses --break-system-packages flag for pip install
-################################################################################
-set -eu
+# Usage:
+#   ./setup-basics.sh
+# =============================================================================
 
-NVM_VERSION="0.40.4"
+set -euo pipefail
 
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
+
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
+
+# Configuration
+: "${NVM_VERSION:=0.40.4}"
+NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+# Packages to install
+declare -a APT_PACKAGES=(
+  curl
+  tldr
+  bat
+  git
+  python3-full
+  python3-pip
+  jq
+  yq
+  net-tools
+  wget
+  gpg
+  netcat-openbsd
+  terminator
+  libfuse2
+  gnome-control-center
+  gnome-online-accounts
+  nvtop
+  radeontop
+  btop
+  htop
+  tmux
+  nodejs
+  npm
+)
+
+# =============================================================================
+# Main
+# =============================================================================
+
+step "Setting up development basics"
+
+# Update package lists
+step "Updating package lists"
 sudo apt update
-sudo apt install -y curl \
-    tldr \
-    bat \
-    git \
-    python3-full \
-    python3-pip \
-    jq \
-    yq \
-    net-tools \
-    wget \
-    gpg \
-    netcat-openbsd \
-    terminator \
-    libfuse2 \
-    gnome-control-center \
-    gnome-online-accounts \
-    nvtop \
-    radeontop \
-    btop \
-    htop \
-    tmux \
-    nodejs \
-    npm
 
-# Python basics
-if ! command -v uv &> /dev/null; then
-    echo "uv not found, installing..."
-    pip install uv --break-system-packages
+# Install apt packages
+step "Installing packages"
+for pkg in "${APT_PACKAGES[@]}"; do
+  if dpkg -l "$pkg" &>/dev/null; then
+    info "$pkg already installed"
+  else
+    info "Installing $pkg"
+    sudo apt install -y "$pkg"
+  fi
+done
+
+# Install uv (Python package manager)
+step "Installing uv"
+if command -v uv &>/dev/null; then
+  success "uv already installed"
 else
-    echo "uv already installed"
+  info "Installing uv..."
+  pip install uv --break-system-packages
 fi
 
-# nodejs nvm
-NVM_DIR="$HOME/.nvm"
-if [ ! -s "$NVM_DIR/nvm.sh" ]; then
-    echo "nvm not found, installing..."
-    curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v$NVM_VERSION/install.sh" | bash
+# Install NVM
+step "Installing NVM v${NVM_VERSION}"
+if [[ -s "${NVM_DIR}/nvm.sh" ]]; then
+  success "NVM already installed at ${NVM_DIR}"
+else
+  info "Installing NVM..."
+  curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash
 fi
 
-# Add NVM configuration to ~/.profile if not present
+# Add NVM configuration to ~/.profile
+step "Configuring NVM in ~/.profile"
 PROFILE="$HOME/.profile"
-if [ ! -s "$PROFILE" ] || ! grep -q "export NVM_DIR=" "$PROFILE"; then
-    echo "Adding NVM configuration to ~/.profile..."
-    cat >> "$PROFILE" <<EOF
-
+NVM_CONFIG="
 # NVM configuration
-export NVM_DIR="$HOME/.nvm"
-[ -s "\$NVM_DIR/nvm.sh" ] && \. "\$NVM_DIR/nvm.sh"  # This loads nvm
-[ -s "\$NVM_DIR/bash_completion" ] && \. "\$NVM_DIR/bash_completion"  # This loads nvm bash_completion
-EOF
+export NVM_DIR=\"${NVM_DIR}\"
+[ -s \"\$NVM_DIR/nvm.sh\" ] && \\. \"\$NVM_DIR/nvm.sh\"  # This loads nvm
+[ -s \"\$NVM_DIR/bash_completion\" ] && \\. \"\$NVM_DIR/bash_completion\"  # This loads nvm bash_completion
+"
+
+if [[ ! -s "${PROFILE}" ]] || ! grep -q "export NVM_DIR=" "${PROFILE}"; then
+  echo "${NVM_CONFIG}" >> "${PROFILE}"
+  info "NVM configuration added to ${PROFILE}"
 else
-    echo "NVM configuration already present in ~/.profile"
+  info "NVM configuration already present in ${PROFILE}"
 fi
 
-# Source .profile to load NVM into current session
-source "$HOME/.profile"
-
-# Huggingface cli
-if ! command -v hf &> /dev/null; then
-    echo "huggingface-cli not found, installing..."
-    curl -LsSf https://hf.co/cli/install.sh | bash
-else
-    echo "huggingface-cli already installed"
+# Load NVM into current session
+# shellcheck disable=SC1091
+if [[ -s "${NVM_DIR}/nvm.sh" ]]; then
+  export NVM_DIR
+  \. "${NVM_DIR}/nvm.sh"
+  info "NVM loaded into current session"
 fi
+
+# Install huggingface-cli
+step "Installing huggingface-cli"
+if command -v hf &>/dev/null; then
+  success "huggingface-cli already installed"
+else
+  info "Installing huggingface-cli..."
+  curl -LsSf https://hf.co/cli/install.sh | bash
+fi
+
+success "Development basics installed successfully"
