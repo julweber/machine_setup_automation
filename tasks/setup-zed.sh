@@ -111,6 +111,16 @@ INSTALL_SCRIPT=$(mktempfile "zed-install.sh" || mktemp)
 curl -fsSL "${ZED_INSTALL_SCRIPT_URL}" -o "${INSTALL_SCRIPT}"
 chmod +x "${INSTALL_SCRIPT}"
 
+# Verify script integrity (check for suspicious content)
+step "Verifying installation script integrity"
+if grep -qE '^exec\s' "${INSTALL_SCRIPT}" 2>/dev/null; then
+  error "Installation script appears to contain direct execution — aborting for safety."
+fi
+if grep -qE 'eval\s' "${INSTALL_SCRIPT}" 2>/dev/null; then
+  error "Installation script contains 'eval' — potential command injection detected."
+fi
+success "Script integrity verified."
+
 # Execute installation script
 step "Running Zed installation script"
 if [[ "${ZED_CHANNEL}" == "preview" ]]; then
