@@ -1,0 +1,94 @@
+# =============================================================================
+# Hermes Agent Configuration Template (Local Terminal Backend)
+# =============================================================================
+# Copy this to ~/.hermes/config.yaml after running setup and customize
+# This configuration is optimized for running Hermes with local terminal
+# in Docker containers (all commands execute inside the gateway container)
+# =============================================================================
+
+---
+# Terminal backend settings - controls where terminal() tool commands execute
+terminal:
+  # Backend type: "local", "docker", "ssh", "modal", "daytona", or "singularity"
+  # For local execution inside the gateway container, use "local"
+  backend: local
+
+  # Working directory inside the container (set in docker-compose.yml)
+  cwd: "/workspace"
+
+  # Timeout in seconds for each terminal command
+  timeout: 180
+
+  # Enable persistent shell (keeps bash session alive across commands)
+  persistent_shell: false
+
+# =============================================================================
+# Model Configuration
+# =============================================================================
+
+agent:
+  max_turns: 90  # Max iterations per conversation (default: 90)
+
+# Main model settings
+model:
+  default: "anthropic/claude-opus-4.6"  # Change to your preferred model
+
+# Provider-specific configurations (optional - most handled via .env file)
+providers:
+  anthropic:
+    api_key: ""  # Set in ~/.hermes/.env instead
+
+# =============================================================================
+# Context Compression
+# =============================================================================
+
+compression:
+  enabled: true        # Auto-compress long conversations to save context space
+  threshold: 0.8      # Compress when at 50% of model's context limit
+
+  # Summary model for compression (must have context >= main model)
+  summary_model: "google/gemini-3-flash-preview"
+
+# =============================================================================
+# Display Settings
+# =============================================================================
+
+display:
+  tool_progress: all      # off | new | all | verbose
+  skin: default           # Built-in skins: default, ares, mono, slate
+  compact: false          # Less whitespace in output
+
+# =============================================================================
+# Tool Configuration
+# =============================================================================
+
+# Enable/disable specific tools and toolsets
+tools:
+  enabled_toolsets:
+    - "core"              # Always enabled (file_tools, terminal, etc.)
+    - "web_tools"         # web_search, web_extract, web_crawl
+    - "code_execution"    # execute_code sandboxed Python
+
+  disabled_toolsets: []   # Tools to disable (empty = none)
+
+# =============================================================================
+# Privacy & Security
+# =============================================================================
+
+privacy:
+  redact_pii: false       # Strip PII from context (gateway only)
+
+# =============================================================================
+# Web Search Backend
+# =============================================================================
+
+web:
+  backend: "exa"    # firecrawl | parallel | tavily | exa
+
+# =============================================================================
+# Browser Configuration
+# =============================================================================
+
+browser:
+  inactivity_timeout: 120      # Seconds before auto-closing idle browser
+  command_timeout: 30          # Timeout for browser commands (screenshot, etc.)

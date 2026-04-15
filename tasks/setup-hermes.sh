@@ -1,223 +1,296 @@
-#!/usr/bin/env bash
-# ==============================================================================
-# setup-hermes.sh
-# ===============================================================================
+#!/bin/bash
+# =============================================================================
+# setup-hermes.sh — Install Hermes Agent with Local Terminal Backend
+# =============================================================================
+#
 # Description:
 #   Sets up the Hermes Agent environment using the official prebuilt Docker image.
 #   Creates a target directory, generates configuration files from templates,
 #   and provides convenience scripts for management.
+#   
+#   Uses LOCAL terminal backend by default - all terminal commands execute inside
+#   the same container where the gateway runs (no separate terminal containers).
+#
+#   Behavior:
+#   - Existing configuration detected → update docker image and restart container
+#   - New installation → provide setup instructions for the user
+#
+# Environment Variables (optional):
+#   HERMES_TARGET_REPO_DIRECTORY - Directory to set up Hermes (default: /srv/hermes)
+#
+# Options:
+#   --build-only - Only pull the Docker image, don't configure files
 #
 # Usage:
-#   bash setup-hermes.sh
-#
-#   Optionally override the target directory:
-#     HERMES_TARGET_REPO_DIRECTORY=/opt/hermes bash setup-hermes.sh
-#
-# Key Steps:
-#   1. Verify that Docker is installed and available on PATH.
-#   2. Create target directory at /srv/hermes (HERMES_TARGET_REPO_DIRECTORY).
-#   3. Pull the official Hermes prebuilt image (nousresearch/hermes-agent).
-#   4. Copy docker-compose.yml from templates/hermes/docker-compose.yml.
-#   5. Generate .env template file for API key configuration.
-#   6. Copy restart_hermes.sh convenience script from template.
-#   7. Provide post-setup instructions including how to run the setup wizard
-#      and start the gateway once configured.
-#
-# Environment Variables:
-#   HERMES_TARGET_REPO_DIRECTORY    (optional) Directory to set up Hermes.
-#                                   Default: /srv/hermes
-#
-# Generated Files:
-#   <HERMES_TARGET_REPO_DIRECTORY>/docker-compose.yml
-#       Defines hermes-gateway, hermes-chat, and hermes-setup services.
-#       Uses official prebuilt image nousresearch/hermes-agent.
-#       Mounts HERMES_DATA_DIRECTORY -> /opt/data (container path).
-#
-#   <HERMES_TARGET_REPO_DIRECTORY>/restart_hermes.sh
-#       A helper script that stops and restarts the hermes-gateway service.
-#
-# Prerequisites / Dependencies:
-#   - bash  (version 4+ recommended; uses set -euo pipefail)
-#   - docker  (must be installed, running, and accessible without sudo)
-#   - docker compose  (v2 plugin or standalone; used for up / down / run)
-# ==============================================================================
+#   ./setup-hermes.sh
+#   ./setup-hermes.sh --build-only
+#   HERMES_TARGET_REPO_DIRECTORY=/opt/hermes ./setup-hermes.sh
+# =============================================================================
 
 set -euo pipefail
 
-# ─────────────────────────────────────────────────────────────────────────────
-# COLOURS & HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
 
-RED=$'\033[0;31m'
-GREEN=$'\033[0;32m'
-YELLOW=$'\033[0;33m'
-CYAN=$'\033[0;36m'
-BOLD=$'\033[1m'
-RESET=$'\033[0m'
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ARGUMENT PARSING
-# ─────────────────────────────────────────────────────────────────────────────
-
-BUILD_ONLY=false
-
-for arg in "$@"; do
-    case "$arg" in
-        --build-only)
-            BUILD_ONLY=true
-            ;;
-        *)
-            echo -e "${RED}Error: Unknown argument: $arg${RESET}" >&2
-            echo "Usage: $0 [--build-only]" >&2
-            exit 1
-            ;;
-    esac
-done
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PATHS
-# ─────────────────────────────────────────────────────────────────────────────
-
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-TEMPLATES_DIR="${SCRIPT_DIR}/../templates/hermes"
-
-# Optional environment variables - default to /srv/hermes as per spec
+# Configuration
 HERMES_TARGET_REPO_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY:-/srv/hermes}"
-
-# Hermes data directory (matches official pattern: ~/.hermes in Docker docs)
 HERMES_DATA_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY}/.hermes"
 HERMES_WORKSPACE_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY}/workspace"
+TEMPLATES_DIR="${SCRIPT_DIR}/../templates/hermes"
+HERMES_IMAGE="nousresearch/hermes-agent:latest"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 1: Check Docker installation
-# ─────────────────────────────────────────────────────────────────────────────
+# Parse arguments
+BUILD_ONLY=false
+for arg in "$@"; do
+  case "$arg" in
+    --build-only)
+      BUILD_ONLY=true
+      ;;
+    *)
+      error "Unknown argument: $arg. Usage: $0 [--build-only]"
+      ;;
+  esac
+done
 
-echo "Checking Docker installation..."
-if ! command -v docker &> /dev/null; then
-    echo -e "${RED}Error: Docker is not installed. Please install Docker first.${RESET}"
-    exit 1
+# =============================================================================
+# Main
+# =============================================================================
+
+step "Setting up Hermes Agent (Local Terminal Backend)"
+
+# Check Docker installation
+if ! command -v docker &>/dev/null; then
+  error "Docker is not installed. Please install Docker first."
 fi
 
-if ! docker info &> /dev/null; then
-    echo -e "${RED}Error: Docker daemon is not running. Start Docker and try again.${RESET}"
-    exit 1
+if ! docker info &>/dev/null; then
+  error "Docker daemon is not running. Start Docker and try again."
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 2: Create target directory (if it doesn't exist)
-# ─────────────────────────────────────────────────────────────────────────────
+success "Docker is available"
 
-echo "Setting up target directory..."
-if [ ! -d "$HERMES_TARGET_REPO_DIRECTORY" ]; then
-    sudo mkdir -p "$HERMES_TARGET_REPO_DIRECTORY"
-    echo "Created directory: $HERMES_TARGET_REPO_DIRECTORY"
+# Create target directory
+step "Setting up target directory: ${HERMES_TARGET_REPO_DIRECTORY}"
+if [[ ! -d "${HERMES_TARGET_REPO_DIRECTORY}" ]]; then
+  sudo mkdir -p "${HERMES_TARGET_REPO_DIRECTORY}"
+  info "Setting ownership to 10000:10000 for directory ${HERMES_TARGET_REPO_DIRECTORY}"
+  sudo chown -R 10000:10000 "${HERMES_TARGET_REPO_DIRECTORY}"
+  info "Created directory: ${HERMES_TARGET_REPO_DIRECTORY}"
 else
-    echo "Target directory already exists: $HERMES_TARGET_REPO_DIRECTORY"
+  info "Target directory already exists"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 3: Pull the official Hermes prebuilt image
-# ─────────────────────────────────────────────────────────────────────────────
-
-echo "Pulling official Hermes prebuilt image..."
-docker pull nousresearch/hermes-agent:latest
-
-if [[ "$BUILD_ONLY" == true ]]; then
-    echo ""
-    echo -e "${GREEN}${BOLD}Official Hermes image pulled successfully.${RESET}"
-    echo "Exiting (--build-only mode)."
-    exit 0
+# Create workspace directory
+step "Setting up workspace directory: ${HERMES_WORKSPACE_DIRECTORY}"
+if [[ ! -d "${HERMES_WORKSPACE_DIRECTORY}" ]]; then
+  sudo mkdir -p "${HERMES_WORKSPACE_DIRECTORY}"
+  info "Setting ownership to 10000:10000 for directory ${HERMES_WORKSPACE_DIRECTORY}"
+  sudo chown -R 10000:10000 "${HERMES_WORKSPACE_DIRECTORY}"
+  info "Created workspace directory: ${HERMES_WORKSPACE_DIRECTORY}"
+else
+  info "Workspace directory already exists"
 fi
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 4: Copy docker-compose.yml from template
-# ─────────────────────────────────────────────────────────────────────────────
+# Pull Docker image
+step "Pulling Hermes Docker image"
+docker pull "${HERMES_IMAGE}"
 
-echo "Copying docker-compose.yml from template..."
-sudo cp "${TEMPLATES_DIR}/docker-compose.yml" "$HERMES_TARGET_REPO_DIRECTORY/docker-compose.yml"
+if [[ "${BUILD_ONLY}" == true ]]; then
+  success "Hermes image pulled successfully (--build-only mode)"
+  exit 0
+fi
 
+# =============================================================================
+# Check for existing configuration
+# =============================================================================
+# Existing config is indicated by: /srv/hermes/.hermes/config.yaml OR .env exists
+# (these are mounted into the docker image at /opt/data)
+# =============================================================================
 
+HERMES_CONFIG_PATH="/srv/hermes/.hermes/config.yaml"
+HERMES_ENV_PATH="/srv/hermes/.hermes/.env"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 5: Copy restart_hermes.sh from template
-# ─────────────────────────────────────────────────────────────────────────────
+if [[ -f "${HERMES_CONFIG_PATH}" ]] || [[ -f "${HERMES_ENV_PATH}" ]]; then
+  # ===========================================================================
+  # Existing installation - update image and restart container
+  # ===========================================================================
 
-echo "Copying restart_hermes.sh from template..."
-sudo cp "${TEMPLATES_DIR}/restart_hermes.sh" "$HERMES_TARGET_REPO_DIRECTORY/restart_hermes.sh"
-sudo chmod +x "$HERMES_TARGET_REPO_DIRECTORY/restart_hermes.sh"
+  step "Existing Hermes configuration detected"
+  info "Found config at: ${HERMES_CONFIG_PATH}"
 
-# ─────────────────────────────────────────────────────────────────────────────
-# STEP 8: Post-setup instructions (user must configure before starting)
-# ─────────────────────────────────────────────────────────────────────────────
+  # Copy docker-compose.yml if needed
+  if [[ -f "${TEMPLATES_DIR}/docker-compose.yml" ]]; then
+    if [[ ! -f "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml" ]]; then
+      sudo cp "${TEMPLATES_DIR}/docker-compose.yml" "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml"
+      info "Copied docker-compose.yml"
+    else
+      info "docker-compose.yml already exists, keeping existing"
+    fi
+  fi
 
+  # Restart the gateway container if it exists
+  step "Restarting Hermes gateway container"
+  if docker ps -a --format '{{.Names}}' | grep -q "^hermes-gateway$"; then
+    if docker ps --format '{{.Names}}' | grep -q "^hermes-gateway$"; then
+      info "Restarting running container..."
+      docker restart hermes-gateway 2>/dev/null || true
+    else
+      info "Starting existing container..."
+      docker start hermes-gateway 2>/dev/null || true
+    fi
+    success "Hermes gateway container restarted with new image"
+  else
+    info "Container 'hermes-gateway' not found - starting it"
+    if [[ -f "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml" ]]; then
+      (cd "${HERMES_TARGET_REPO_DIRECTORY}" && docker compose up -d hermes-gateway 2>/dev/null) || {
+        warn "Failed to start via docker compose. Run manually:"
+        info "  cd ${HERMES_TARGET_REPO_DIRECTORY} && docker compose up -d hermes-gateway"
+      }
+    fi
+  fi
+
+  # Post-update instructions
+  echo ""
+  echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+  success "Hermes Agent updated!"
+  echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+  echo ""
+  echo -e "${GREEN}Existing configuration found at:${RESET}"
+  echo "  ${HERMES_CONFIG_PATH}"
+  echo "  ${HERMES_ENV_PATH}"
+  echo ""
+  echo -e "${YELLOW}🔄 Docker image updated to: ${HERMES_IMAGE}${RESET}"
+  echo ""
+  echo -e "${YELLOW}📋 Common commands:${RESET}"
+  echo ""
+  echo "  ${BOLD}View logs:${RESET}"
+  echo "    docker logs -f hermes-gateway"
+  echo ""
+  echo "  ${BOLD}Restart gateway:${RESET}"
+  echo "    docker restart hermes-gateway"
+  echo ""
+  echo "  ${BOLD}Access shell:${RESET}"
+  echo "    docker exec -it hermes-gateway bash"
+  echo ""
+  echo -e "${CYAN}─────────────────────────────────────────────────────────${RESET}"
+  exit 0
+fi
+
+# ===========================================================================
+# New installation - provide setup instructions
+# ===========================================================================
+
+step "No existing Hermes configuration found"
+info "This is a fresh installation"
+
+# Copy configuration files from templates
+step "Copying configuration files from templates"
+
+if [[ -f "${TEMPLATES_DIR}/docker-compose.yml" ]]; then
+  sudo cp "${TEMPLATES_DIR}/docker-compose.yml" "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml"
+  info "Copied docker-compose.yml (local terminal backend)"
+else
+  warn "Template not found: ${TEMPLATES_DIR}/docker-compose.yml"
+fi
+
+if [[ -f "${TEMPLATES_DIR}/restart_hermes.sh" ]]; then
+  sudo cp "${TEMPLATES_DIR}/restart_hermes.sh" "${HERMES_TARGET_REPO_DIRECTORY}/restart_hermes.sh"
+  sudo chmod +x "${HERMES_TARGET_REPO_DIRECTORY}/restart_hermes.sh"
+  info "Copied restart_hermes.sh"
+else
+  warn "Template not found: ${TEMPLATES_DIR}/restart_hermes.sh"
+fi
+
+# Post-setup instructions
 echo ""
 echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
-echo -e "${GREEN}${BOLD}  Hermes Agent setup complete!${RESET}"
+success "Hermes Agent setup files prepared!"
 echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
 echo ""
 
-# ── Configuration instructions ──────────────────────────────────────────────
 echo -e "${YELLOW}📁 Your files:${RESET}"
-echo "   Data directory:   $HERMES_DATA_DIRECTORY"
-echo "   Workspace directory: $HERMES_WORKSPACE_DIRECTORY"
-echo "   Docker image:     nousresearch/hermes-agent:latest"
+echo "   Data directory:     ${HERMES_DATA_DIRECTORY}"
+echo "   Workspace directory: ${HERMES_WORKSPACE_DIRECTORY}"
+echo "   Docker image:       ${HERMES_IMAGE}"
 echo ""
 
-# ── Setup wizard instructions ───────────────────────────────────────────────
-echo -e "${YELLOW}🚀 Step 1: Run the setup wizard to configure Hermes:${RESET}"
+echo -e "${YELLOW}🚀 Step 1: Run the initial setup wizard${RESET}"
 echo ""
-echo "   cd $HERMES_TARGET_REPO_DIRECTORY"
-echo "   docker compose run -it hermes-setup"
-echo "   # Press Ctrl+D when finished"
+echo "   cd ${HERMES_TARGET_REPO_DIRECTORY}"
+echo "   docker compose run hermes-setup"
 echo ""
-
-# ── Start the gateway instructions ───────────────────────────────────────────
-echo -e "${YELLOW}💬 Step 2: Start chatting with Hermes:${RESET}"
+echo "   This will launch the setup wizard which will:"
+echo "   - Ask for your LLM provider API keys"
+echo "   - Configure the messaging gateway"
+echo "   - Set up your preferences"
 echo ""
-echo "   Option A — Use the hermes-chat service:"
-echo "     cd $HERMES_TARGET_REPO_DIRECTORY"
-echo "     docker compose run -it hermes-chat"
-echo ""
-echo "   Option B — Start the gateway and attach:"
-echo "     ./restart_hermes.sh"
-echo "     docker compose run -it hermes-gateway chat"
+echo "   Press Ctrl+C when the setup wizard is complete"
 echo ""
 
-# ── Command reference ───────────────────────────────────────────────────────
+echo -e "${YELLOW}📝 Step 2: Customize configuration (optional)${RESET}"
+echo ""
+echo "   The config template is at:"
+echo "   ${TEMPLATES_DIR}/config.yaml.example"
+echo ""
+echo "   You can edit the hermes configuration directly:"
+echo "   nano ${HERMES_DATA_DIRECTORY}/config.yaml"
+echo ""
+echo "   Or use the CLI inside the container:"
+echo "   docker compose exec hermes-gateway hermes config edit"
+echo ""
+
+echo -e "${YELLOW}💬 Step 3: Start the gateway${RESET}"
+echo ""
+echo "   cd ${HERMES_TARGET_REPO_DIRECTORY}"
+echo "   docker compose up hermes-gateway"
+echo ""
+
 echo -e "${YELLOW}📖 Common commands:${RESET}"
-
 echo ""
 echo "   ${BOLD}hermes help:${RESET}"
-echo "     docker compose run -it hermes-gateway --help   # display help"
-echo ""
-
+echo "     docker compose exec hermes-gateway hermes --help"
 echo ""
 echo "   ${BOLD}Gateway management:${RESET}"
+echo "     cd ${HERMES_TARGET_REPO_DIRECTORY}"
 echo "     ./restart_hermes.sh              # Start/restart gateway"
 echo "     docker compose logs -f hermes-gateway  # View logs"
 echo ""
-
-echo "   ${BOLD}Interactive session:${RESET}"
-echo "     docker compose run -it hermes-chat # Full TUI interface"
+echo "   ${BOLD}Interactive session (gateway):${RESET}"
+echo "     docker exec -it hermes-gateway bash"
+echo "     hermes chat"
+echo "   or"
+echo "     docker compose run hermes-chat"
 echo ""
-
 echo "   ${BOLD}Model selection:${RESET}"
-echo "     docker compose run -it hermes-chat model # configure chat model"
+echo "     docker compose exec hermes-gateway hermes model"
 echo ""
-
 echo "   ${BOLD}Messaging setup:${RESET}"
-echo "     docker compose run -it hermes-gateway gateway setup"
+echo "     docker compose exec hermes-gateway hermes gateway setup"
 echo ""
 
-# ── Next steps summary ─────────────────────────────────────────────────────
-echo -e "${GREEN}${BOLD}🚀 Once Setup is Complete, Run This Command:${RESET}"
+echo -e "${YELLOW}📋 Example config.yaml options:${RESET}"
 echo ""
-echo "   cd $HERMES_TARGET_REPO_DIRECTORY && docker compose --profile manual up hermes-chat"
+echo "   Edit ${HERMES_DATA_DIRECTORY}/config.yaml to customize:"
+echo ""
+echo "   ${BOLD}terminal.backend:${RESET}     Set to 'local' for in-container execution"
+echo "   ${BOLD}model.default:${RESET}        Change your preferred AI model"
+echo "   ${BOLD}tools.enabled_toolsets:${RESET} Enable/disable tool categories"
+echo "   ${BOLD}web.backend:${RESET}          Choose web search backend (exa, tavily, etc.)"
 echo ""
 
 echo -e "${CYAN}─────────────────────────────────────────────────────────${RESET}"
 echo ""
-echo -e "${YELLOW}ℹ️  Note:${RESET}"
-echo "   The gateway service is NOT yet running. You must first:"
-echo "   Run 'docker compose run -it hermes-setup' to configure Hermes"
+echo -e "${GREEN}${BOLD}✅ Setup Complete!${RESET}"
 echo ""
+echo -e "${YELLOW}ℹ️  Next steps:${RESET}"
+echo "   1. Run: cd ${HERMES_TARGET_REPO_DIRECTORY} && docker compose run hermes-setup"
+echo "   2. After setup, start the gateway: docker compose up hermes-gateway"
+echo ""
+echo -e "${CYAN}─────────────────────────────────────────────────────────${RESET}"
