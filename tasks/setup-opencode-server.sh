@@ -1,89 +1,43 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
 # =============================================================================
-# Script: setup-opencode-server.sh
+# setup-opencode-server.sh — Install Opencode AI Coding Agent Server
 # =============================================================================
 #
-# DESCRIPTION:
-#   Installs and configures the Opencode AI Coding Agent Server. Supports two
-#   deployment modes:
+# Description:
+#   Installs Opencode AI Coding Agent Server in Docker or systemd mode.
 #
-#   1. **Docker mode**: Uses Docker Compose for containerized deployment
-#      - With or without Traefik reverse proxy
-#      - Persistent data in /srv/opencode
-#      - Easy updates via docker compose pull/up
+# Environment Variables (optional):
+#   OPENCODE_PORT            - Server port (default: 4096)
+#   OPENCODE_HOSTNAME        - Bind address (default: 0.0.0.0)
+#   OPENCODE_SERVER_USERNAME - Auth username (default: admin)
+#   OPENCODE_SERVER_PASSWORD - Auth password (auto-generated if empty)
+#   USE_DOCKER               - Use Docker mode (default: false)
+#   OPENCODE_DATA_DIR        - Data directory (default: /srv/opencode)
+#   OPENCODE_TRAEFIK         - Enable Traefik (default: false)
 #
-#   2. **Systemd/NPM mode**: Direct installation on host
-#      - npm global install of opencode-ai
-#      - systemd service management
-#      - Direct port binding (no reverse proxy)
-#
-# KEY ACTIONS:
-#   1. Validates configuration from environment variables
-#   2. Generates secure random password if not provided via env
-#   3. Installs Node.js and npm if not present (systemd mode only)
-#   4. Installs/updates opencode-ai globally via npm (systemd mode only)
-#   5. Creates Docker Compose stack OR systemd service based on MODE
-#   6. Optionally configures Traefik labels for reverse proxy routing
-#   7. Configures UFW firewall rules
-#   8. Tests the health endpoint and displays status
-#
-# ENVIRONMENT VARIABLES:
-#   OPENCODE_PORT                - Port for the server (default: 4096)
-#   OPENCODE_HOSTNAME            - Hostname to bind to (default: 0.0.0.0)
-#   OPENCODE_SERVER_USERNAME     - Username for HTTP basic auth (default: "admin")
-#   OPENCODE_SERVER_PASSWORD     - Password for HTTP basic auth (auto-generated if empty)
-#
-#   Docker Mode Variables:
-#   OPENCODE_DATA_DIR            - Data directory for persistence (default: /srv/opencode)
-#   USE_DOCKER                   - Enable Docker mode (true/false, default: false)
-#
-#   Traefik Integration Variables:
-#   OPENCODE_TRAEFIK             - Set to "true" to enable Traefik routing (default: false)
-#   OPENCODE_DOMAIN              - Domain for Traefik access (required when OPENCODE_TRAEFIK=true)
-#   PROXY_NETWORK                - Traefik's external Docker network name (default: proxy)
-#
-# AUTHENTICATION:
-#   OpenCode uses HTTP Basic Auth via environment variables:
-#   - OPENCODE_SERVER_USERNAME defaults to "admin"
-#   - OPENCODE_SERVER_PASSWORD is auto-generated if empty
-#   - See https://opencode.ai/docs/server/#authentication for details
-#
-# DEPENDENCIES:
-#   Docker mode:
-#   - sudo privileges required
-#   - Docker Engine + Docker Compose v2+ installed and running
-#   - Traefik instance with proxy network (when OPENCODE_TRAEFIK=true)
-#
-#   Systemd mode:
-#   - sudo privileges required
-#   - openssl (for password generation)
-#   - systemd (for service management)
-#   - ufw (optional, for firewall configuration)
-#   - curl (optional, for health check testing)
-#
-# OUTPUTS:
-#   Docker mode:
-#   - ${OPENCODE_DATA_DIR}/docker-compose.yml - Generated compose configuration
-#   - ${OPENCODE_DATA_DIR}/.env               - Environment variables including auth (secure)
-#
-#   Systemd mode:
-#   - /etc/systemd/system/opencode-agent.service
+# Usage:
+#   ./setup-opencode-server.sh
+#   USE_DOCKER=true ./setup-opencode-server.sh
 # =============================================================================
 
 set -euo pipefail
 
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
+
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
+
 # ─────────────────────────────────────────────────────────────────────────────
-# COLOURS & HELPERS
+# CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-CYAN='\033[0;36m'; BOLD='\033[1m'; RESET='\033[0m'
-
-info()    { echo -e "${CYAN}[INFO]${RESET}  $*"; }
-success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
-warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
-error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
-step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
+# Logging functions (info, success, warn, error, step) are provided by lib/helpers.sh
 
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION
@@ -149,9 +103,6 @@ maybe_generate_password() {
 
 preflight_docker() {
     step "Running pre-flight checks (Docker mode)"
-
-    # shellcheck disable=SC1091
-    source "${SCRIPT_DIR}/../lib/helpers.sh"
 
     if ! command -v docker &>/dev/null; then
         error "Docker is not installed or not in PATH. Run setup-docker.sh first."
