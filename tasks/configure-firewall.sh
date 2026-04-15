@@ -1,109 +1,104 @@
 #!/usr/bin/env bash
-#
-# ==============================================================================
-# FIREWALL CONFIGURATION SCRIPT
-# ==============================================================================
+# shellcheck shell=bash
+# =============================================================================
+# configure-firewall.sh — Configure UFW firewall rules
+# =============================================================================
 #
 # Description:
-#   This script configures UFW (Uncomplicated Firewall) rules for a development
-#   machine. It allows incoming traffic on specific ports used by various
-#   services and applications, then enables the firewall.
+#   Configures UFW (Uncomplicated Firewall) rules for a development machine.
 #
-# Key Actions:
-#   1. Displays current firewall status and existing rules
-#   2. Configures environment variables for service ports (with defaults)
-#   3. Adds UFW allow rules for active services:
-#      - SSHD (custom port for SSH access)
-#      - LM Studio (local AI model server)
-#      - OpenCode Server (code server instance)
-#   4. Enables the UFW firewall
-#   5. Displays final configured rules
+# Environment Variables (optional):
+#   SSHD_PORT (default: 2224)
+#   LM_STUDIO_PORT (default: 1234)
+#   OPENCODE_PORT (default: 4096)
+#   Additional ports can be enabled by setting their respective variables
 #
-# Environment Variables (with defaults):
-#   - SSHD_PORT (default: 2224)          - SSH daemon port
-#   - LM_STUDIO_PORT (default: 1234)     - LM Studio API port
-#   - OPENWEBUI_PORT (default: 3333)     - Open WebUI port (currently disabled)
-#   - KUBERNETES_API_PORT (default: 6443) - Kubernetes API port (currently disabled)
-#   - GNOME_REMOTE_PORT (default: 3389)  - GNOME Remote Desktop port (currently disabled)
-#   - OPENCODE_PORT (default: 4096)      - OpenCode server port
-#
-# Dependencies:
-#   - ufw (Uncomplicated Firewall) must be installed
-#   - sudo privileges required for firewall configuration
-#
-# Notes:
-#   - Some services (GNOME Remote, OpenWebUI, Kubernetes) are commented out
-#   - Script uses 'set -eu' for strict error handling
-#   - Both generic and TCP-specific rules are added for each port
-#
-# ==============================================================================
+# Usage:
+#   ./configure-firewall.sh
+#   SSHD_PORT=2224 LM_STUDIO_PORT=1234 ./configure-firewall.sh
+# =============================================================================
 
-set -eu
+set -euo pipefail
 
-# ------------ Config --------------
-SSHD_PORT="${SSHD_PORT:-2224}"
-LM_STUDIO_PORT="${LM_STUDIO_PORT:-1234}"
-OPENWEBUI_PORT="${OPENWEBUI_PORT:-3333}"
-KUBERNETES_API_PORT="${KUBERNETES_API_PORT:-6443}"
-GNOME_REMOTE_PORT="${GNOME_REMOTE_PORT:-3389}"
-OPENCODE_PORT="${OPENCODE_PORT:-4096}"
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
 
-echo "Configured env vars:"
-echo "SSHD_PORT=$SSHD_PORT"
-echo "LM_STUDIO_PORT=$LM_STUDIO_PORT"
-echo "OPENWEBUI_PORT=$OPENWEBUI_PORT"
-echo "KUBERNETES_API_PORT=$KUBERNETES_API_PORT"
-echo "GNOME_REMOTE_PORT=$GNOME_REMOTE_PORT"
-echo "OPENCODE_PORT=$OPENCODE_PORT"
-echo "--------------------------"
-echo ""
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
 
-echo "Firewall status:"
-echo "Current firewall status:"
+# Configuration
+: "${SSHD_PORT:=2224}"
+: "${LM_STUDIO_PORT:=1234}"
+: "${OPENCODE_PORT:=4096}"
+: "${OPENWEBUI_PORT:=3333}"
+: "${KUBERNETES_API_PORT:=6443}"
+: "${GNOME_REMOTE_PORT:=3389}"
+
+# =============================================================================
+# Helper functions
+# =============================================================================
+
+add_ufw_rule() {
+  local port="$1"
+  local description="$2"
+
+  # Check if rule already exists
+  if sudo ufw status numbered | grep -q "\[${port}\]"; then
+    info "Rule for ${description} (${port}) already exists"
+  else
+    step "Adding rule for ${description} (${port})"
+    sudo ufw allow "${port}" comment "${description}"
+    sudo ufw allow "${port}/tcp" comment "${description}"
+  fi
+}
+
+# =============================================================================
+# Main
+# =============================================================================
+
+step "Configuring UFW firewall"
+
+# Check prerequisites
+if ! command -v ufw &>/dev/null; then
+  error "UFW is not installed. Please install ufw first."
+fi
+
+info "Current configuration:"
+echo "  SSHD_PORT=${SSHD_PORT}"
+echo "  LM_STUDIO_PORT=${LM_STUDIO_PORT}"
+echo "  OPENCODE_PORT=${OPENCODE_PORT}"
+echo "  OPENWEBUI_PORT=${OPENWEBUI_PORT}"
+echo "  KUBERNETES_API_PORT=${KUBERNETES_API_PORT}"
+echo "  GNOME_REMOTE_PORT=${GNOME_REMOTE_PORT}"
+
+# Show current status
+step "Current firewall status"
 sudo ufw status
-echo ""
-echo "Currently Configured rules:"
-sudo ufw show added
-echo "--------------------------"
-echo ""
 
-# ------------ firewall rules -------------------
+step "Current configured rules"
+sudo ufw show added || true
 
-## sshd
-echo "Configuring firewall rules for: SSHD - $SSHD_PORT"
-sudo ufw allow "$SSHD_PORT"
-sudo ufw allow "$SSHD_PORT/tcp"
+# Add firewall rules
+add_ufw_rule "${SSHD_PORT}" "SSHD"
+add_ufw_rule "${LM_STUDIO_PORT}" "LM_STUDIO"
+add_ufw_rule "${OPENCODE_PORT}" "OPENCODE"
 
-## LM Studio
-echo "Configuring firewall rules for: LM_STUDIO - $LM_STUDIO_PORT"
-sudo ufw allow "$LM_STUDIO_PORT"
-sudo ufw allow "$LM_STUDIO_PORT/tcp"
+# Optional services (commented out by default)
+# Uncomment to enable:
+# add_ufw_rule "${OPENWEBUI_PORT}" "OPENWEBUI"
+# add_ufw_rule "${KUBERNETES_API_PORT}" "KUBERNETES_API"
+# add_ufw_rule "${GNOME_REMOTE_PORT}" "GNOME_REMOTE"
 
-## Opencode Server
-echo "Configuring firewall rules for: OPENCODE - $OPENCODE_PORT"
-sudo ufw allow "$OPENCODE_PORT"
-sudo ufw allow "$OPENCODE_PORT/tcp"
-
-## gnome remote
-# echo "Configuring firewall rules for: GNOME_REMOTE - $GNOME_REMOTE_PORT"
-# sudo ufw allow $GNOME_REMOTE_PORT
-# sudo ufw allow $GNOME_REMOTE_PORT/tcp
-
-## openwebui
-# echo "Configuring firewall rules for: OPENWEBUI - $OPENWEBUI_PORT"
-# sudo ufw allow $OPENWEBUI_PORT
-# sudo ufw allow $OPENWEBUI_PORT/tcp
-
-# echo "Configuring firewall rules for: KUBERNETES_API - $KUBERNETES_API_PORT"
-# sudo ufw allow $KUBERNETES_API_PORT
-# sudo ufw allow $KUBERNETES_API_PORT/tcp
-
-## enable firewall
-echo "Enabling firewall"
+# Enable firewall
+step "Enabling firewall"
 sudo ufw enable
-echo "Firewall enabled"
 
-echo "Configured rules:"
-sudo ufw show added
-echo ""
-echo "-------- FINISHED FIREWALL CONFIGURATION -----------"
+# Show final status
+step "Final firewall status"
+sudo ufw status
+
+success "Firewall configured successfully"
