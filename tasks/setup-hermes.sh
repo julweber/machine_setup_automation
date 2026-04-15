@@ -87,6 +87,17 @@ else
   info "Target directory already exists"
 fi
 
+# Create data directory
+step "Setting up data directory: ${HERMES_DATA_DIRECTORY}"
+if [[ ! -d "${HERMES_DATA_DIRECTORY}" ]]; then
+  sudo mkdir -p "${HERMES_DATA_DIRECTORY}"
+  info "Setting ownership to 10000:10000 for directory ${HERMES_DATA_DIRECTORY}"
+  sudo chown -R 10000:10000 "${HERMES_DATA_DIRECTORY}"
+  info "Created directory: ${HERMES_DATA_DIRECTORY}"
+else
+  info "Target data directory already exists"
+fi
+
 # Create workspace directory
 step "Setting up workspace directory: ${HERMES_WORKSPACE_DIRECTORY}"
 if [[ ! -d "${HERMES_WORKSPACE_DIRECTORY}" ]]; then
