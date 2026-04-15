@@ -1,128 +1,142 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091
+# shellcheck shell=bash
+# =============================================================================
+# setup-docker.sh — Install Docker Engine
+# =============================================================================
 #
-# ==============================================================================
-# Docker Installation Script for Ubuntu
-# ==============================================================================
-#
-# DESCRIPTION:
+# Description:
 #   Installs Docker Engine and related components on Ubuntu systems.
-#   Checks for existing Docker installation, removes conflicting packages,
-#   adds official Docker repository, and configures user permissions.
 #
-# KEY ACTIONS:
-#   1. Checks if Docker is already installed (exits early if found)
-#   2. Updates system packages (apt update && upgrade)
-#   3. Installs prerequisites (ca-certificates, curl)
-#   4. Removes old/conflicting Docker packages (docker.io, podman-docker, etc.)
-#   5. Adds Docker's official GPG key to /etc/apt/keyrings/
-#   6. Configures Docker's official APT repository
-#   7. Installs Docker Engine components:
-#      - docker-ce (Docker Community Edition)
-#      - docker-ce-cli (Docker CLI)
-#      - containerd.io (Container runtime)
-#      - docker-buildx-plugin (Build extension)
-#      - docker-compose-plugin (Docker Compose v2)
-#   8. Verifies installation with 'hello-world' container
-#   9. Configures docker group and adds current user
-#   10. Sets permissions on /var/run/docker.sock
+# Options:
+#   --force   Skip the Docker installed check and force reinstallation
+#   --help    Show help message
 #
-# DEPENDENCIES:
-#   - Ubuntu-based Linux distribution
-#   - sudo privileges required
-#   - Internet connection for downloading packages
-#   - Commands: apt, curl, dpkg, lsb_release
-#
-# VARIABLES:
-#   - USER: Current username (used for group membership)
-#   - UBUNTU_VERSION: Detected Ubuntu version for logging
-#
-# USAGE:
+# Usage:
 #   ./setup-docker.sh
-#
-# NOTE:
-#   After running, you may need to log out and back in for group changes
-#   to take effect, or run 'newgrp docker' to activate the docker group.
-#
-# ==============================================================================
+#   ./setup-docker.sh --force
+# =============================================================================
 
-set -eu
+set -euo pipefail
+
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
+
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
+
+# Configuration
+FORCE=false
+DOCKER_APT_KEY_URL="https://download.docker.com/linux/ubuntu/gpg"
+DOCKER_KEY_PATH="/etc/apt/keyrings/docker.asc"
+DOCKER_LIST_PATH="/etc/apt/sources.list.d/docker.list"
+DOCKER_REPO_URL="https://download.docker.com/linux/ubuntu"
+
+declare -a DOCKER_PACKAGES=(
+  docker-ce
+  docker-ce-cli
+  containerd.io
+  docker-buildx-plugin
+  docker-compose-plugin
+)
 
 # Parse arguments
-FORCE=false
 while [[ $# -gt 0 ]]; do
-    case $1 in
-        --force)
-            FORCE=true
-            shift
-            ;;
-        --help)
-            echo "Usage: $0 [OPTIONS]"
-            echo ""
-            echo "Options:"
-            echo "  --force   Skip the Docker installed check and force reinstallation"
-            echo "  --help    Show this help message"
-            exit 0
-            ;;
-        *)
-            echo "Unknown option: $1"
-            echo "Use --help for usage information"
-            exit 1
-            ;;
-    esac
+  case $1 in
+    --force)
+      FORCE=true
+      shift
+      ;;
+    --help)
+      echo "Usage: $0 [OPTIONS]"
+      echo ""
+      echo "Options:"
+      echo "  --force   Skip the Docker installed check and force reinstallation"
+      echo "  --help    Show this help message"
+      exit 0
+      ;;
+    *)
+      echo "Unknown option: $1"
+      echo "Use --help for usage information"
+      exit 1
+      ;;
+  esac
 done
 
-#----------------- docker ----------------
-# Check if Docker is already installed (unless --force was used)
-if [ "$FORCE" = false ] && command -v docker &> /dev/null && docker --version &> /dev/null; then
-    echo "Docker is already installed"
-    exit 0
+# =============================================================================
+# Main
+# =============================================================================
+
+step "Setting up Docker"
+
+# Check if Docker is already installed
+if [[ "${FORCE}" == false ]] && command -v docker &>/dev/null && docker --version &>/dev/null; then
+  success "Docker is already installed: $(docker --version)"
+  exit 0
 fi
 
-# Update package lists
-sudo apt update && sudo apt upgrade -y
-sudo apt install -y ca-certificates curl 
+info "Installing Docker..."
+
+# Update and install prerequisites
+step "Updating package lists and installing prerequisites"
+sudo apt update
+sudo apt install -y ca-certificates curl
 
 # Remove old Docker packages
-echo "Removing existing Docker packages..."
-for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do sudo apt-get remove $pkg; done
+step "Removing existing Docker packages"
+for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
+  if dpkg -l "$pkg" &>/dev/null; then
+    info "Removing $pkg"
+    sudo apt-get remove -y "$pkg" 2>/dev/null || true
+  fi
+done
 
-# Add Docker GPG key and repository
-echo "Setting up Docker repository..."
-
+# Add Docker GPG key
+step "Setting up Docker GPG key"
 sudo install -m 0755 -d /etc/apt/keyrings
-sudo curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
-sudo chmod a+r /etc/apt/keyrings/docker.asc
+if [[ -f "${DOCKER_KEY_PATH}" ]]; then
+  info "GPG key already exists at ${DOCKER_KEY_PATH}"
+else
+  sudo curl -fsSL "${DOCKER_APT_KEY_URL}" -o "${DOCKER_KEY_PATH}"
+  sudo chmod a+r "${DOCKER_KEY_PATH}"
+fi
 
-# Add the repository to Apt sources:
-echo \
-  "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
-  $(source /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}") stable" | \
-  sudo tee /etc/apt/sources.list.d/docker.list > /dev/null
+# Add Docker repository
+step "Adding Docker repository"
+# shellcheck disable=SC1091
+UBUNTU_CODENAME=$(source /etc/os-release && echo "${UBUNTU_CODENAME:-$VERSION_CODENAME}")
+echo "deb [arch=$(dpkg --print-architecture) signed-by=${DOCKER_KEY_PATH}] ${DOCKER_REPO_URL} ${UBUNTU_CODENAME} stable" \
+  | sudo tee "${DOCKER_LIST_PATH}" > /dev/null
 sudo apt-get update
 
 # Install Docker Engine
-echo "Installing Docker Engine..."
-sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+step "Installing Docker Engine"
+sudo apt install -y "${DOCKER_PACKAGES[@]}"
 
-UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "24.04")
-echo "Docker installed successfully on Ubuntu $UBUNTU_VERSION"
-
-# Ensure docker group exists (idempotent)
+# Ensure docker group exists
+step "Configuring docker group"
 if getent group docker >/dev/null; then
-    echo "✓ docker group already exists"
+  info "docker group already exists"
 else
-    sudo groupadd docker
+  sudo groupadd docker
 fi
 sudo chown root:docker /var/run/docker.sock 2>/dev/null || true
-sudo usermod -aG docker "$USER"
-# newgrp requires interactive TTY, so handle gracefully in automated contexts
+sudo usermod -aG docker "${USER}"
+
+# Verify group membership
 if id -nG | grep -q docker; then
-    echo "✓ already in docker group"
+  info "User already in docker group"
 else
-    newgrp docker >/dev/null 2>&1 || true
+  newgrp docker >/dev/null 2>&1 || true
 fi
 
 # Verify installation
-echo "Testing Docker installation..."
+step "Testing Docker installation"
 docker run hello-world
+
+UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "unknown")
+success "Docker installed successfully on Ubuntu ${UBUNTU_VERSION}"
+info "You may need to log out and back in for group changes to take effect"
