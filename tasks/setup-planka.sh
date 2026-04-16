@@ -192,7 +192,7 @@ services:
   planka:
     image: ${PLANKA_IMAGE}
     container_name: ${CONTAINER_NAME}
-    restart: on-failure
+    restart: unless-stopped
 $(if [[ "$PLANKA_TRAEFIK" != "true" ]]; then echo '    ports:'; echo "      - \"${HTTP_PORT}:1337\"  # Local access via http://localhost:${HTTP_PORT}"; fi)
     volumes:
       - ${PLANKA_HOME}/data:/app/data
@@ -211,7 +211,7 @@ $(if [[ "$PLANKA_TRAEFIK" != "true" ]]; then echo '    ports:'; echo "      - \"
       # - OUTGOING_BLOCKED_HOSTS=localhost,postgres
     networks:
       - planka
-$(if [[ "$PLANKA_TRAEFIK" == "true" ]]; then echo '    labels:'; echo '      - "traefik.enable=true"'; echo "      - \"traefik.docker.network=\${PROXY_NETWORK}\""; echo '      - "traefik.http.routers.planka.rule=Host(`${PLANKA_DOMAIN}`)"'; echo '      - "traefik.http.routers.planka.entrypoints=websecure"'; echo '      - "traefik.http.routers.planka.tls.certresolver=letsencrypt"'; echo '      - "traefik.http.services.planka.loadbalancer.server.port=1337"'; fi)
+$(if [[ "$PLANKA_TRAEFIK" == "true" ]]; then echo '      - proxy'; echo '    labels:'; echo '      - "traefik.enable=true"'; echo "      - \"traefik.docker.network=$PROXY_NETWORK\""; echo "      - \"traefik.http.routers.planka.rule=Host(\`$PLANKA_DOMAIN\`)\""; echo '      - "traefik.http.routers.planka.entrypoints=websecure"'; echo '      - "traefik.http.routers.planka.tls.certresolver=letsencrypt"'; echo '      - "traefik.http.services.planka.loadbalancer.server.port=1337"'; fi)
     depends_on:
       postgres:
         condition: service_healthy
@@ -219,7 +219,7 @@ $(if [[ "$PLANKA_TRAEFIK" == "true" ]]; then echo '    labels:'; echo '      - "
   postgres:
     image: postgres:16-alpine
     container_name: ${CONTAINER_NAME}-postgres
-    restart: on-failure
+    restart: unless-stopped
     networks:
       - planka
     volumes:
@@ -238,7 +238,7 @@ $(if [[ -n "$POSTGRES_PASSWORD" ]]; then echo "      - POSTGRES_PASSWORD=${POSTG
 networks:
   planka:
     external: false
-$(if [[ "$PLANKA_TRAEFIK" == "true" ]]; then echo "  \${PROXY_NETWORK}:"; echo "    external: true"; fi)
+$(if [[ "$PLANKA_TRAEFIK" == "true" ]]; then echo '  proxy:'; echo '    external: true'; fi)
 EOF
 
 success "docker-compose.yml written to ${COMPOSE_FILE}"
@@ -275,7 +275,7 @@ READY=false
 
 while [[ $ELAPSED -lt $MAX_WAIT ]]; do
   HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:${HTTP_PORT}" || true)
-  if echo "$HTTP_CODE" | grep -qE "^(200|302|303)"; then
+  if echo "$HTTP_CODE" | grep -qE "^(200|302|303|401)"; then
     READY=true
     break
   fi
