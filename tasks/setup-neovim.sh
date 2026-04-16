@@ -21,6 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 
 # Source helper functions
+# shellcheck disable=SC1091
 source "${LIB_DIR}/helpers.sh"
 
 # =============================================================================
