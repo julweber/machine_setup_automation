@@ -7,7 +7,6 @@ services:
     volumes:
       - /srv/hermes/.hermes:/opt/data           # Hermes config, memory, skills
       - /srv/hermes/workspace:/workspace        # Your workspace (read-write)
-      - /tmp/hermes-sessions:/opt/data/sessions  # Optional: persist sessions
     environment:
       # Terminal backend for LOCAL execution in gateway container
       - TERMINAL_ENV=local                        # Use local backend
