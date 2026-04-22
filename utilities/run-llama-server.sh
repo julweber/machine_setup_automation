@@ -9,7 +9,7 @@ set -e
 MODELS_BASE_DIR="$HOME/.lmstudio/models"
 
 # Model path
-MODEL_PATH="${MODEL_PATH:-/home/verfeinerer/.lmstudio/models/HauhauCS/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf}"
+MODEL_PATH="${MODEL_PATH:-$HOME/.lmstudio/models/HauhauCS/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive/Qwen3.5-35B-A3B-Uncensored-HauhauCS-Aggressive-Q4_K_M.gguf}"
 
 # Server binding
 HOST="${HOST:-0.0.0.0}"

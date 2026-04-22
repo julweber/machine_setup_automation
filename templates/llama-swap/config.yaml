@@ -1,0 +1,322 @@
+# =============================================================================
+# llama-swap YAML Configuration
+# =============================================================================
+#
+# This is a comprehensive example configuration showing ALL available options.
+# Commented-out sections are optional — remove comments to enable them.
+#
+# For validation in VS Code, add this modeline at the top:
+#   # yaml-language-server: $schema=https://raw.githubusercontent.com/mostlygeek/llama-swap/refs/heads/main/config-schema.json
+#
+# IMPORTANT: llama-swap uses its own macro syntax inside strings:
+#   ${PORT}      - automatically assigned port per model
+#   ${MODEL_ID}  - the model's ID
+#   ${PID}       - upstream process ID (in cmdStop)
+#   ${env.VAR}   - system environment variable
+#
+# The setup script substitutes ${LLAMA_SWAP_*} placeholders before writing.
+# =============================================================================
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GLOBAL SETTINGS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# healthCheckTimeout: seconds to wait for a model to become ready
+# - optional, default: 120 (minimum: 15)
+healthCheckTimeout: ${LLAMA_SWAP_HEALTH_TIMEOUT}
+
+# logLevel: sets the logging verbosity
+# - optional, default: "info"
+# - valid values: debug, info, warn, error
+logLevel: ${LLAMA_SWAP_LOG_LEVEL}
+
+# logTimeFormat: enables timestamp formatting in logs
+# - optional, default: "" (disabled)
+# - valid values: "", "ansic", "unixdate", "rubydate", "rfc3339", "kitchen", "stamp", etc.
+logTimeFormat: ""
+
+# logToStdout: controls what gets logged to stdout
+# - optional, default: "proxy"
+# - valid values:
+#     "proxy"   — llama-swap proxy logs only
+#     "upstream" — copy of upstream process stdout
+#     "both"    — both interleaved
+#     "none"    — no stdout logging
+logToStdout: "proxy"
+
+# metricsMaxInMemory: max metrics entries to keep in memory
+# - optional, default: 1000
+metricsMaxInMemory: 1000
+
+# captureBuffer: MBs for storing request/response captures (Web UI)
+# - optional, default: 10
+# - set to 0 to disable
+captureBuffer: 15
+
+# startPort: starting port for the automatic ${PORT} macro
+# - optional, default: 5800
+startPort: ${LLAMA_SWAP_START_PORT}
+
+# sendLoadingState: inject loading status into the reasoning field
+# - optional, default: false
+# - when true, chat UIs see loading messages during model warmup
+sendLoadingState: true
+
+# includeAliasesInList: show aliases in /v1/models API listing
+# - optional, default: false
+includeAliasesInList: false
+
+# globalTTL: default seconds before unloading any model
+# - optional, default: 0 (never auto-unload)
+# - set to >0 to auto-unload idle models globally
+globalTTL: ${LLAMA_SWAP_GLOBAL_TTL}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MACROS — Reusable Snippets
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Macros are string substitutions available in model cmd, cmdStop, proxy, etc.
+# Macro names: alphanumeric + underscore/hyphen, max 64 chars.
+# Cannot use reserved names: PORT, MODEL_ID.
+# Macros can reference other macros (must be defined before use).
+# Environment variables: ${env.HOME}, ${env.PATH}, etc.
+
+macros:
+  # Example: reusable llama-server path
+  "llama-server-bin": "/usr/local/bin/llama-server"
+
+  # Example: multi-line macro
+  "default-args": >
+    --ctx-size 4096
+    --batch-size 512
+    --log-disable
+
+  # Example: environment variable macro
+  "models-dir": "${env.HOME}/models"
+
+  # Example: macro referencing another macro
+  "server-cmd": "${llama-server-bin} --port ${PORT} ${default-args}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# API KEYS — Authentication
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# When set, requests to inference endpoints require a valid API key.
+# Generate one: printf "sk-%s\n" "$(head -c 48 /dev/urandom | base64 )"
+
+apiKeys:
+  # Example: static API key (replace with your own)
+  # - "sk-your-api-key-here"
+
+  # Example: random key (generate with: printf "sk-%s\n" "$(head -c 48 /dev/urandom | base64 )")
+  # - "sk-gyCPiKUcIfPlaM4OSMZekkprgijPx6+OsmQs8Rsg0xZ9qpy6gKWsIKqHOk+cgXVx"
+
+  # Example: load keys from environment variables (recommended for secrets)
+  # Requires: export LLAMA_SWAP_API_KEY_1=sk-... export LLAMA_SWAP_API_KEY_2=sk-...
+  # - "${env.LLAMA_SWAP_API_KEY_1}"
+  # - "${env.LLAMA_SWAP_API_KEY_2}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MODELS — Inference Server Configurations
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Each key is the model's ID, used in API requests (e.g., model: "my-model").
+# The ${MODEL_ID} macro is available in model-level settings.
+# The ${PORT} macro provides automatic port assignment.
+#
+# ── Minimal Example ──────────────────────────────────────────────────────────
+# models:
+#   my-model:
+#     cmd: llama-server --port ${PORT} -m /path/to/model.gguf
+#
+# ── Full Example with All Options ────────────────────────────────────────────
+
+models:
+  # ──────────────────────────────────────────────────────────────────────────
+  # Example 1: Full-featured llama.cpp model
+  # ──────────────────────────────────────────────────────────────────────────
+  "llama-3.1-8b":
+    # name: display name shown in /v1/models
+    name: "Llama 3.1 8B Instruct"
+
+    # description: shown in /v1/models
+    description: "Meta Llama 3.1 8B — fast, capable general-purpose model"
+
+    # cmd: command to start the inference server (required)
+    # Use | for multi-line commands. Comments (lines starting with #) are stripped.
+    cmd: |
+      ${llama-server-bin}
+      --port ${PORT}
+      -m ${models-dir}/llama-3.1-8b-Instruct-Q4_K_M.gguf
+      --ctx-size 8192
+      --jinja
+      --cache-type-k q8_0
+      --cache-type-v q8_0
+
+    # proxy: URL where llama-swap forwards requests (default: http://localhost:${PORT})
+    # Only needed if you use a custom port in cmd.
+    # proxy: http://127.0.0.1:8999
+
+    # checkEndpoint: health check path (default: /health)
+    # Set to "none" to skip health checking.
+    checkEndpoint: /health
+
+    # ttl: auto-unload model after N seconds of inactivity
+    # - 0 = never unload
+    # - -1 = use globalTTL
+    # - >0 = seconds before unloading
+    ttl: 300
+
+    # env: environment variables injected into the cmd process
+    env:
+      - "CUDA_VISIBLE_DEVICES=0"
+
+    # useModelName: override the model name sent to upstream server
+    # useModelName: "meta-llama/llama-3.1-8b-instruct"
+
+    # aliases: alternative names for this model
+    # Users can request this model via any alias
+    aliases:
+      - "llama3.1-8b"
+      - "llama-8b"
+
+    # filters: rewrite request parameters before forwarding
+    filters:
+      # stripParams: remove these JSON keys from request body
+      stripParams: "temperature, top_p, top_k"
+
+      # setParams: force these values in every request
+      setParams:
+        temperature: 0.7
+        top_p: 0.9
+
+      # setParamsByID: per-alias parameter overrides
+      setParamsByID:
+        "${MODEL_ID}":
+          chat_template_kwargs:
+            reasoning_effort: medium
+        "${MODEL_ID}:creative":
+          temperature: 1.0
+          top_p: 0.95
+        "${MODEL_ID}:precise":
+          temperature: 0.1
+          top_p: 0.5
+
+    # metadata: arbitrary values included in /v1/models response
+    metadata:
+      port: ${PORT}
+      context_size: 8192
+      quantization: "Q4_K_M"
+
+    # concurrencyLimit: max parallel requests (default: 10)
+    # concurrencyLimit: 20
+
+    # sendLoadingState: override global setting for this model
+    # sendLoadingState: false
+
+    # timeouts: proxy connection timeouts in seconds
+    timeouts:
+      connect: 30
+      keepalive: 30
+      responseHeader: 60
+      tlsHandshake: 10
+      idleConn: 90
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Example 2: Unlisted model (hidden from /v1/models)
+  # ──────────────────────────────────────────────────────────────────────────
+  # "small-model":
+  #   unlisted: true
+  #   cmd: llama-server --port ${PORT} -m /path/to/small.gguf -ngl 0
+
+  # ──────────────────────────────────────────────────────────────────────────
+  # Example 3: Docker-based inference server (vLLM, etc.)
+  # ──────────────────────────────────────────────────────────────────────────
+  # "vllm-coder":
+  #   name: "Qwen3 Coder 30B (vLLM)"
+  #   proxy: "http://127.0.0.1:${PORT}"
+  #   cmd: |
+  #     docker run --init --rm --name ${MODEL_ID}
+  #       --runtime=nvidia --gpus '"device=0,1"'
+  #       --shm-size=16g
+  #       -v /models:/models
+  #       -p ${PORT}:8000
+  #       vllm/vllm-openai:v0.10.0
+  #       --model "/models/Qwen3-Coder-30B-A3B-Instruct-AWQ"
+  #       --served-model-name "vllm-coder"
+  #       --tensor-parallel-size 2
+  #   cmdStop: docker stop ${MODEL_ID}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MATRIX — Concurrent Model Combinations (DSL)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Defines which models can run simultaneously. Uses a solver-based DSL.
+# Use EITHER matrix OR legacy groups (not both).
+#
+# Operators:
+#   &  AND  — models run together
+#   |  OR   — alternatives
+#   ()  grouping
+#   +ref  inline another set
+#
+# Example:
+# matrix:
+#   vars:
+#     g: gemma-model
+#     q: qwen-model
+#     L: llama-70B
+#
+#   evict_costs:
+#     L: 30  # expensive to evict (slow cold start)
+#
+#   sets:
+#     standard: "(g | q)"
+#     with-large: "(g | q) & L"
+
+# hooks: event-driven actions
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Currently supports only on_startup hooks.
+
+hooks:
+  on_startup:
+    # preload: models to load on llama-swap startup
+    # Must match model IDs in the models section.
+    # For multiple models, define them in a matrix group.
+    # preload:
+    #   - "llama-3.1-8b"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PEERS — Remote Model Providers
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Peers are other llama-swap instances or any server with /v1/ generative API.
+# Requests for unconfigured models are forwarded to peers.
+
+# peers:
+#   llama-swap-peer:
+#     proxy: http://192.168.1.23
+#     models:
+#       - model_a
+#       - model_b
+#       - embeddings/model_c
+#
+#   openrouter:
+#     proxy: https://openrouter.ai/api
+#     apiKey: "${env.OPENROUTER_API_KEY}"
+#     models:
+#       - meta-llama/llama-3.1-8b-instruct
+#       - qwen/qwen3-235b-a22b-2507
+#     timeouts:
+#       connect: 30
+#       keepalive: 30
+#       responseHeader: 60
+#       tlsHandshake: 10
+#       idleConn: 90
+#     filters:
+#       stripParams: "temperature, top_p"
+#       setParams:
+#         provider:
+#           data_collection: "deny"
+#           zdr: true

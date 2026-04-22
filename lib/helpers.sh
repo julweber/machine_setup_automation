@@ -24,12 +24,12 @@
 # ---------------------------------------------------------------------------
 # Colour variables (guarded — skip if already defined)
 # ---------------------------------------------------------------------------
-if [[ -z "${RED:-}" ]];    then RED='\033[0;31m';    fi
-if [[ -z "${GREEN:-}" ]];  then GREEN='\033[0;32m';  fi
-if [[ -z "${YELLOW:-}" ]]; then YELLOW='\033[1;33m'; fi
-if [[ -z "${CYAN:-}" ]];   then CYAN='\033[0;36m';   fi
-if [[ -z "${BOLD:-}" ]];   then BOLD='\033[1m';      fi
-if [[ -z "${RESET:-}" ]];  then RESET='\033[0m';     fi
+if [[ -z "${RED:-}" ]];    then RED=$'\033[0;31m';    fi
+if [[ -z "${GREEN:-}" ]];  then GREEN=$'\033[0;32m';  fi
+if [[ -z "${YELLOW:-}" ]]; then YELLOW=$'\033[1;33m'; fi
+if [[ -z "${CYAN:-}" ]];   then CYAN=$'\033[0;36m';   fi
+if [[ -z "${BOLD:-}" ]];   then BOLD=$'\033[1m';      fi
+if [[ -z "${RESET:-}" ]];  then RESET=$'\033[0m';     fi
 
 # ---------------------------------------------------------------------------
 # Logging helpers (guarded — skip if already defined)
@@ -119,6 +119,26 @@ if ! declare -F ensure_traefik_running > /dev/null 2>&1; then
       echo -e "${RED}[ERROR]${RESET} Please start Traefik first before running this script." >&2
       exit 1
     fi
+  }
+fi
+
+# ---------------------------------------------------------------------------
+# detect_arch
+#   Detects the host architecture and maps it to the standard Go/OS
+#   architecture name (amd64 or arm64). Exits on unsupported arch.
+#
+# OUTPUT:
+#   Prints 'amd64' or 'arm64' to stdout.
+# ---------------------------------------------------------------------------
+if ! declare -F detect_arch > /dev/null 2>&1; then
+  detect_arch() {
+    local arch
+    arch=$(uname -m)
+    case "$arch" in
+      x86_64)  echo "amd64" ;;
+      aarch64|arm64) echo "arm64" ;;
+      *)       error "Unsupported architecture: ${arch}. Only amd64 and arm64 are supported." ;;
+    esac
   }
 fi
 

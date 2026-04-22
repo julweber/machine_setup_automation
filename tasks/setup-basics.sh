@@ -56,6 +56,7 @@ declare -a APT_PACKAGES=(
   tmux
   nodejs
   npm
+  spirv-headers
 )
 
 # =============================================================================

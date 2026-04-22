@@ -13,7 +13,6 @@
 #   --amd             Force AMD Vulkan backend
 #   --cpu             Force CPU-only build
 #   --dir <path>      Install source to <path>
-#   --system-install  Run 'sudo cmake --install' after build
 #   --jobs <n>        Parallel build jobs
 #   --force           Reinstall even if already present
 #   --check           Check installation status and exit
@@ -38,9 +37,8 @@ source "${LIB_PATH}" || {
 }
 
 # Configuration
-INSTALL_DIR="${INSTALL_DIR:-${HOME}/llama.cpp}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/llama.cpp}"
 BACKEND=""          # nvidia | amd | cpu
-INSTALL_SYSTEM=0
 FORCE=0
 CHECK_ONLY=0
 JOBS=$(nproc)
@@ -54,8 +52,7 @@ ${BOLD}Options:${RESET}
   --nvidia          Force NVIDIA CUDA backend
   --amd             Force AMD Vulkan backend
   --cpu             Force CPU-only build
-  --dir <path>      Install source to <path>  (default: ~/llama.cpp)
-  --system-install  Run 'sudo cmake --install' after build
+  --dir <path>      Install source to <path>  (default: /opt/llama.cpp)
   --jobs <n>        Parallel build jobs        (default: nproc)
   --force           Reinstall even if llama.cpp is already present
   --check           Check installation status and exit
@@ -69,7 +66,6 @@ while [[ $# -gt 0 ]]; do
     --nvidia)         BACKEND="nvidia" ;;
     --amd)            BACKEND="amd"    ;;
     --cpu)            BACKEND="cpu"    ;;
-    --system-install) INSTALL_SYSTEM=1 ;;
     --force)          FORCE=1          ;;
     --check)          CHECK_ONLY=1     ;;
     --dir)            shift; INSTALL_DIR="$1" ;;
@@ -167,6 +163,17 @@ else
   info "No existing installation found – proceeding."
 fi
 
+# Ensure install directory exists with proper ownership
+if [[ ! -d "${INSTALL_DIR}" ]]; then
+  sudo mkdir -p "${INSTALL_DIR}"
+fi
+# Ensure the directory is owned by a group all users can access (needed for /opt)
+if [[ "${INSTALL_DIR}" != "${HOME}"* ]]; then
+  sudo chown -R root:users "${INSTALL_DIR}" 2>/dev/null || true
+  sudo chmod -R g+rw "${INSTALL_DIR}" 2>/dev/null || true
+  sudo find "${INSTALL_DIR}" -type d -exec chmod g+s {} + 2>/dev/null || true
+fi
+
 # Auto-detect GPU backend
 detect_gpu() {
   step "Auto-detecting GPU"
@@ -259,20 +266,48 @@ case "${BACKEND}" in
     ;;
 esac
 
-# Clone / update repo
+# Clone / update repo — always checkout the latest tag
 step "Fetching llama.cpp source"
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
-  info "Existing repo found at ${INSTALL_DIR} – pulling latest…"
+  # Fix dubious ownership for existing repos
+  if [[ "${INSTALL_DIR}" != "${HOME}"* ]]; then
+    git config --global --add safe.directory "${INSTALL_DIR}"
+  fi
+  info "Existing repo found at ${INSTALL_DIR} – pulling latest & fetching tags…"
+  # Ensure we're on a branch before pulling (detached HEAD from previous tag checkout fails)
+  DEFAULT_BRANCH=$(git -C "${INSTALL_DIR}" remote show origin | grep 'HEAD branch' | awk '{print $NF}')
+  git -C "${INSTALL_DIR}" checkout "${DEFAULT_BRANCH}"
   git -C "${INSTALL_DIR}" pull --ff-only
+  git -C "${INSTALL_DIR}" fetch --tags --force
 else
   info "Cloning into ${INSTALL_DIR}…"
   git clone https://github.com/ggerganov/llama.cpp "${INSTALL_DIR}"
 fi
-success "Source ready at ${INSTALL_DIR}."
+
+# Fix dubious ownership when directory was created with sudo
+if [[ "${INSTALL_DIR}" != "${HOME}"* ]]; then
+  git config --global --add safe.directory "${INSTALL_DIR}"
+fi
+
+git -C "${INSTALL_DIR}" fetch --tags --force
+
+# Checkout the latest tag (ensures we always build from the most recent release)
+LATEST_TAG=$(git -C "${INSTALL_DIR}" describe --tags --abbrev=0)
+info "Latest tag: ${LATEST_TAG} – checking out…"
+git -C "${INSTALL_DIR}" checkout "${LATEST_TAG}" --
+git -C "${INSTALL_DIR}" clean -fd
+git -C "${INSTALL_DIR}" submodule update --init --recursive
+success "Source ready at ${INSTALL_DIR} (tag: ${LATEST_TAG})."
 
 # Configure & build
 step "Configuring CMake (backend: ${BACKEND^^})"
 BUILD_DIR="${INSTALL_DIR}/build"
+# Wipe stale build dir – ExternalProject fails with "Operation not permitted"
+# when CMake cache state is corrupted (common after git clean + tag checkout)
+if [[ -d "${BUILD_DIR}" ]]; then
+  info "Removing stale build directory…"
+  rm -rf "${BUILD_DIR}"
+fi
 
 CMAKE_OPTS=(-DLLAMA_CURL=ON)
 
@@ -297,27 +332,18 @@ step "Building llama.cpp (using ${JOBS} parallel jobs)"
 cmake --build "${BUILD_DIR}" --config Release -j"${JOBS}"
 success "Build complete."
 
-# Optional system-wide install
-if [[ "${INSTALL_SYSTEM}" -eq 1 ]]; then
-  step "Installing system-wide"
-  sudo cmake --install "${BUILD_DIR}"
-  success "Installed system-wide."
-fi
+# System-wide install (binaries go to /usr/local/bin)
+step "Installing system-wide"
+sudo cmake --install "${BUILD_DIR}"
 
-# Shell PATH suggestion
-BIN_DIR="${BUILD_DIR}/bin"
-SHELL_RC="${HOME}/.bashrc"
-[[ "${SHELL}" == */zsh ]] && SHELL_RC="${HOME}/.zshrc"
-
-PATH_LINE="export PATH=\"\$PATH:${BIN_DIR}\""
-
-if ! grep -qF "${BIN_DIR}" "${SHELL_RC}" 2>/dev/null; then
-  {
-    echo ""
-    echo "# llama.cpp binaries"
-    echo "${PATH_LINE}"
-  } >> "${SHELL_RC}"
-  info "Added ${BIN_DIR} to PATH in ${SHELL_RC}."
+# Refresh ldconfig so shared libraries are discoverable
+step "Updating shared library cache"
+if [[ -f /usr/local/lib/libllama.so ]]; then
+  sudo bash -c 'echo "/usr/local/lib" > /etc/ld.so.conf.d/llama-cpp.conf'
+  sudo ldconfig
+  success "Shared library cache updated."
+else
+  info "No shared libraries found – ldconfig refresh skipped."
 fi
 
 # Summary
@@ -328,7 +354,7 @@ echo -e "${BOLD}${GREEN}╚═════════════════�
 echo ""
 echo -e "  ${BOLD}Backend:${RESET}    ${GREEN}${BACKEND^^}${RESET}"
 echo -e "  ${BOLD}Source:${RESET}     ${INSTALL_DIR}"
-echo -e "  ${BOLD}Binaries:${RESET}   ${BIN_DIR}"
+echo -e "  ${BOLD}Binaries:${RESET}   /usr/local/bin"
 echo ""
 echo -e "  ${BOLD}Key binaries:${RESET}"
 echo -e "    llama-cli     – interactive CLI"
@@ -336,7 +362,6 @@ echo -e "    llama-server  – OpenAI-compatible HTTP server"
 echo -e "    llama-bench   – benchmarking"
 echo ""
 echo -e "  ${BOLD}Quick start:${RESET}"
-echo -e "    source ${SHELL_RC}"
 echo -e "    llama-cli -m /path/to/model.gguf -p \"Hello!\" -n 128"
 echo ""
 echo -e "  ${BOLD}Run as server:${RESET}"

@@ -1,0 +1,26 @@
+[Unit]
+Description=llama-swap: Multi-model LLM proxy with hot-swap
+Documentation=https://github.com/mostlygeek/llama-swap
+After=network.target
+
+[Service]
+Type=simple
+User=${LLAMA_SWAP_USER}
+WorkingDirectory=${LLAMA_SWAP_DIR}
+ExecStart=${LLAMA_SWAP_BIN_PATH} --config ${CONFIG_FILE} --listen ${LLAMA_SWAP_LISTEN_ADDR}
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=llama-swap
+# Prevent systemd from sending SIGKILL too quickly — llama-swap's upstream
+# processes need time to shut down cleanly.
+TimeoutStopSec=30
+# Drop privileges for the service itself (upstream processes run as configured)
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

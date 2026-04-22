@@ -128,6 +128,31 @@ Installs and configures the Opencode AI coding agent server with systemd integra
 
 **Environment variables:** `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`)
 
+#### `setup-llama-swap.sh`
+Deploys llama-swap, a multi-model LLM proxy with hot-swap support, as a native systemd service. Downloads the Go binary from GitHub releases and generates a comprehensive `config.yaml` with all available options documented.
+
+**Environment variables:** `LLAMA_SWAP_PORT` (default `9292`), `LLAMA_SWAP_DIR` (default `/srv/llama-swap`), `LLAMA_SWAP_HEALTH_TIMEOUT` (default `500`), `LLAMA_SWAP_LOG_LEVEL` (default `info`), `LLAMA_SWAP_START_PORT` (default `10001`), `LLAMA_SWAP_GLOBAL_TTL` (default `0`), `LLAMA_SWAP_LISTEN_ADDR` (default `0.0.0.0:9292`), `LLAMA_SWAP_USER` (default `root`), `LLAMA_SWAP_BIN_PATH` (default `/usr/local/bin/llama-swap`), `LLAMA_SWAP_VERSION` (default `latest`)
+
+**Features:**
+- Hot-swap between multiple LLM models without restarting
+- OpenAI-compatible API at `/v1/chat/completions`
+- Web UI at `/ui`
+- Health check endpoint at `/health`
+- Comprehensive config with all options documented
+
+#### `setup-vllm.sh`
+Deploys vLLM as a Docker-based OpenAI-compatible inference server. Supports NVIDIA (CUDA), AMD (ROCm), and CPU backends with auto-detection. Mounts the HuggingFace cache directory so models downloaded via `huggingface-cli` are automatically available.
+
+**Environment variables:** `PROJECT_DIR` (default `/srv/vllm`), `HF_CACHE_DIR` (default `~/.cache/huggingface`), `VLLM_PORT` (default `8000`), `VLLM_MODEL`, `HF_TOKEN`, `VLLM_GPU_UTIL` (default `0.90`), `VLLM_EXTRA_ARGS`, `VLLM_TENSOR_PARALLEL` (default `1`), `VLLM_MAX_MODEL_LEN`, `VLLM_DTYPE` (default `auto`), `VLLM_SHM_SIZE` (default `8g`), `VLLM_TRAEFIK` (default `false`), `VLLM_DOMAIN`, `PROXY_NETWORK` (default `proxy`)
+
+**Features:**
+- Auto-detects GPU backend (NVIDIA, AMD, or CPU fallback)
+- Multi-GPU tensor parallelism support
+- LM Studio models directory auto-mount
+- Optional Traefik reverse-proxy integration
+- Input validation for all configuration values
+- Supports `--nvidia`, `--amd`, `--cpu`, `--force`, `--check` flags
+
 #### `setup-agent-docker-runner.sh`
 Installs the Agent Docker Runner (ADR) CLI, a tool that runs coding agents inside isolated Docker containers with a single command. Supports multiple agents: pi, opencode, claude, codex.
 
@@ -263,6 +288,52 @@ Installs the Brave browser from its official apt repository.
 Installs VS Code from Microsoft's official repository.
 
 **Environment variables:** None
+
+---
+
+### Development Tools
+
+#### `setup-neovim.sh`
+Installs Neovim directly on the host machine (Ubuntu/Debian) with lazy.nvim plugin manager, LSP support via nvim-lspconfig, and essential productivity plugins. Installed via official PPA for latest stable version.
+
+**Environment variables:** `NEOVIM_VERSION` (default `stable`)
+
+**Features:**
+- lazy.nvim fast plugin manager with on-demand loading
+- nvim-lspconfig for Language Server Protocol support
+- telescope.nvim fuzzy finder
+- nvim-cmp intelligent code completion
+- treesitter advanced syntax highlighting
+- gitsigns git integration
+- oil.nvim modern file explorer
+
+#### `setup-zed.sh`
+Installs the Zed editor on Linux using the official installation script. Supports both stable and preview channels.
+
+**Environment variables:** `ZED_CHANNEL` (default `stable`, also supports `preview`)
+
+**Usage:**
+```bash
+./setup-zed.sh              # Install stable version
+./setup-zed.sh --force      # Reinstall
+ZED_CHANNEL=preview ./setup-zed.sh  # Install preview version
+```
+
+---
+
+### Virtualization
+
+#### `setup-virtualization.sh`
+Installs or updates libvirt (virtualization API) and virt-manager (graphical VM manager) on Debian/Ubuntu-based systems. Configures the libvirt daemon, default networks, and adds the user to the libvirt group.
+
+**Environment variables:** `VIRT_USERNAME` (default: current user)
+
+**Features:**
+- Installs QEMU/KVM, libvirt-daemon, bridge-utils
+- Graphical virt-manager VM management
+- Automatic default network configuration
+- User permission setup for libvirt access
+- Supports both fresh install and update modes
 
 ---
 
@@ -403,7 +474,6 @@ The scripts are deliberately **parameterised via environment variables** that yo
 
 ## Additional Documentation
 - **[README_TRAEFIK.md](README_TRAEFIK.md)** - Complete guide for the Traefik v3 reverse proxy setup script (`setup-traefik.sh`)
-
 ---
 
 ## Agentic Engineering & Specification

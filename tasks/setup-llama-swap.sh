@@ -1,0 +1,428 @@
+#!/usr/bin/env bash
+# shellcheck disable=SC2086,SC1091,SC2016
+# =============================================================================
+# setup-llama-swap.sh — Deploy llama-swap as a systemd daemon
+# =============================================================================
+#
+# DESCRIPTION:
+#   Installs llama-swap, a multi-model LLM proxy with hot-swap support, as a
+#   native systemd service. Runs the single Go binary directly on the host.
+#
+# KEY ACTIONS:
+#   1. Pre-flight checks: systemctl, curl, port availability
+#   2. Checks for existing installation — prompts to recreate if found
+#   3. Downloads the latest llama-swap binary from GitHub releases
+#   4. Generates config.yaml from template (comprehensive example with all options)
+#   5. Generates and installs llama-swap.service from template
+#   6. Reloads systemd, starts and enables the service
+#   7. Waits for the /health endpoint to respond
+#   8. Displays access information and management commands
+#
+# IMPORTANT VARIABLES:
+#   LLAMA_SWAP_PORT       - Host port for web UI access (default: 9292)
+#   LLAMA_SWAP_DIR        - Host directory for config & data (default: /srv/llama-swap)
+#   LLAMA_SWAP_HEALTH_TIMEOUT - Health check timeout in seconds (default: 500)
+#   LLAMA_SWAP_LOG_LEVEL  - Log level: debug, info, warn, error (default: info)
+#   LLAMA_SWAP_START_PORT - Starting port for ${PORT} macro in config (default: 10001)
+#   LLAMA_SWAP_GLOBAL_TTL - Default model idle TTL in seconds (default: 0 = never)
+#   LLAMA_SWAP_LISTEN_ADDR - Bind address (default: 0.0.0.0:9292)
+#   LLAMA_SWAP_USER       - Service runtime user (default: root)
+#   LLAMA_SWAP_BIN_PATH   - Binary install path (default: /usr/local/bin/llama-swap)
+#   LLAMA_SWAP_VERSION    - Release version to install (default: latest)
+#
+# DEPENDENCIES:
+#   - curl: Used for health check polling and binary download
+#   - systemctl: systemd management
+#   - envsubst: Used for template rendering
+#   - jq: Used for GitHub API parsing (binary download)
+#
+# OUTPUTS:
+#   - ${LLAMA_SWAP_DIR}/config/config.yaml - llama-swap configuration
+#   - /etc/systemd/system/llama-swap.service - systemd unit file
+#   - ${LLAMA_SWAP_BIN_PATH} - installed binary
+#
+# USAGE:
+#   ./setup-llama-swap.sh                          # defaults
+#   ./setup-llama-swap.sh --check                  # check status only
+#
+# REFERENCE:
+#   https://github.com/mostlygeek/llama-swap
+#
+# =============================================================================
+
+set -euo pipefail
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLEANUP TRAP — handles partial failures
+# ─────────────────────────────────────────────────────────────────────────────
+
+cleanup_on_failure() {
+  local exit_code=$?
+  if [[ $exit_code -ne 0 ]]; then
+    echo ""
+    warn "Setup failed (exit code: ${exit_code})! Cleaning up..."
+    # If service was partially installed, disable and stop it
+    if sudo systemctl cat llama-swap &>/dev/null 2>&1; then
+      info "Disabling and stopping partially installed service..."
+      sudo systemctl stop llama-swap 2>/dev/null || true
+      sudo systemctl disable llama-swap 2>/dev/null || true
+      sudo systemctl daemon-reload 2>/dev/null || true
+      success "Partial service removed."
+    fi
+  fi
+}
+
+trap cleanup_on_failure EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SCRIPT DIRECTORY & LIBRARY
+# ─────────────────────────────────────────────────────────────────────────────
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
+TEMPLATE_DIR="$(realpath "${SCRIPT_DIR}/../templates/llama-swap")"
+
+# shellcheck source=lib/helpers.sh
+source "${LIB_PATH}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+LLAMA_SWAP_PORT="${LLAMA_SWAP_PORT:-9292}"               # Host port
+LLAMA_SWAP_DIR="${LLAMA_SWAP_DIR:-/srv/llama-swap}"      # Base directory
+LLAMA_SWAP_HEALTH_TIMEOUT="${LLAMA_SWAP_HEALTH_TIMEOUT:-500}"  # Health check timeout (s)
+LLAMA_SWAP_LOG_LEVEL="${LLAMA_SWAP_LOG_LEVEL:-info}"     # Log level
+LLAMA_SWAP_START_PORT="${LLAMA_SWAP_START_PORT:-10001}"  # Starting port macro
+LLAMA_SWAP_GLOBAL_TTL="${LLAMA_SWAP_GLOBAL_TTL:-0}"      # Global model TTL
+LLAMA_SWAP_LISTEN_ADDR="${LLAMA_SWAP_LISTEN_ADDR:-0.0.0.0:9292}"  # Bind address
+LLAMA_SWAP_USER="${LLAMA_SWAP_USER:-root}"               # Service user
+LLAMA_SWAP_BIN_PATH="${LLAMA_SWAP_BIN_PATH:-/usr/local/bin/llama-swap}"  # Binary path
+LLAMA_SWAP_VERSION="${LLAMA_SWAP_VERSION:-latest}"       # Release version
+
+# ─────────────────────────────────────────────────────────────────────────────
+# COMPUTED VALUES
+# ─────────────────────────────────────────────────────────────────────────────
+
+CONFIG_DIR="${LLAMA_SWAP_DIR}/config"
+CONFIG_FILE="${CONFIG_DIR}/config.yaml"
+SERVICE_FILE="/etc/systemd/system/llama-swap.service"
+CHECK_ONLY=0
+GITHUB_REPO="mostlygeek/llama-swap"
+
+# Parse additional flags
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --check) CHECK_ONLY=1 ;;
+    *) error "Unknown option: $1 (use --help for usage)" ;;
+  esac
+  shift
+done
+
+# ─────────────────────────────────────────────────────────────────────────────
+# PRE-FLIGHT CHECKS
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Running pre-flight checks"
+
+# Check systemd
+if ! command -v systemctl &>/dev/null; then
+  error "systemctl is not available. This script requires systemd."
+fi
+
+# Check curl
+if ! command -v curl &>/dev/null; then
+  error "curl is not installed. Required for binary download and health checks."
+fi
+
+# Check envsubst
+if ! command -v envsubst &>/dev/null; then
+  error "envsubst is not installed. Required for template rendering. Install with: sudo apt-get install gettext-base"
+fi
+
+# Check jq (for GitHub API)
+if ! command -v jq &>/dev/null; then
+  error "jq is not installed. Required for GitHub release detection. Install with: sudo apt-get install jq"
+fi
+
+# Warn if not running as root (will use sudo for privileged commands)
+if [[ $EUID -ne 0 ]]; then
+  warn "Not running as root. Commands requiring root privileges will use sudo."
+fi
+
+# Check port availability
+if ss -tln 2>/dev/null | grep -q ":${LLAMA_SWAP_PORT} " || \
+   netstat -tln 2>/dev/null | grep -q ":${LLAMA_SWAP_PORT} "; then
+  error "Port ${LLAMA_SWAP_PORT} is already in use. Choose a different LLAMA_SWAP_PORT."
+fi
+
+LLAMA_SWAP_ARCH="$(detect_arch)"
+info "Detected architecture: ${LLAMA_SWAP_ARCH}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CHECK FOR EXISTING INSTALLATION
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Checking for existing llama-swap installation"
+
+if [[ "$CHECK_ONLY" -eq 1 ]]; then
+  if [[ -f "$SERVICE_FILE" ]]; then
+    success "systemd service file found at ${SERVICE_FILE}"
+    if sudo systemctl is-active llama-swap &>/dev/null; then
+      success "Service is currently running."
+      sudo systemctl status llama-swap --no-pager
+    else
+      warn "Service is not running. Start with: sudo systemctl start llama-swap"
+    fi
+    if [[ -f "$CONFIG_FILE" ]]; then
+      success "Config file found at ${CONFIG_FILE}"
+    else
+      warn "Config file not found at ${CONFIG_FILE}"
+    fi
+    if [[ -x "$LLAMA_SWAP_BIN_PATH" ]]; then
+      success "Binary found at ${LLAMA_SWAP_BIN_PATH} ($(llama-swap -version 2>/dev/null || echo 'unknown version'))"
+    else
+      warn "Binary not found at ${LLAMA_SWAP_BIN_PATH}"
+    fi
+    exit 0
+  else
+    warn "No existing installation found."
+    info "Run without --check to install."
+    exit 0
+  fi
+fi
+
+# Check for existing service
+if [[ -f "$SERVICE_FILE" ]]; then
+  warn "Existing systemd service file found at ${SERVICE_FILE}."
+  echo ""
+  info "Existing config at ${CONFIG_FILE} will be PRESERVED (not overwritten)."
+  info "The llama-swap binary will be updated to the latest version."
+  read -rp "    Re-install and update binary? [y/N] " answer
+  if [[ "${answer,,}" != "y" ]]; then
+    info "Keeping existing setup. Exiting."
+    exit 0
+  fi
+  # Stop and disable existing service before re-install
+  info "Stopping existing service..."
+  sudo systemctl stop llama-swap 2>/dev/null || true
+  sudo systemctl disable llama-swap 2>/dev/null || true
+  success "Old service stopped and disabled."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CREATE DIRECTORIES
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Creating directories at ${LLAMA_SWAP_DIR}"
+
+sudo mkdir -p "$CONFIG_DIR"
+success "Directories ready."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DOWNLOAD AND INSTALL BINARY
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Downloading llama-swap binary"
+
+if [[ -x "$LLAMA_SWAP_BIN_PATH" ]]; then
+  EXISTING_VERSION=$("$LLAMA_SWAP_BIN_PATH" -version 2>/dev/null || echo "unknown")
+  info "Existing binary found: ${EXISTING_VERSION}"
+  read -rp "    Re-download and replace binary? [y/N] " answer
+  if [[ "${answer,,}" != "y" ]]; then
+    info "Keeping existing binary. Skipping download."
+  fi
+fi
+
+# Determine download URL
+if [[ "$LLAMA_SWAP_VERSION" == "latest" ]]; then
+  info "Fetching latest release from GitHub..."
+  RELEASE_INFO=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | jq -r '.tag_name')
+  if [[ -z "$RELEASE_INFO" || "$RELEASE_INFO" == "null" ]]; then
+    error "Failed to fetch latest release from GitHub. Check network connectivity."
+  fi
+  LLAMA_SWAP_VERSION="$RELEASE_INFO"
+  info "Latest release: ${LLAMA_SWAP_VERSION}"
+fi
+
+# Build tarball name: llama-swap_<version_without_v>_linux_<arch>.tar.gz
+VERSION_TAG="${LLAMA_SWAP_VERSION#v}"  # strip leading 'v' if present
+TARBALL_NAME="llama-swap_${VERSION_TAG}_linux_${LLAMA_SWAP_ARCH}.tar.gz"
+DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${LLAMA_SWAP_VERSION}/${TARBALL_NAME}"
+
+info "Downloading from: ${DOWNLOAD_URL}"
+
+# Download the tar.gz archive to a temp file
+TEMP_TARBALL="$(mktemp /tmp/llama-swap-download.XXXXXX.tar.gz)"
+if ! curl -fsSL --retry 3 --retry-delay 5 -o "$TEMP_TARBALL" "$DOWNLOAD_URL"; then
+  error "Failed to download binary archive from ${DOWNLOAD_URL}"
+fi
+
+# Extract the binary from the archive
+TEMP_EXTRACT_DIR="$(mktemp -d /tmp/llama-swap-extract.XXXXXX)"
+if ! tar -xzf "$TEMP_TARBALL" -C "$TEMP_EXTRACT_DIR"; then
+  error "Failed to extract binary archive from ${TEMP_TARBALL}"
+fi
+
+# Find the extracted binary (it may be named llama-swap inside the tarball)
+TEMP_BIN="$(find "$TEMP_EXTRACT_DIR" -name 'llama-swap' -type f | head -1)"
+if [[ -z "$TEMP_BIN" ]]; then
+  error "Could not find 'llama-swap' binary inside extracted archive. Contents:"
+  ls -laR "$TEMP_EXTRACT_DIR"
+fi
+
+# Verify it's a valid ELF binary
+if ! file "$TEMP_BIN" | grep -q "ELF"; then
+  error "Extracted file is not a valid ELF binary. Possible corrupted download."
+fi
+
+# Install to target path
+if [[ -x "$LLAMA_SWAP_BIN_PATH" ]]; then
+  info "Replacing existing binary at ${LLAMA_SWAP_BIN_PATH}"
+fi
+
+sudo install -m 755 "$TEMP_BIN" "$LLAMA_SWAP_BIN_PATH"
+
+# Cleanup temp files
+rm -f "$TEMP_TARBALL"
+rm -rf "$TEMP_EXTRACT_DIR"
+
+INSTALLED_VERSION=$("$LLAMA_SWAP_BIN_PATH" -version 2>/dev/null || echo "unknown")
+success "Binary installed at ${LLAMA_SWAP_BIN_PATH} (version: ${INSTALLED_VERSION})"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GENERATE CONFIG.YAML FROM TEMPLATE
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Generating ${CONFIG_FILE}"
+
+if [[ -f "$CONFIG_FILE" ]]; then
+  info "Config file already exists at ${CONFIG_FILE}. Skipping generation to preserve existing configuration."
+  info "Edit ${CONFIG_FILE} manually if you need to update settings."
+else
+  export LLAMA_SWAP_HEALTH_TIMEOUT LLAMA_SWAP_LOG_LEVEL LLAMA_SWAP_START_PORT LLAMA_SWAP_GLOBAL_TTL
+
+  envsubst '${LLAMA_SWAP_HEALTH_TIMEOUT} ${LLAMA_SWAP_LOG_LEVEL} ${LLAMA_SWAP_START_PORT} ${LLAMA_SWAP_GLOBAL_TTL}' \
+    < "${TEMPLATE_DIR}/config.yaml" \
+    | sudo tee "$CONFIG_FILE" > /dev/null
+
+  sudo chmod 644 "$CONFIG_FILE"
+  success "Config file created with all available options documented."
+  info "Edit ${CONFIG_FILE} to customize model configurations."
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# GENERATE AND INSTALL SYSTEMD SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Generating systemd service file"
+
+export LLAMA_SWAP_USER LLAMA_SWAP_DIR LLAMA_SWAP_BIN_PATH CONFIG_FILE LLAMA_SWAP_LISTEN_ADDR
+
+envsubst '${LLAMA_SWAP_USER} ${LLAMA_SWAP_DIR} ${LLAMA_SWAP_BIN_PATH} ${CONFIG_FILE} ${LLAMA_SWAP_LISTEN_ADDR}' \
+  < "${TEMPLATE_DIR}/llama-swap.service" \
+  | sudo tee "$SERVICE_FILE" > /dev/null
+
+sudo chmod 644 "$SERVICE_FILE"
+success "Service file installed at ${SERVICE_FILE}"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RELOAD SYSTEMD AND START SERVICE
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Reloading systemd daemon"
+
+sudo systemctl daemon-reload
+success "Daemon reloaded."
+
+step "Starting llama-swap service"
+
+sudo systemctl enable llama-swap
+sudo systemctl start llama-swap
+success "Service started and enabled."
+
+# ─────────────────────────────────────────────────────────────────────────────
+# WAIT FOR HEALTH CHECK
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Waiting for llama-swap to respond"
+
+MAX_WAIT=120
+INTERVAL=5
+ELAPSED=0
+READY=false
+
+ACCESS_URL="http://localhost:${LLAMA_SWAP_PORT}/health"
+
+while [[ $ELAPSED -lt $MAX_WAIT ]]; do
+  HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" "$ACCESS_URL" 2>/dev/null || echo "000")
+  if [[ "$HTTP_CODE" == "200" ]]; then
+    READY=true
+    break
+  fi
+  echo -ne "\r    Waited ${ELAPSED}s / ${MAX_WAIT}s ... (HTTP ${HTTP_CODE})"
+  sleep $INTERVAL
+  ELAPSED=$((ELAPSED + INTERVAL))
+done
+
+echo ""
+
+if [[ "$READY" == "true" ]]; then
+  success "llama-swap is up and responding!"
+else
+  warn "llama-swap did not respond within ${MAX_WAIT}s."
+  warn "Check service status and logs:"
+  warn "  systemctl status llama-swap"
+  warn "  journalctl -u llama-swap -n 50"
+fi
+
+# ─────────────────────────────────────────────────────────────────────────────
+# DISABLE CLEANUP TRAP ON SUCCESS
+# ─────────────────────────────────────────────────────────────────────────────
+
+trap - EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SUMMARY
+# ─────────────────────────────────────────────────────────────────────────────
+
+echo ""
+echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+echo -e "${GREEN}${BOLD}  llama-swap setup complete!${RESET}"
+echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+echo ""
+
+echo -e "  ${BOLD}Web UI${RESET}            http://localhost:${LLAMA_SWAP_PORT}/ui"
+echo -e "  ${BOLD}OpenAI API${RESET}        http://localhost:${LLAMA_SWAP_PORT}/v1/chat/completions"
+echo -e "  ${BOLD}Health check${RESET}      http://localhost:${LLAMA_SWAP_PORT}/health"
+echo -e "  ${BOLD}Running models${RESET}    http://localhost:${LLAMA_SWAP_PORT}/running"
+echo -e "  ${BOLD}Config file${RESET}       ${CONFIG_FILE}"
+echo -e "  ${BOLD}Service file${RESET}      ${SERVICE_FILE}"
+echo -e "  ${BOLD}Binary${RESET}            ${LLAMA_SWAP_BIN_PATH} (${INSTALLED_VERSION})"
+echo -e "  ${BOLD}Listen address${RESET}    ${LLAMA_SWAP_LISTEN_ADDR}"
+echo -e "  ${BOLD}Runtime user${RESET}      ${LLAMA_SWAP_USER}"
+
+echo ""
+echo -e "${YELLOW}  Next steps:${RESET}"
+echo -e "  1. Edit ${CONFIG_FILE} to add your model configurations."
+echo -e "  2. Restart the service: sudo systemctl restart llama-swap"
+echo -e "  3. Test with: curl http://localhost:${LLAMA_SWAP_PORT}/v1/models"
+
+echo ""
+echo -e "${BOLD}Useful commands:${RESET}"
+echo -e "  Start:          sudo systemctl start llama-swap"
+echo -e "  Stop:           sudo systemctl stop llama-swap"
+echo -e "  Restart:        sudo systemctl restart llama-swap"
+echo -e "  Enable on boot: sudo systemctl enable llama-swap"
+echo -e "  Status:         sudo systemctl status llama-swap"
+echo -e "  Follow logs:    sudo journalctl -u llama-swap -f"
+echo -e "  Recent logs:    sudo journalctl -u llama-swap --no-pager -n 50"
+echo -e "  Check status:   $0 --check"
+
+echo ""
+echo -e "${YELLOW}  Note:${RESET}"
+echo -e "  The config.yaml contains a comprehensive example with ALL available"
+echo -e "  options documented. Uncomment and customize sections as needed."
+
+echo ""
+info "llama-swap is now running as a systemd service. Add models to config.yaml and restart to load them."
