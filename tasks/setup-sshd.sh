@@ -1,95 +1,89 @@
 #!/usr/bin/env bash
+# shellcheck shell=bash
+# =============================================================================
+# setup-sshd.sh — Configure SSH server
+# =============================================================================
 #
-# SSH Server (sshd) Setup Script
-# ===============================
-#
-# DESCRIPTION:
+# Description:
 #   Installs and configures OpenSSH server with security-hardened settings.
-#   Sets up the SSH daemon to use public key authentication only, disables
-#   password authentication, and configures a custom port.
+#   Sets up public key authentication only and configures a custom port.
 #
-# KEY ACTIONS:
-#   1. Installs openssh-server package via apt
-#   2. Displays current sshd service status
-#   3. Configures sshd with security settings:
-#      - Enables public key authentication
-#      - Disables password authentication
-#      - Sets custom SSH port
-#   4. Appends configuration lines to sshd_config (idempotent - checks before adding)
-#   5. Enables and restarts SSH service
-#   6. Creates ~/.ssh directory and authorized_keys file
+# Environment Variables (optional):
+#   SSHD_PORT - SSH daemon port (default: 2224)
 #
-# IMPORTANT VARIABLES:
-#   SSHD_PORT          - SSH daemon port (default: 2224)
-#   SSHD_CONFIG_FILE   - Path to sshd config (default: /etc/ssh/sshd_config)
-#
-# DEPENDENCIES:
-#   - apt package manager
-#   - sudo privileges
-#   - systemctl (systemd)
-#
-# USAGE:
+# Usage:
+#   ./setup-sshd.sh
 #   SSHD_PORT=2224 ./setup-sshd.sh
-#
-set -eu
+# =============================================================================
 
+set -euo pipefail
 
-# Setup sshd server
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
+
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
+
+# Configuration
+: "${SSHD_PORT:=2224}"
+SSHD_CONFIG_FILE="/etc/ssh/sshd_config"
+
+# Configuration lines to ensure are present
+declare -a SSHD_CONFIG_LINES=(
+    "PubkeyAuthentication yes"
+    "PasswordAuthentication no"
+    "Port ${SSHD_PORT}"
+)
+
+# =============================================================================
+# Main
+# =============================================================================
+
+step "Setting up SSH server (port: ${SSHD_PORT})"
+
+# Install OpenSSH server
+step "Installing openssh-server"
 sudo apt update
 sudo apt install -y openssh-server
 
-# show sshd status
-echo "SSHD status:"
-sudo systemctl status sshd |true
-echo "--------------------"
+# Show SSH status
+step "SSHD current status"
+sudo systemctl status sshd --no-pager || true
 
-# SSHD
-# ------------ Config --------------
-SSHD_PORT="${SSHD_PORT:-2224}"
-SSHD_CONFIG_FILE="/etc/ssh/sshd_config"
-
-echo "Configured env vars:"
-echo "SSHD_PORT=$SSHD_PORT"
-echo "SSHD_CONFIG_FILE=$SSHD_CONFIG_FILE"
-echo "--------------------------"
-echo ""
-
-
-# Lines to ensure are in the config file (with variable substitution)
-lines=(
-    "PubkeyAuthentication yes"
-    "PasswordAuthentication no"
-    "Port $SSHD_PORT"
-)
-
-# Loop through each line and append it if not found
-for line in "${lines[@]}"; do
-    if ! sudo grep -q "^$line$" "$SSHD_CONFIG_FILE"; then
-        echo "Line: '$line' not found in sshd configuration. Appending: $line"
-        echo "$line" | sudo tee -a $SSHD_CONFIG_FILE
+# Check and append configuration lines
+step "Configuring sshd"
+for line in "${SSHD_CONFIG_LINES[@]}"; do
+    if sudo grep -q "^${line}$" "${SSHD_CONFIG_FILE}"; then
+        info "'${line}' already present in ${SSHD_CONFIG_FILE}"
     else
-        echo "'$line' is already present in $SSHD_CONFIG_FILE. Skipping insertion ..."
+        info "Adding: ${line}"
+        echo "${line}" | sudo tee -a "${SSHD_CONFIG_FILE}" > /dev/null
     fi
 done
 
-echo "sshd Configuration at: $SSHD_CONFIG_FILE"
-sudo cat $SSHD_CONFIG_FILE
+# Show final config
+info "sshd configuration at: ${SSHD_CONFIG_FILE}"
+sudo cat "${SSHD_CONFIG_FILE}"
 
-echo "Configuration has been checked and added to $SSHD_CONFIG_FILE if not present."
-
+# Enable and restart SSH
+step "Restarting SSH service"
 sudo systemctl enable --now ssh
-# sudo systemctl status ssh
 sudo systemctl restart ssh
-# sudo systemctl status ssh
 
-# prepare .ssh dir
-mkdir -p "$HOME/.ssh"
-if [[ ! -f "$HOME/.ssh/authorized_keys" ]]; then
-    touch "$HOME/.ssh/authorized_keys"
-    echo "Created new authorized_keys file at $HOME/.ssh/authorized_keys"
+# Prepare .ssh directory
+step "Preparing ~/.ssh directory"
+mkdir -p "${HOME}/.ssh"
+if [[ ! -f "${HOME}/.ssh/authorized_keys" ]]; then
+    touch "${HOME}/.ssh/authorized_keys"
+    info "Created new authorized_keys file"
 else
-    echo "Existing authorized_keys found at $HOME/.ssh/authorized_keys (preserved)"
+    info "Existing authorized_keys preserved"
 fi
 
-echo "Place your allowed public keys in: $HOME/.ssh/authorized_keys"
-echo "----- FINISHED SSH SETUP ------"
+success "SSH server configured successfully"
+info "Place your public keys in: ${HOME}/.ssh/authorized_keys"
+info "Connect with: ssh -p ${SSHD_PORT} $(whoami)@$(hostname -I | awk '{print $1}')"
