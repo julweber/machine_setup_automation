@@ -474,6 +474,7 @@ The scripts are deliberately **parameterised via environment variables** that yo
 
 ## Additional Documentation
 - **[README_TRAEFIK.md](README_TRAEFIK.md)** - Complete guide for the Traefik v3 reverse proxy setup script (`setup-traefik.sh`)
+- **[README_MANAGING_MODELS.md](README_MANAGING_MODELS.md)** - Guide for managing models via huggingface cli
 ---
 
 ## Agentic Engineering & Specification
