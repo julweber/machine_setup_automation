@@ -27,7 +27,7 @@ The agent will read the README and discover available scripts on its own, then g
 3. **Run the desired entrypoint**:
    - For a *server* (headless VM, cloud instance):
     ```bash
-    ./setup-server.sh    # sources basics → sshd → docker → lm-studio → firewall → opencode …
+    ./setup-server.sh    # sources basics → sshd → configure-firewall → docker
     ```
    - For a *development workstation* (your laptop/desktop):
     ```bash
@@ -37,8 +37,7 @@ The agent will read the README and discover available scripts on its own, then g
 5. After the script finishes you should have:
    - Docker ready (run `docker run hello-world` to double-check).
    - SSH listening on the custom port (`sshd` service is enabled).
-   - LM Studio binary at `$HOME/lmstudio_bin` with a start shortcut at `$HOME/lmstudio`.
-   - UFW firewall allowing SSH, LM Studio (and optionally OpenWebUI and Opencode) ports.
+   - UFW firewall allowing SSH and other service ports.
 
 ---
 
@@ -46,7 +45,6 @@ The agent will read the README and discover available scripts on its own, then g
 - **Modular task scripts** - Each `setup_*.sh` script is self-contained and idempotent; it can be sourced individually from an entrypoint or run on its own.
 - **Single-shell execution** - The entrypoint scripts (`setup-server.sh`, `setup-dev-machine.sh`) use `source` so that environment variables defined in earlier tasks are visible to later ones (e.g., custom ports).
 - **Configuration via env vars** - All tunable values have sensible defaults and can be overridden by exporting the variable before invoking an entrypoint, making it easy to adapt the automation to different environments.
-- **Optional components are commented out** - Features like Kubernetes, Brave or VS Code are included but disabled by default; developers simply uncomment the corresponding `source` line in the entrypoint to enable them.
 
 ---
 
@@ -65,11 +63,6 @@ Installs common system packages (curl, git, python3, etc.), **uv** Python packag
 Installs Docker Engine from the official Docker repository, adds the current user to the `docker` group and verifies the installation.
 
 **Environment variables:** None
-
-#### `setup-kubernetes.sh`
-Installs a lightweight **k3s** cluster and the `k9s` TUI for Kubernetes management.
-
-**Environment variables:** `K9S_VERSION` (default `0.50.7`)
 
 #### `setup-traefik.sh`
 Deploys production-ready Traefik v3 reverse proxy with Docker Compose, TLS via Let's Encrypt, security headers, rate limiting, and optional protected dashboard.
@@ -192,11 +185,6 @@ Installs the latest Node.js via nvm and the **Pi coding agent** npm package glob
 
 ### Speech & Dictation
 
-#### `setup-hyprwhspr.sh`
-Installs **hyprwhspr** — native Wayland speech-to-text dictation for Linux. Handles ydotool 1.0+ backport (Ubuntu ships a broken 0.1.x), clones the repo, and runs the automated setup wizard.
-
-**Environment variables:** `HYPRWHSPR_INSTALL_DIR` (default `~/hyprwhspr`), `HYPRWHSPR_BACKEND` (`nvidia`, `vulkan`, `cpu`, `onnx-asr`, auto-detected), `HYPRWHSPR_MODEL`, `HYPRWHSPR_WAYBAR` (default `false`), `HYPRWHSPR_MIC_OSD` (default `true`), `HYPRWHSPR_SYSTEMD` (default `true`), `HYPRWHSPR_HYPR_BINDINGS` (default `false`), `HYPRWHSPR_SKIP_DEPS` (default `false`)
-
 #### `setup-whispering.sh`
 Downloads the Whispering speech-to-text AppImage, creates a start script (`~/whispering`) and a desktop shortcut. Backs up any existing binary before downloading.
 
@@ -210,20 +198,6 @@ Downloads the Whispering speech-to-text AppImage, creates a start script (`~/whi
 Installs Forgejo (a Gitea fork) as a Docker container. Supports optional Traefik reverse-proxy integration via `FORGEJO_TRAEFIK_ENABLED`.
 
 **Environment variables:** `FORGEJO_TRAEFIK_ENABLED` (default `false`), `FORGEJO_DOMAIN`, `FORGEJO_HTTP_PORT` (default `3000`), `FORGEJO_SSH_PORT` (default `222`), `PROXY_NETWORK` (default `proxy`)
-
-#### `setup-concourse.sh`
-Deploys Concourse CI, a continuous integration platform, using Docker Compose. Includes TSA key generation, PostgreSQL database, web UI (ATC), and worker node configuration. Also installs the fly CLI on the host machine.
-
-**Environment variables:** `CONCOURSE_HOME` (default `/srv/concourse`), `CONCOURSE_WEB_PORT` (default 8089), `CONCOURSE_ADMIN_USER` (default `admin`), `CONCOURSE_ADMIN_PASSWORD` (auto-generated), `CONCOURSE_DB_PASSWORD` (auto-generated), `CONCOURSE_CLUSTER_NAME` (default `denkfabrik`), `CONCOURSE_DNS_SERVER` (default `8.8.8.8`), `CONCOURSE_EXTERNAL_URL` (auto-detected), `CONCOURSE_FLY_TARGET` (default `concourse`), `CONCOURSE_TRAEFIK` (default `false`), `CONCOURSE_DOMAIN`, `PROXY_NETWORK`
-
-**Features:**
-- Complete CI/CD pipeline platform with web UI
-- PostgreSQL database for persistence
-- Worker node for job execution
-- TSA key generation for secure worker registration
-- fly CLI installation and auto-configuration
-- Optional Traefik reverse-proxy integration
-- Auto-generates admin password and database credentials
 
 #### `setup-planka.sh`
 Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL. Auto-generates a secret key and supports interactive or headless admin user creation.
