@@ -914,27 +914,15 @@ else
 fi
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
+# ┌─────────────────────────────────────────────────────────────────────────┐
 # │ UFW FIREWALL — open ports if UFW is active                             │
-# │                                                                         │
-# │     ufw installed and active?                                           │
-# │          │                                                              │
-# │   ┌─────┴──────┐                                                        │
-# │   │            │                                                        │
-# │  YES│           NO                                                       │
-# │    ▼            │                                                        │
-# │ Apply rules:    Warn user                                               │
-# │ ufw allow       (ports may need manual                                    │
-# │ []/tcp     opening)                                             │
-# │ ufw allow       └────────────────────────────────────────────┘           │
-# │ []/tcp                                                       │
 # └─────────────────────────────────────────────────────────────────────────┘
 step "Configuring UFW firewall"
 
-if command -v ufw &>/dev/null && sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+if ufw_available && ufw_active; then
   info "UFW is active — opening ports ${HTTP_PORT}/tcp and ${HTTPS_PORT}/tcp ..."
-  sudo ufw allow "${HTTP_PORT}/tcp"
-  sudo ufw allow "${HTTPS_PORT}/tcp"
-  success "UFW rules applied."
+  ufw_add_rule "${HTTP_PORT}" "tcp" "HTTP"
+  ufw_add_rule "${HTTPS_PORT}" "tcp" "HTTPS"
 else
   warn "UFW is not installed or not active — skipping firewall configuration."
   warn "Make sure ports ${HTTP_PORT} and ${HTTPS_PORT} are open in your firewall."

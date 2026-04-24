@@ -153,3 +153,104 @@ if ! declare -F mktempfile > /dev/null 2>&1; then
     mktemp -t "$(basename "$1" | sed 's/$/.XXXXXX/')" 2>/dev/null || mktemp -t "tmp.XXXXXX"
   }
 fi
+
+# ---------------------------------------------------------------------------
+# UFW Firewall Helpers
+#   Provides common functions for managing UFW firewall rules.
+# ---------------------------------------------------------------------------
+
+if ! declare -F ufw_available > /dev/null 2>&1; then
+  ufw_available() {
+    command -v ufw &>/dev/null
+  }
+fi
+
+if ! declare -F ufw_active > /dev/null 2>&1; then
+  ufw_active() {
+    sudo ufw status 2>/dev/null | grep -q "Status: active"
+  }
+fi
+
+if ! declare -F ufw_rule_exists > /dev/null 2>&1; then
+  ufw_rule_exists() {
+    local port="$1"
+    local proto="${2:-tcp}"
+    sudo ufw status 2>/dev/null | grep -qE "^${port}/${proto}\s+ALLOW"
+  }
+fi
+
+if ! declare -F ufw_add_rule > /dev/null 2>&1; then
+  ufw_add_rule() {
+    local port="$1"
+    local proto="${2:-tcp}"
+    local comment="${3:-}"
+
+    if ufw_rule_exists "$port" "$proto"; then
+      info "Rule for ${port}/${proto} already exists, skipping."
+      return 0
+    fi
+
+    if [[ -n "$comment" ]]; then
+      sudo ufw allow "${port}/${proto}" comment "${comment}"
+    else
+      sudo ufw allow "${port}/${proto}"
+    fi
+    success "UFW rule added: ${port}/${proto}"
+  }
+fi
+
+if ! declare -F ufw_delete_rule > /dev/null 2>&1; then
+  ufw_delete_rule() {
+    local port="$1"
+    local proto="${2:-tcp}"
+
+    sudo ufw delete allow "${port}/${proto}" 2>/dev/null || true
+    success "UFW rule removed: ${port}/${proto}"
+  }
+fi
+
+if ! declare -F ufw_enable > /dev/null 2>&1; then
+  ufw_enable() {
+    if sudo ufw status 2>/dev/null | grep -q "Status: active"; then
+      success "UFW is already active."
+      return 0
+    fi
+
+    sudo ufw --force enable
+    success "UFW enabled."
+  }
+fi
+
+if ! declare -F ufw_show_status > /dev/null 2>&1; then
+  ufw_show_status() {
+    sudo ufw status
+  }
+fi
+
+if ! declare -F ufw_firewall_section > /dev/null 2>&1; then
+  ufw_firewall_section() {
+    local description="${1:-firewall}"
+    shift
+    # Remaining args are port/proto/comment triples: port proto comment port proto comment ...
+
+    step "Configuring UFW ${description}"
+
+    if ! ufw_available; then
+      warn "UFW not installed — skipping ${description} configuration."
+      return 0
+    fi
+
+    if ! ufw_active; then
+      warn "UFW is not active — skipping ${description} configuration."
+      return 0
+    fi
+
+    while [[ $# -ge 3 ]]; do
+      local port="$1"
+      local proto="${2:-tcp}"
+      local comment="${3:-}"
+      shift 3
+      ufw_add_rule "$port" "$proto" "$comment"
+    done
+  }
+fi

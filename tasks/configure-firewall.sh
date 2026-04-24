@@ -7,6 +7,11 @@
 # Description:
 #   Configures UFW (Uncomplicated Firewall) rules for a development machine.
 #
+#   Uses sudo internally for privileged operations. Assumes default-deny policy.
+#
+#   IMPORTANT: When running over SSH, ensure SSHD_PORT is correct before
+#   enabling the firewall to avoid remote lockout.
+#
 # Environment Variables (optional):
 #   SSHD_PORT (default: 2224)
 #   LM_STUDIO_PORT (default: 1234)
@@ -42,17 +47,12 @@ source "${LIB_PATH}" || {
 # Helper functions
 # =============================================================================
 
-add_ufw_rule() {
+validate_port() {
   local port="$1"
-  local description="$2"
-
-  # Check if rule already exists
-  if sudo ufw status numbered | grep -q "\[${port}\]"; then
-    info "Rule for ${description} (${port}) already exists"
-  else
-    step "Adding rule for ${description} (${port})"
-    sudo ufw allow "${port}" comment "${description}"
-    sudo ufw allow "${port}/tcp" comment "${description}"
+  local name="$2"
+  if ! [[ "${port}" =~ ^[0-9]+$ ]] || (( port < 1 || port > 65535 )); then
+    error "${name}='${port}' is not a valid port number (must be 1-65535)"
+    exit 1
   fi
 }
 
@@ -63,7 +63,7 @@ add_ufw_rule() {
 step "Configuring UFW firewall"
 
 # Check prerequisites
-if ! command -v ufw &>/dev/null; then
+if ! ufw_available; then
   error "UFW is not installed. Please install ufw first."
 fi
 
@@ -75,30 +75,40 @@ echo "  OPENWEBUI_PORT=${OPENWEBUI_PORT}"
 echo "  KUBERNETES_API_PORT=${KUBERNETES_API_PORT}"
 echo "  GNOME_REMOTE_PORT=${GNOME_REMOTE_PORT}"
 
+# Validate ports
+validate_port "${SSHD_PORT}" "SSHD_PORT"
+validate_port "${LM_STUDIO_PORT}" "LM_STUDIO_PORT"
+validate_port "${OPENCODE_PORT}" "OPENCODE_PORT"
+
 # Show current status
 step "Current firewall status"
-sudo ufw status
+ufw_show_status
 
 step "Current configured rules"
 sudo ufw show added || true
 
-# Add firewall rules
-add_ufw_rule "${SSHD_PORT}" "SSHD"
-add_ufw_rule "${LM_STUDIO_PORT}" "LM_STUDIO"
-add_ufw_rule "${OPENCODE_PORT}" "OPENCODE"
+# Add SSH rule FIRST to prevent lockout
+ufw_add_rule "${SSHD_PORT}" "tcp" "SSHD"
+
+# Add remaining service rules
+ufw_add_rule "${LM_STUDIO_PORT}" "tcp" "LM_STUDIO"
+ufw_add_rule "${OPENCODE_PORT}" "tcp" "OPENCODE"
 
 # Optional services (commented out by default)
 # Uncomment to enable:
-# add_ufw_rule "${OPENWEBUI_PORT}" "OPENWEBUI"
-# add_ufw_rule "${KUBERNETES_API_PORT}" "KUBERNETES_API"
-# add_ufw_rule "${GNOME_REMOTE_PORT}" "GNOME_REMOTE"
+# validate_port "${OPENWEBUI_PORT}" "OPENWEBUI_PORT"
+# ufw_add_rule "${OPENWEBUI_PORT}" "tcp" "OPENWEBUI"
+# validate_port "${KUBERNETES_API_PORT}" "KUBERNETES_API_PORT"
+# ufw_add_rule "${KUBERNETES_API_PORT}" "tcp" "KUBERNETES_API"
+# validate_port "${GNOME_REMOTE_PORT}" "GNOME_REMOTE_PORT"
+# ufw_add_rule "${GNOME_REMOTE_PORT}" "tcp" "GNOME_REMOTE"
 
-# Enable firewall
+# Enable firewall (non-interactive, prevents lockout)
 step "Enabling firewall"
-sudo ufw enable
+ufw_enable
 
 # Show final status
 step "Final firewall status"
-sudo ufw status
+ufw_show_status
 
 success "Firewall configured successfully"

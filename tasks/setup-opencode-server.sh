@@ -310,15 +310,14 @@ _wait_for_opencode_docker() {
 }
 
 _configure_ufw_docker() {
-    if ! command -v ufw &>/dev/null || [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
+    if ! ufw_available || [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
         return
     fi
 
     step "Configuring UFW firewall"
-    if ! sudo ufw status | grep -qE "^$OPENCODE_PORT "; then
+    if ! ufw_rule_exists "$OPENCODE_PORT"; then
         info "Adding firewall rule for port $OPENCODE_PORT..."
-        sudo ufw allow "$OPENCODE_PORT/tcp"
-        success "UFW rules updated."
+        ufw_add_rule "$OPENCODE_PORT" "tcp" "OPENCODE"
     fi
 }
 
@@ -438,15 +437,14 @@ EOF
 }
 
 _configure_ufw_systemd() {
-    if ! command -v ufw &>/dev/null; then
+    if ! ufw_available; then
         return
     fi
 
     step "Configuring UFW firewall (systemd mode)"
-    if ! sudo ufw status | grep -qE "^$OPENCODE_PORT "; then
+    if ! ufw_rule_exists "$OPENCODE_PORT"; then
         info "Adding firewall rule for port $OPENCODE_PORT..."
-        sudo ufw allow "$OPENCODE_PORT/tcp"
-        success "UFW rules updated."
+        ufw_add_rule "$OPENCODE_PORT" "tcp" "OPENCODE"
     fi
 }
 
@@ -542,10 +540,9 @@ uninstall_docker() {
         success "Data directory removed."
     fi
 
-    if command -v ufw &>/dev/null && [[ "$OPENCODE_TRAEFIK" != "true" ]]; then
+    if ufw_available && [[ "$OPENCODE_TRAEFIK" != "true" ]]; then
         step "Removing UFW firewall rule for port ${OPENCODE_PORT}"
-        sudo ufw delete allow "$OPENCODE_PORT/tcp" 2>/dev/null || true
-        success "UFW rule removed."
+        ufw_delete_rule "$OPENCODE_PORT" "tcp"
     fi
 
     success "Opencode Server (Docker) uninstalled."
@@ -577,10 +574,9 @@ uninstall_systemd() {
         warn "Service file ${service_file} not found. Already removed?"
     fi
 
-    if command -v ufw &>/dev/null; then
+    if ufw_available; then
         step "Removing UFW firewall rule for port ${OPENCODE_PORT}"
-        sudo ufw delete allow "$OPENCODE_PORT/tcp" 2>/dev/null || true
-        success "UFW rule removed."
+        ufw_delete_rule "$OPENCODE_PORT" "tcp"
     fi
 
     success "Opencode Server (systemd) uninstalled."
