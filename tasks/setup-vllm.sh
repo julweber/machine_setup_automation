@@ -43,6 +43,8 @@ VLLM_TENSOR_PARALLEL="${VLLM_TENSOR_PARALLEL:-1}"  # tensor-parallel degree (# G
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-}"        # cap context length to reduce KV memory
 VLLM_DTYPE="${VLLM_DTYPE:-auto}"                    # model dtype: auto|bfloat16|float16|float32
 VLLM_SHM_SIZE="${VLLM_SHM_SIZE:-8g}"               # shared memory size (increase for multi-GPU)
+VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-}"           # max concurrent sequences (default: vLLM default)
+VLLM_MAX_NUM_BATCHED_TOKENS="${VLLM_MAX_NUM_BATCHED_TOKENS:-}"  # max batched tokens per iteration (default: vLLM default)
 
 BACKEND=""    # nvidia | amd | cpu  (empty = auto-detect)
 FORCE=0
@@ -118,6 +120,20 @@ validate_dtype() {
   esac
 }
 
+validate_max_num_seqs() {
+  local val="$1"
+  if [[ -n "$val" && (! "$val" =~ ^[0-9]+$ || "$val" -lt 1) ]]; then
+    error "VLLM_MAX_NUM_SEQS must be a positive integer."
+  fi
+}
+
+validate_max_num_batched_tokens() {
+  local val="$1"
+  if [[ -n "$val" && (! "$val" =~ ^[0-9]+$ || "$val" -lt 1) ]]; then
+    error "VLLM_MAX_NUM_BATCHED_TOKENS must be a positive integer."
+  fi
+}
+
 validate_shm_size() {
   local sz="$1"
   if [[ -n "$sz" && ! "$sz" =~ ^[0-9]+[bBkKmMgG]?$ ]]; then
@@ -134,6 +150,8 @@ validate_gpu_util "${VLLM_GPU_UTIL}"
 validate_tensor_parallel "${VLLM_TENSOR_PARALLEL}"
 validate_dtype "${VLLM_DTYPE}"
 validate_shm_size "${VLLM_SHM_SIZE}"
+validate_max_num_seqs "${VLLM_MAX_NUM_SEQS}"
+validate_max_num_batched_tokens "${VLLM_MAX_NUM_BATCHED_TOKENS}"
 
 # ── Argument parsing ──────────────────────────────────────────────────────────
 usage() {
@@ -151,6 +169,8 @@ usage() {
   echo "  --max-model-len <n>   Max context length – reduce to save KV memory  (default: model max)"
   echo "  --dtype <dtype>       Model dtype: auto|bfloat16|float16|float32  (default: auto)"
   echo "  --shm-size <size>     Shared memory size for the container  (default: 8g)"
+  echo "  --max-num-seqs <n>              Max concurrent sequences  (default: vLLM default)"
+  echo "  --max-num-batched-tokens <n>    Max batched tokens per iteration  (default: vLLM default)"
   echo "  --dir <path>          Installation directory  (default: /srv/vllm)"
   echo "  --traefik             Enable Traefik reverse-proxy integration"
   echo "  --domain <host>       Domain for Traefik  (required with --traefik)"
@@ -162,7 +182,8 @@ usage() {
   echo "  PROJECT_DIR, HF_CACHE_DIR, VLLM_PORT, HF_TOKEN,"
   echo "  VLLM_GPU_UTIL, VLLM_TENSOR_PARALLEL, VLLM_MAX_MODEL_LEN,"
   echo "  VLLM_DTYPE, VLLM_SHM_SIZE, VLLM_TRAEFIK, VLLM_DOMAIN,"
-  echo "  PROXY_NETWORK, VLLM_EXTRA_ARGS"
+  echo "  PROXY_NETWORK, VLLM_EXTRA_ARGS,"
+  echo "  VLLM_MAX_NUM_SEQS, VLLM_MAX_NUM_BATCHED_TOKENS,"
   echo ""
   echo -e "${BOLD}Model selection${RESET} (set after install, in ${PROJECT_DIR}/.env):"
   echo "  VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct            # HF model ID (auto-downloaded)"
@@ -192,6 +213,8 @@ while [[ $# -gt 0 ]]; do
     --max-model-len)    shift; VLLM_MAX_MODEL_LEN="$1" ;;
     --dtype)            shift; VLLM_DTYPE="$1" ;;
     --shm-size)         shift; VLLM_SHM_SIZE="$1" ;;
+    --max-num-seqs)         shift; VLLM_MAX_NUM_SEQS="$1" ;;
+    --max-num-batched-tokens) shift; VLLM_MAX_NUM_BATCHED_TOKENS="$1" ;;
     --dir)              shift; PROJECT_DIR="$1" ;;
     --traefik)          VLLM_TRAEFIK="true" ;;
     --domain)           shift; VLLM_DOMAIN="$1" ;;
@@ -279,6 +302,34 @@ if ! docker info &>/dev/null; then
   error "Docker daemon is not running. Start it with: sudo systemctl start docker"
 fi
 success "Docker $(docker --version | awk '{print $3}' | tr -d ',') detected and running."
+
+# CUDA version check (required for Blackwell: CUDA 13.0+)
+if [[ "$BACKEND" == "nvidia" ]] || [[ -z "$BACKEND" ]]; then
+  if command -v nvcc &>/dev/null; then
+    CUDA_VER=$(nvcc --version 2>/dev/null | grep -oP 'release \K[0-9]+\.[0-9]+' | head -1)
+    if [[ -n "$CUDA_VER" ]]; then
+      CUDA_MAJOR=$(echo "$CUDA_VER" | cut -d'.' -f1)
+      CUDA_MINOR=$(echo "$CUDA_VER" | cut -d'.' -f2)
+      if [[ "$CUDA_MAJOR" -lt 13 || ( "$CUDA_MAJOR" -eq 13 && "$CUDA_MINOR" -lt 0 ) ]]; then
+        error "CUDA $CUDA_VER detected — Blackwell requires CUDA 13.0+. Upgrade CUDA or use --cpu."
+      fi
+      info "CUDA $CUDA_VER detected (meets Blackwell requirement of 13.0+)."
+    else
+      warn "Could not parse CUDA version from nvcc output."
+    fi
+  else
+    warn "nvcc not found — CUDA toolkit not installed on host (container may still work if driver supports it)."
+  fi
+fi
+
+# Blackwell INT8 quantization warning
+if [[ "$BACKEND" == "nvidia" ]] || [[ -z "$BACKEND" ]]; then
+  if nvidia-smi &>/dev/null && nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | grep -qi "12\.1"; then
+    if echo "${VLLM_EXTRA_ARGS}" | grep -qi "int8"; then
+      error "INT8 quantization is NOT supported on Blackwell (GB10). Use --quantization fp8 or --quantization awq instead."
+    fi
+  fi
+fi
 
 COMPOSE_VER=$(docker compose version --short 2>/dev/null || echo "0.0.0")
 COMPOSE_MAJOR=$(echo "$COMPOSE_VER" | cut -d'.' -f1)
@@ -393,7 +444,15 @@ fi
 
 # ── Resolve Docker image ───────────────────────────────────────────────────────
 case "$BACKEND" in
-  nvidia) VLLM_IMAGE="vllm/vllm-openai:latest" ;;
+  nvidia)
+    # Auto-detect Blackwell (GB10 Grace-Blackwell) via compute capability 12.1
+    if nvidia-smi &>/dev/null && nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | grep -qi "12\.1"; then
+      VLLM_IMAGE="lharillo/vllm-blackwell-gb10-spark:latest"
+      info "Blackwell GPU detected (sm_121) — using lharillo/vllm-blackwell-gb10-spark image."
+    else
+      VLLM_IMAGE="vllm/vllm-openai:latest"
+    fi
+    ;;
   amd)    VLLM_IMAGE="vllm/vllm-openai-rocm:latest" ;;  # rocm/vllm deprecated Jan 2026
   cpu)    VLLM_IMAGE="vllm/vllm-openai:latest" ;;
 esac
@@ -440,6 +499,7 @@ VLLM_GPU_UTIL=${VLLM_GPU_UTIL}
 
 # ── Model dtype: auto|bfloat16|float16|float32 ───────────────────────────────
 # auto = let vLLM pick (bfloat16 for Ampere+, float16 for older NVIDIA / ROCm)
+# Note: For FP8 quantization use VLLM_EXTRA_ARGS="--quantization fp8" instead.
 VLLM_DTYPE=${VLLM_DTYPE}
 
 # ── Max context length (tokens) – leave empty to use the model's default ─────
@@ -454,6 +514,17 @@ VLLM_MAX_MODEL_LEN=${VLLM_MAX_MODEL_LEN}
 #   --quantization fp8                   (FP8 quantisation for memory savings)
 #   --kv-cache-dtype fp8                 (FP8 KV cache)
 VLLM_EXTRA_ARGS=${VLLM_EXTRA_ARGS}
+
+# ── Max concurrent sequences (default: vLLM default, typically 32-64) ───────
+# Higher = more throughput, higher latency. Tune based on request profile.
+# Example: VLLM_MAX_NUM_SEQS=256
+VLLM_MAX_NUM_SEQS=${VLLM_MAX_NUM_SEQS}
+
+# ── Max batched tokens per iteration (default: vLLM default, typically 256) ─
+# Larger = better throughput, smaller = better input latency (ITL).
+# Recommended: >8192 for optimal throughput on large GPUs.
+# Example: VLLM_MAX_NUM_BATCHED_TOKENS=16384
+VLLM_MAX_NUM_BATCHED_TOKENS=${VLLM_MAX_NUM_BATCHED_TOKENS}
 EOF
 
 chmod 600 "$ENV_FILE"
@@ -494,6 +565,16 @@ services:
       - HF_HOME=/root/.cache/huggingface
       - VLLM_NO_USAGE_STATS=1
 EOF
+
+# Blackwell (GB10 Grace-Blackwell) requires specific env vars
+# TORCH_CUDA_ARCH_LIST=12.1a — tells PyTorch to compile for sm_121
+# VLLM_USE_FLASHINFER_MXFP4_MOE=1 — enables FlashInfer MOE optimization
+if [[ "$BACKEND" == "nvidia" ]]; then
+  if nvidia-smi &>/dev/null && nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | grep -qi "12\.1"; then
+    echo "      - TORCH_CUDA_ARCH_LIST=12.1a" >> "$COMPOSE_FILE"
+    echo "      - VLLM_USE_FLASHINFER_MXFP4_MOE=1" >> "$COMPOSE_FILE"
+  fi
+fi
 
 # arm64 CPU: disable AVX-512 (not available on most arm64 hosts)
 if [[ "$BACKEND" == "cpu" && "$ARCH" == "aarch64" ]]; then
@@ -601,6 +682,14 @@ fi
   if [[ -n "${VLLM_MAX_MODEL_LEN}" ]]; then
     echo "      --max-model-len \${VLLM_MAX_MODEL_LEN}"
   fi
+  # max-num-seqs: emit flag only when explicitly set
+  if [[ -n "${VLLM_MAX_NUM_SEQS}" ]]; then
+    echo "      --max-num-seqs \${VLLM_MAX_NUM_SEQS}"
+  fi
+  # max-num-batched-tokens: emit flag only when explicitly set
+  if [[ -n "${VLLM_MAX_NUM_BATCHED_TOKENS}" ]]; then
+    echo "      --max-num-batched-tokens \${VLLM_MAX_NUM_BATCHED_TOKENS}"
+  fi
   echo "      \${VLLM_EXTRA_ARGS}"
 } >> "$COMPOSE_FILE"
 
@@ -677,6 +766,12 @@ if [[ "${VLLM_DTYPE}" != "auto" ]]; then
 fi
 if [[ -n "${VLLM_MAX_MODEL_LEN}" ]]; then
   echo -e "  ${BOLD}Max model len:${RESET} ${VLLM_MAX_MODEL_LEN} tokens"
+fi
+if [[ -n "${VLLM_MAX_NUM_SEQS}" ]]; then
+  echo -e "  ${BOLD}Max num seqs:${RESET}    ${VLLM_MAX_NUM_SEQS}"
+fi
+if [[ -n "${VLLM_MAX_NUM_BATCHED_TOKENS}" ]]; then
+  echo -e "  ${BOLD}Max batched toks:${RESET} ${VLLM_MAX_NUM_BATCHED_TOKENS}"
 fi
 if [[ -d "${HOME}/.lmstudio/models" ]]; then
   echo -e "  ${BOLD}LM Studio:${RESET}     ${HOME}/.lmstudio/models  →  /lmstudio-models (in container)"
