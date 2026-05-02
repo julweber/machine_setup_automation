@@ -123,12 +123,25 @@ fi
 # =============================================================================
 # Existing config is indicated by: /srv/hermes/.hermes/config.yaml OR .env exists
 # (these are mounted into the docker image at /opt/data)
+# Note: Using sudo for the check because these files are created by the hermes
+# container (uid 10000) and may not be readable by regular users.
 # =============================================================================
 
 HERMES_CONFIG_PATH="/srv/hermes/.hermes/config.yaml"
 HERMES_ENV_PATH="/srv/hermes/.hermes/.env"
 
-if [[ -f "${HERMES_CONFIG_PATH}" ]] || [[ -f "${HERMES_ENV_PATH}" ]]; then
+# Use sudo for file existence check to handle permission issues
+# (files may only be accessible by root/hermes user)
+HERMES_CONFIG_EXISTS=false
+HERMES_ENV_EXISTS=false
+if sudo test -f "${HERMES_CONFIG_PATH}" 2>/dev/null; then
+  HERMES_CONFIG_EXISTS=true
+fi
+if sudo test -f "${HERMES_ENV_PATH}" 2>/dev/null; then
+  HERMES_ENV_EXISTS=true
+fi
+
+if [[ "${HERMES_CONFIG_EXISTS}" == true ]] || [[ "${HERMES_ENV_EXISTS}" == true ]]; then
   # ===========================================================================
   # Existing installation - update image and restart container
   # ===========================================================================
