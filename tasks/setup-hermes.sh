@@ -180,6 +180,33 @@ if [[ "${HERMES_CONFIG_EXISTS}" == true ]] || [[ "${HERMES_ENV_EXISTS}" == true 
     fi
   fi
 
+  # Restart dashboard container if it exists
+  step "Restarting Hermes dashboard container"
+  if docker ps -a --format '{{.Names}}' | grep -q "^hermes-dashboard$"; then
+    if docker ps --format '{{.Names}}' | grep -q "^hermes-dashboard$"; then
+      info "Restarting running dashboard..."
+      docker restart hermes-dashboard 2>/dev/null || true
+    else
+      info "Starting existing dashboard..."
+      docker start hermes-dashboard 2>/dev/null || true
+    fi
+    success "Hermes dashboard container restarted"
+  else
+    info "Container 'hermes-dashboard' not found - starting it"
+    if [[ -f "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml" ]]; then
+      (cd "${HERMES_TARGET_REPO_DIRECTORY}" && docker compose up -d hermes-dashboard 2>/dev/null) || {
+        warn "Failed to start dashboard via docker compose. Run manually:"
+        info "  cd ${HERMES_TARGET_REPO_DIRECTORY} && docker compose up -d hermes-dashboard"
+      }
+    fi
+  fi
+
+  # Add UFW firewall rule for dashboard port if UFW is active
+  if ufw_available && ufw_active; then
+    step "Configuring UFW for dashboard port 9119"
+    ufw_add_rule 9119 tcp "Hermes Agent dashboard"
+  fi
+
   # Post-update instructions
   echo ""
   echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
@@ -192,13 +219,21 @@ if [[ "${HERMES_CONFIG_EXISTS}" == true ]] || [[ "${HERMES_ENV_EXISTS}" == true 
   echo ""
   echo -e "${YELLOW}🔄 Docker image updated to: ${HERMES_IMAGE}${RESET}"
   echo ""
+  echo -e "${YELLOW}📡 API Server:${RESET}"
+  echo "  OpenAI-compatible endpoint: http://127.0.0.1:8642/v1"
+  echo "  Auth key: see ${HERMES_ENV_PATH} (API_SERVER_KEY)"
+  echo ""
+  echo -e "${YELLOW}🖥️  Dashboard:${RESET}"
+  echo "  Web UI: http://127.0.0.1:9119"
+  echo "  Remote access: ssh -L 9119:localhost:9119 your-server"
+  echo ""
   echo -e "${YELLOW}📋 Common commands:${RESET}"
   echo ""
   echo "  ${BOLD}View logs:${RESET}"
   echo "    docker logs -f hermes-gateway"
   echo ""
-  echo "  ${BOLD}Restart gateway:${RESET}"
-  echo "    docker restart hermes-gateway"
+  echo "  ${BOLD}Restart all services:${RESET}"
+  echo "    ./restart_hermes.sh"
   echo ""
   echo "  ${BOLD}Access shell:${RESET}"
   echo "    docker exec -it hermes-gateway bash"
@@ -230,6 +265,30 @@ if [[ -f "${TEMPLATES_DIR}/restart_hermes.sh" ]]; then
   info "Copied restart_hermes.sh"
 else
   warn "Template not found: ${TEMPLATES_DIR}/restart_hermes.sh"
+fi
+
+# Copy .env file and generate API_SERVER_KEY if not already set
+step "Configuring API server and environment"
+if [[ -f "${TEMPLATES_DIR}/.env.example" ]]; then
+  ENV_FILE="${HERMES_DATA_DIRECTORY}/.env"
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    sudo cp "${TEMPLATES_DIR}/.env.example" "${ENV_FILE}"
+    info "Copied .env template"
+  else
+    info ".env file already exists, keeping existing"
+  fi
+
+  # Generate API_SERVER_KEY if it's still the default placeholder
+  if grep -q "change-me-local-dev" "${ENV_FILE}" 2>/dev/null; then
+    NEW_KEY=$(openssl rand -hex 32)
+    sudo sed -i "s|API_SERVER_KEY=change-me-local-dev|API_SERVER_KEY=${NEW_KEY}|" "${ENV_FILE}"
+    sudo chmod 600 "${ENV_FILE}"
+    info "Auto-generated API_SERVER_KEY (stored in .env, mode: 600)"
+  else
+    info "API_SERVER_KEY already configured, skipping"
+  fi
+else
+  warn "Template not found: ${TEMPLATES_DIR}/.env.example"
 fi
 
 # Post-setup instructions
@@ -270,11 +329,45 @@ echo "   Or use the CLI inside the container:"
 echo "   docker compose exec hermes-gateway hermes config edit"
 echo ""
 
-echo -e "${YELLOW}💬 Step 3: Start the gateway${RESET}"
+echo -e "${YELLOW}💬 Step 3: Start the gateway and dashboard${RESET}"
 echo ""
 echo "   cd ${HERMES_TARGET_REPO_DIRECTORY}"
-echo "   docker compose up hermes-gateway"
+echo "   docker compose up hermes-gateway hermes-dashboard"
 echo ""
+echo "   The dashboard will be available at: http://127.0.0.1:9119"
+echo "   For remote access: ssh -L 9119:localhost:9119 your-server"
+echo ""
+
+echo -e "${YELLOW}📡 OpenAI-Compatible API Server${RESET}"
+echo ""
+echo "   The API server is enabled and listening on port 8642."
+echo "   Auth key is stored in: ${HERMES_DATA_DIRECTORY}/.env"
+echo "   (check API_SERVER_KEY)"
+echo ""
+echo "   Test it:"
+echo "   curl http://127.0.0.1:8642/v1/chat/completions \\"
+echo "     -H 'Authorization: Bearer <your-api-key>' \\"
+echo "     -H 'Content-Type: application/json' \\"
+echo "     -d '{\"model\": \"hermes-agent\", \"messages\": [{\"role\": \"user\", \"content\": \"Hello\"}]}'"
+echo ""
+
+echo -e "${YELLOW}🌐 Open WebUI Integration${RESET}"
+echo ""
+echo "   To connect Open WebUI to Hermes:"
+echo "   1. Install Open WebUI (docker):"
+echo "      cd ${SCRIPT_DIR}/../"
+echo "      ./tasks/setup-openwebui.sh"
+echo "   2. In Open WebUI Admin Settings → Model Providers → OpenAI API:"
+echo "      - API Base URL: http://<your-server-ip>:8642/v1"
+echo "      - API Key: <value from .env, API_SERVER_KEY>"
+echo "      - Model list: hermes-agent"
+echo ""
+
+# Add UFW firewall rule for dashboard port if UFW is active
+if ufw_available && ufw_active; then
+  step "Configuring UFW for dashboard port 9119"
+  ufw_add_rule 9119 tcp "Hermes Agent dashboard"
+fi
 
 echo -e "${YELLOW}📖 Common commands:${RESET}"
 echo ""
@@ -283,8 +376,11 @@ echo "     docker compose exec hermes-gateway hermes --help"
 echo ""
 echo "   ${BOLD}Gateway management:${RESET}"
 echo "     cd ${HERMES_TARGET_REPO_DIRECTORY}"
-echo "     ./restart_hermes.sh              # Start/restart gateway"
+echo "     ./restart_hermes.sh              # Start/restart all services"
 echo "     docker compose logs -f hermes-gateway  # View logs"
+echo ""
+echo "   ${BOLD}Dashboard:${RESET}"
+echo "     docker compose logs -f hermes-dashboard  # View dashboard logs"
 echo ""
 echo "   ${BOLD}Interactive session (gateway):${RESET}"
 echo "     docker exec -it hermes-gateway bash"
@@ -315,6 +411,8 @@ echo -e "${GREEN}${BOLD}✅ Setup Complete!${RESET}"
 echo ""
 echo -e "${YELLOW}ℹ️  Next steps:${RESET}"
 echo "   1. Run: cd ${HERMES_TARGET_REPO_DIRECTORY} && docker compose run hermes-setup"
-echo "   2. After setup, start the gateway: docker compose up hermes-gateway"
+echo "   2. After setup, start gateway + dashboard: docker compose up hermes-gateway hermes-dashboard"
+echo "   3. Access dashboard at http://localhost:9119 (or SSH tunnel for remote)"
+echo "   4. Connect Open WebUI to http://<your-server>:8642/v1 with your API_SERVER_KEY"
 echo ""
 echo -e "${CYAN}─────────────────────────────────────────────────────────${RESET}"

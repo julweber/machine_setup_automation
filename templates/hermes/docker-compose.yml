@@ -19,8 +19,8 @@ services:
 
     # Optional: Add your own environment variables here
     # environment:
-    #   - OPENROUTER_API_KEY=${OPENROUTER_API_KEY}
-    #   - GITHUB_TOKEN=${GITHUB_TOKEN}
+    #   - OPENROUTER_API_KEY=${OPEN...KEY}
+    #   - GITHUB_TOKEN=***
 
     restart: unless-stopped
     command: ["gateway"]
@@ -44,6 +44,24 @@ services:
     stdin_open: true
     tty: true
     command: ["chat"]
+
+  hermes-dashboard:
+    image: nousresearch/hermes-agent:latest
+    container_name: hermes-dashboard
+    working_dir: /workspace
+    volumes:
+      - /srv/hermes/.hermes:/opt/data
+    environment:
+      - TERMINAL_ENV=local
+      - TERMINAL_CWD=/workspace
+      - TERMINAL_LOCAL_PERSISTENT=false
+    cap_add:
+      - DAC_OVERRIDE
+      - CHOWN
+    restart: unless-stopped
+    depends_on:
+      - hermes-gateway
+    command: ["dashboard", "--host", "127.0.0.1", "--no-open"]
 
   hermes-setup:
     image: nousresearch/hermes-agent:latest
