@@ -70,7 +70,7 @@ else
   step "Installing Pi coding agent"
 fi
 
-npm install -g @mariozechner/pi-coding-agent
+npm install -g @earendil-works/pi-coding-agent
 
 # Install Pi extensions
 step "Installing Pi extensions"
