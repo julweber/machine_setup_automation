@@ -9,3 +9,4 @@ CLAUDE.md
 __pycache__/
 .ralph/
 .tickets/
+machine-config.yml

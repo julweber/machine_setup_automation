@@ -24,17 +24,20 @@ The agent will read the README and discover available scripts on its own, then g
    cd machine_setup_automation
    ```
 2. **Make sure you have sudo rights** - all scripts call `sudo` where required.
-3. **Run the desired entrypoint**:
-   - For a *server* (headless VM, cloud instance):
-    ```bash
-    ./setup-server.sh    # sources basics → sshd → configure-firewall → docker
-    ```
-   - For a *development workstation* (your laptop/desktop):
-    ```bash
-    ./setup-dev-machine.sh
-    ```
-4. **Follow the on-screen prompts** - most scripts are non-interactive; they print progress and final status messages.
-5. After the script finishes you should have:
+3. **Copy the example configuration** and edit it to enable the services you want:
+   ```bash
+   cp machine-config.yml.example machine-config.yml
+   ```
+   The orchestrator reads `machine-config.yml` by default (or pass `--config <file>` to use a different one).
+   Open `machine-config.yml` and set `enabled: true` for the scripts you'd like to install. See the [Configuration](#configuration) section below for the YAML format.
+4. **Run the orchestrator**:
+   ```bash
+   ./run-setup.sh status   # preview what's enabled
+   ./run-setup.sh apply    # install all enabled services
+   ```
+   Run without arguments to see usage instructions.
+5. **Follow the on-screen prompts** - most scripts are non-interactive; they print progress and final status messages.
+6. After the script finishes you should have:
    - Docker ready (run `docker run hello-world` to double-check).
    - SSH listening on the custom port (`sshd` service is enabled).
    - UFW firewall allowing SSH and other service ports.
@@ -42,9 +45,63 @@ The agent will read the README and discover available scripts on its own, then g
 ---
 
 ## How It Works
-- **Modular task scripts** - Each `setup_*.sh` script is self-contained and idempotent; it can be sourced individually from an entrypoint or run on its own.
-- **Single-shell execution** - The entrypoint scripts (`setup-server.sh`, `setup-dev-machine.sh`) use `source` so that environment variables defined in earlier tasks are visible to later ones (e.g., custom ports).
-- **Configuration via env vars** - All tunable values have sensible defaults and can be overridden by exporting the variable before invoking an entrypoint, making it easy to adapt the automation to different environments.
+- **Orchestrator** - `run-setup.sh` reads a YAML configuration file to determine which services to install, then runs them in order. Use `./run-setup.sh status` to preview and `./run-setup.sh apply` to execute. The default config file is `machine-config.yml` in the repository root, or pass a different file with `--config`.
+- **Modular task scripts** - Each `tasks/setup-*.sh` script is self-contained and idempotent; it can be run individually or through the orchestrator.
+- **Configuration via YAML** - `machine-config.yml` declares which scripts to run, their environment variables, and command-line arguments. All tunable values have sensible defaults and can be overridden.
+
+## Configuration
+
+The orchestrator reads `machine-config.yml` to determine which setup scripts to run. A fresh copy is provided as `machine-config.yml.example` — copy it to `machine-config.yml` before running `run-setup.sh apply`:
+
+```bash
+cp machine-config.yml.example machine-config.yml
+```
+
+### YAML Format
+
+```yaml
+version: 1
+
+scripts:
+  setup-llama-cpp:
+    enabled: true
+    description: Build and install llama.cpp with CUDA/Metal support
+    env:
+      LLAMA_CPP_CUDA: 'true'
+      LLAMA_CPP_BUILD_TESTS: 'false'
+    args:
+      - --force
+      - --jobs 8
+  setup-openwebui:
+    enabled: false
+    env: {}
+    args: []
+```
+
+**Top-level structure:**
+- `version` — config format version (currently `1`)
+- `scripts` — a map of script name → configuration
+
+**Script configuration:**
+- `enabled` — set to `true` to run this script, `false` to skip it
+- `description` — human-readable description (informational)
+- `env` — key-value pairs passed as environment variables to the script
+- `args` — command-line arguments passed to the script
+
+All scripts are **disabled by default** — enable only the ones you need.
+
+### Running the Orchestrator
+
+```bash
+./run-setup.sh status   # Show which scripts are enabled/disabled
+./run-setup.sh apply    # Install or update all enabled services
+./run-setup.sh --config path/to/other-config.yml apply  # Use a custom config file
+```
+
+**Options:**
+- `--config <file>` / `-c <file>` — Path to a YAML configuration file (default: `machine-config.yml` in the repository root)
+
+When run without any arguments, `run-setup.sh` prints usage instructions.
 
 ---
 
@@ -401,15 +458,11 @@ This creates an SSH tunnel that forwards connections from `localhost:3333` throu
 ---
 
 ## Customization & Environment Variables
-The scripts are deliberately **parameterised via environment variables** that you can override before invoking the entrypoint. Two common ways to customise:
-1. **Export variables in your shell session** before running the script:
-   ```bash
-   export SSHD_PORT=2222
-   export LM_STUDIO_PORT=1240
-   export OPENWEBUI_PORT=3344
-   ./setup-dev-machine.sh
-   ```
-2. **Edit the default values directly** at the top of each task script (e.g., change `LM_STUDIO_VERSION="0.4.0-18"` in `setup-lm-studio.sh`). This is handy for a permanent change across all runs.
+
+There are two ways to customize the setup:
+
+1. **Edit `machine-config.yml`** — Set environment variables and command-line arguments for each script in the configuration file. This is the recommended way for declarative, reproducible setups.
+2. **Edit default values directly** in each task script (e.g., change `LM_STUDIO_VERSION="0.4.0-18"` in `setup-lm-studio.sh`). This is handy for a permanent change across all runs.
 
 ---
 

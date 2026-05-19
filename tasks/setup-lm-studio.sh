@@ -16,9 +16,24 @@
 #   ./setup-lm-studio.sh
 #   LM_STUDIO_VERSION=0.4.5-2 ./setup-lm-studio.sh
 #   INSTALL_LLMSTER_ENABLED=false ./setup-lm-studio.sh
+#   ./setup-lm-studio.sh --force   # Re-install even if already installed
 # =============================================================================
 
 set -euo pipefail
+
+# Parse command-line arguments
+FORCE=false
+for arg in "$@"; do
+  case "${arg}" in
+    --force)
+      FORCE=true
+      ;;
+    *)
+      error "Unknown argument: ${arg}"
+      exit 1
+      ;;
+  esac
+done
 
 # Determine script directory and source shared library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -63,41 +78,63 @@ esac
 # Main
 # =============================================================================
 
-step "Setting up LM Studio"
-
-info "Detected architecture: ${ARCH} (${ARCH_TYPE})"
-
-# Auto-detect version if using default
-if [[ "${LM_STUDIO_VERSION}" == "${DEFAULT_LM_STUDIO_VERSION}" ]]; then
-  step "Detecting latest version"
-  FINAL_URL=$(curl -sI -L "${LATEST_URL}" -o /dev/null -w '%{url_effective}')
-  LM_STUDIO_VERSION=$(echo "${FINAL_URL}" | grep -oP -m1 '[\d]+\.[\d]+\.[\d]+-[\d]+' | head -1)
-  info "Latest version: ${LM_STUDIO_VERSION}"
+# Check if LM Studio is already installed
+LM_STUDIO_ALREADY_INSTALLED=false
+if [[ -f "${APP_IMAGE_TARGET_PATH}" ]]; then
+  LM_STUDIO_ALREADY_INSTALLED=true
+  info "LM Studio AppImage already installed at: ${APP_IMAGE_TARGET_PATH}"
+else
+  info "LM Studio AppImage not found at: ${APP_IMAGE_TARGET_PATH}"
 fi
 
-SOURCE_URL="https://installers.lmstudio.ai/linux/${ARCH_TYPE}/${LM_STUDIO_VERSION}/LM-Studio-${LM_STUDIO_VERSION}-${ARCH_TYPE}.AppImage"
-info "Download URL: ${SOURCE_URL}"
-
-# Create start script
-if [[ -f "${START_SCRIPT_TARGET_PATH}" ]]; then
-  info "Start script exists at: ${START_SCRIPT_TARGET_PATH}"
+# Check if llmster (lms) is already installed
+LLMSTER_ALREADY_INSTALLED=false
+if command -v lms &>/dev/null; then
+  LLMSTER_ALREADY_INSTALLED=true
+  info "llmster (lms) already installed: $(lms --version 2>/dev/null || echo 'unknown')"
 else
-  step "Creating start script"
-  cat > "${START_SCRIPT_TARGET_PATH}" << 'EOF'
+  info "llmster (lms) not found"
+fi
+
+if [[ "${FORCE}" == "true" ]]; then
+  info "--force flag set, will re-install even if already present"
+fi
+
+if [[ "${FORCE}" == "true" || "${LM_STUDIO_ALREADY_INSTALLED}" == "false" ]]; then
+  step "Setting up LM Studio"
+  info "Detected architecture: ${ARCH} (${ARCH_TYPE})"
+
+  # Auto-detect version if using default
+  if [[ "${LM_STUDIO_VERSION}" == "${DEFAULT_LM_STUDIO_VERSION}" ]]; then
+    step "Detecting latest version"
+    FINAL_URL=$(curl -sI -L "${LATEST_URL}" -o /dev/null -w '%{url_effective}')
+    LM_STUDIO_VERSION=$(echo "${FINAL_URL}" | grep -oP -m1 '[\d]+\.[\d]+\.[\d]+-[\d]+' | head -1)
+    info "Latest version: ${LM_STUDIO_VERSION}"
+  fi
+
+  SOURCE_URL="https://installers.lmstudio.ai/linux/${ARCH_TYPE}/${LM_STUDIO_VERSION}/LM-Studio-${LM_STUDIO_VERSION}-${ARCH_TYPE}.AppImage"
+  info "Download URL: ${SOURCE_URL}"
+
+  # Create start script
+  if [[ -f "${START_SCRIPT_TARGET_PATH}" ]]; then
+    info "Start script exists at: ${START_SCRIPT_TARGET_PATH}"
+  else
+    step "Creating start script"
+    cat > "${START_SCRIPT_TARGET_PATH}" << 'EOF'
 #!/usr/bin/env bash
 cd "$HOME"
 ./lmstudio_bin --no-sandbox
 EOF
-fi
+  fi
 
-chmod +x "${START_SCRIPT_TARGET_PATH}"
+  chmod +x "${START_SCRIPT_TARGET_PATH}"
 
-# Create desktop link
-if [[ -f "${DESKTOP_LINK_TARGET_PATH}" ]]; then
-  info "Desktop link exists at: ${DESKTOP_LINK_TARGET_PATH}"
-else
-  step "Creating desktop shortcut"
-  cat > "${DESKTOP_LINK_TARGET_PATH}" << EOF
+  # Create desktop link
+  if [[ -f "${DESKTOP_LINK_TARGET_PATH}" ]]; then
+    info "Desktop link exists at: ${DESKTOP_LINK_TARGET_PATH}"
+  else
+    step "Creating desktop shortcut"
+    cat > "${DESKTOP_LINK_TARGET_PATH}" << EOF
 [Desktop Entry]
 Version=1.0
 Type=Application
@@ -107,36 +144,43 @@ Comment=LM Studio
 Icon=utilities-terminal
 Exec=${START_SCRIPT_TARGET_PATH}
 EOF
+  fi
+
+  chmod +x "${DESKTOP_LINK_TARGET_PATH}"
+
+  # Handle existing binary
+  if [[ -f "${APP_IMAGE_TARGET_PATH}" ]]; then
+    info "Existing binary found: ${APP_IMAGE_TARGET_PATH}"
+    info "Backing up to: ${APP_IMAGE_BACKUP_PATH}"
+    mv "${APP_IMAGE_TARGET_PATH}" "${APP_IMAGE_BACKUP_PATH}"
+  fi
+
+  # Download AppImage
+  step "Downloading LM Studio v${LM_STUDIO_VERSION}"
+  wget --output-document "${APP_IMAGE_TARGET_PATH}" "${SOURCE_URL}"
+  chmod +x "${APP_IMAGE_TARGET_PATH}"
+  success "Installed version: ${LM_STUDIO_VERSION}"
+else
+  success "LM Studio already installed, skipping (use --force to reinstall)"
 fi
-
-chmod +x "${DESKTOP_LINK_TARGET_PATH}"
-
-# Handle existing binary
-if [[ -f "${APP_IMAGE_TARGET_PATH}" ]]; then
-  info "Existing binary found: ${APP_IMAGE_TARGET_PATH}"
-  info "Backing up to: ${APP_IMAGE_BACKUP_PATH}"
-  mv "${APP_IMAGE_TARGET_PATH}" "${APP_IMAGE_BACKUP_PATH}"
-fi
-
-# Download AppImage
-step "Downloading LM Studio v${LM_STUDIO_VERSION}"
-wget --output-document "${APP_IMAGE_TARGET_PATH}" "${SOURCE_URL}"
-chmod +x "${APP_IMAGE_TARGET_PATH}"
-success "Installed version: ${LM_STUDIO_VERSION}"
 
 # Install llmster CLI
 if [[ "${INSTALL_LLMSTER_ENABLED}" == "true" ]]; then
-  step "Installing llmster CLI"
-  # Don't fail script on errors for this command
-  set +e
-  curl -fsSL https://lmstudio.ai/install.sh | bash
-  if command -v lms &>/dev/null; then
-    info "lms version: $(lms --version 2>/dev/null || echo 'unknown')"
+  if [[ "${FORCE}" == "true" || "${LLMSTER_ALREADY_INSTALLED}" == "false" ]]; then
+    step "Installing llmster CLI"
+    # Don't fail script on errors for this command
+    set +e
+    curl -fsSL https://lmstudio.ai/install.sh | bash
+    if command -v lms &>/dev/null; then
+      info "lms version: $(lms --version 2>/dev/null || echo 'unknown')"
+    fi
+    set -e
+  else
+    info "llmster (lms) already installed, skipping (use --force to reinstall)"
   fi
-  set -e
 else
   info "llmster install disabled"
 fi
 
-success "LM Studio installed successfully"
+success "LM Studio setup complete"
 info "Run '${START_SCRIPT_TARGET_PATH}' to start the application"

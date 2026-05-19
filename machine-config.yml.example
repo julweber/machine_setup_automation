@@ -1,0 +1,184 @@
+version: 1
+
+scripts:
+  configure-firewall:
+    enabled: true
+    description: Configure firewall rules for the services
+  setup-basics:
+    enabled: true
+    description: Install core utilities (git, yq, jq, etc.)
+    env: {}
+    args: []
+  setup-docker:
+    enabled: false
+    description: Install Docker Engine and related components
+    env: {}
+    args: []
+  setup-llama-cpp:
+    enabled: false
+    description: Build and install llama.cpp with CUDA/Metal support
+    env:
+      LLAMA_CPP_CUDA: 'true'
+      LLAMA_CPP_BUILD_TESTS: 'false'
+    args:
+      # - --force
+  setup-llama-swap:
+    enabled: false
+    description: Deploy llama-swap as a systemd service (multi-model LLM proxy)
+    env:
+      LLAMA_SWAP_PORT: '9292'
+      LLAMA_SWAP_DIR: /srv/llama-swap
+    args: []
+      # - --force
+  setup-vllm:
+    enabled: false
+    description: Install vllm inference engine
+    env:
+      VLLM_PORT: '8000'
+      VLLM_HOST: 0.0.0.0
+    args: []
+  setup-lm-studio:
+    enabled: false
+    description: Install LM Studio server
+    env:
+      LM_STUDIO_PORT: '1234'
+      LM_STUDIO_HOST: 127.0.0.1
+    args: []
+  setup-openwebui:
+    enabled: false
+    description: Install OpenWebUI (web interface for LLMs)
+    env: {}
+    args: []
+  setup-nanobot:
+    enabled: false
+    description: Install Nanobot (long-running AI agent)
+    env:
+      NANOBOT_PORT: '8765'
+    args: []
+  setup-hermes:
+    enabled: false
+    description: Install Hermes (AI assistant stack)
+    env: {}
+    args: []
+  setup-neovim:
+    enabled: false
+    description: Install and configure Neovim with plugins
+    env: {}
+    args: []
+  setup-zed:
+    enabled: false
+    description: Install Zed editor
+    env: {}
+    args: []
+  setup-opencode-server:
+    enabled: false
+    description: Install OpenCode server for browser-based development
+    env:
+      OPENCODE_PORT: '8765'
+      OPENCODE_HOST: 0.0.0.0
+    args: []
+  setup-excalidraw:
+    enabled: false
+    description: Install Excalidraw (diagramming tool)
+    env: {}
+    args: []
+  setup-forgejo:
+    enabled: false
+    description: Install Forgejo (self-hosted Git service)
+    env: {}
+    args: []
+  setup-n8n:
+    enabled: false
+    description: Install n8n (workflow automation)
+    env: {}
+    args: []
+  setup-nextcloud:
+    enabled: false
+    description: Install Nextcloud (file sync/calendar/contacts)
+    env: {}
+    args: []
+  setup-planka:
+    enabled: false
+    description: Install Planka (project management)
+    env: {}
+    args: []
+  setup-obsidian-livesync:
+    enabled: false
+    description: Install Obsidian LiveSync for mobile sync
+    env: {}
+    args: []
+  setup-whispering:
+    enabled: false
+    description: Install Whispering (speech-to-text service)
+    env:
+      WHISPERING_PORT: '5000'
+    args: []
+  setup-fail2ban:
+    enabled: false
+    description: Configure fail2ban for SSH protection
+    env: {}
+    args: []
+  setup-ssh-tunnel-user:
+    enabled: false
+    description: Create SSH tunnel user for secure access
+    env: {}
+    args: []
+  setup-sshd:
+    enabled: false
+    description: Configure SSH daemon settings
+    env: {}
+    args: []
+  configure-firewall:
+    enabled: false
+    description: Configure UFW firewall rules
+    env: {}
+    args: []
+  setup-traefik:
+    enabled: false
+    description: Install and configure Traefik reverse proxy
+    env:
+      TRAEFIK_PORT: '8080'
+      TRAEFIK_HTTP_PORT: '80'
+      TRAEFIK_HTTPS_PORT: '443'
+      TRAEFIK_DASHBOARD: 'false'
+    args: []
+  setup-samba:
+    enabled: false
+    description: Configure Samba file sharing
+    env: {}
+    args: []
+  setup-virtualization:
+    enabled: false
+    description: Install virtualization tools (KVM, virt-manager)
+    env: {}
+    args: []
+  setup-anydesk:
+    enabled: false
+    description: Install AnyDesk remote access
+    env: {}
+    args: []
+  setup-brave:
+    enabled: false
+    description: Install Brave browser
+    env: {}
+    args: []
+  setup-upstream-kernel:
+    enabled: false
+    description: Install upstream kernel
+    env: {}
+    args: []
+  setup-agent-docker-runner:
+    enabled: false
+    description: Install agent Docker runner for sandboxed execution
+    env: {}
+    args: []
+  setup-pi:
+    enabled: false
+    description: Install pi coding agent
+    env: {}
+    args: []
+  setup-concourse:
+    enabled: false
+    description: Install Concourse CI/CD
+    env: {}
+    args: []
