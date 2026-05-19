@@ -239,11 +239,6 @@ Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `
 
 **Environment variables:** `HOST_PORT` (default `5005`)
 
-#### `setup-comfy.sh` *(placeholder)*
-Placeholder for future ComfyUI setup.
-
-**Environment variables:** None
-
 ---
 
 ### Remote Access & Desktop
@@ -303,15 +298,6 @@ Installs or updates libvirt (virtualization API) and virt-manager (graphical VM 
 - Automatic default network configuration
 - User permission setup for libvirt access
 - Supports both fresh install and update modes
-
----
-
-### Hardware & GPU
-
-#### `setup-rocm.sh`
-Installs ROCm for AMD GPU acceleration support.
-
-**Environment variables:** None (hardcodes ROCm 7.0 alpha repo)
 
 ---
 

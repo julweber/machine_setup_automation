@@ -72,5 +72,4 @@ head -40 tasks/setup-<name>.sh
 - **Port conflict**: export a different port var before running the entrypoint
 - **Traefik TLS not working**: ensure `ACME_EMAIL` is set and port 80/443 are open in UFW and your cloud firewall
 - **llama-server not found**: run `setup-llama-cpp.sh` first; it installs the binary
-- **ROCm / AMD GPU**: run `setup-rocm.sh` before `setup-llama-cpp.sh`; set `BACKEND=amd`
 - **hyprwhspr on Ubuntu**: the script auto-backports ydotool 1.0+ — don't install ydotool manually first

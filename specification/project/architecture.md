@@ -52,7 +52,7 @@ Task scripts pull from external sources during provisioning:
 | Source | Examples |
 |--------|----------|
 | **OS package repos** | `apt` for system packages |
-| **Vendor apt repos** | Docker, Brave, VS Code, ROCm |
+| **Vendor apt repos** | Docker, Brave |
 | **GitHub releases** | k3s, k9s |
 | **Direct downloads** | LM Studio AppImage |
 | **Install scripts** | k3s (`get.k3s.io`), Node.js |
