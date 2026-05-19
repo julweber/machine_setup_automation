@@ -86,7 +86,7 @@ check_dependencies() {
 
 # shellcheck disable=SC2120  # pattern param unused but kept for extensibility
 discover_scripts() {
-  local pattern="${1:-setup-*.sh}"
+  local pattern="${1:-*.sh}"
 
   if [[ ! -d "$TASKS_DIR" ]]; then
     log_error "Tasks directory not found: $TASKS_DIR" >&2

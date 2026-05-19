@@ -3,7 +3,9 @@ version: 1
 scripts:
   configure-firewall:
     enabled: true
-    description: Configure firewall rules for the services
+    description: Configure UFW firewall rules
+    env: {}
+    args: []
   setup-basics:
     enabled: true
     description: Install core utilities (git, yq, jq, etc.)
@@ -126,11 +128,6 @@ scripts:
   setup-sshd:
     enabled: false
     description: Configure SSH daemon settings
-    env: {}
-    args: []
-  configure-firewall:
-    enabled: false
-    description: Configure UFW firewall rules
     env: {}
     args: []
   setup-traefik:
