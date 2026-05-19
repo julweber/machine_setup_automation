@@ -258,11 +258,6 @@ Installs the Brave browser from its official apt repository.
 
 **Environment variables:** None
 
-#### `setup-vscode.sh`
-Installs VS Code from Microsoft's official repository.
-
-**Environment variables:** None
-
 ---
 
 ### Development Tools
@@ -449,14 +444,7 @@ The scripts are deliberately **parameterised via environment variables** that yo
 ## Additional Documentation
 - **[README_TRAEFIK.md](README_TRAEFIK.md)** - Complete guide for the Traefik v3 reverse proxy setup script (`setup-traefik.sh`)
 - **[README_MANAGING_MODELS.md](README_MANAGING_MODELS.md)** - Guide for managing models via huggingface cli
----
-
-## Agentic Engineering & Specification
-
-This project uses the **[spec-framework](https://github.com/julweber/spec-framework)** for agentic engineering - a structured approach to defining, reviewing, and implementing features through AI-assisted workflows.
-
-The full project specification (description, architecture, concepts, conventions, feature specs, and tasks) can be found in the **`specification/`** directory.
-
+- **[tests/README.md](tests/README.md)** - Test suite documentation and usage guide
 ---
 
 ## Contributing

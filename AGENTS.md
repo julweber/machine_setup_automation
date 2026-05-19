@@ -1,14 +1,16 @@
 # Machine Setup Automation
 
-Automation scripts for installing and configuring a 
+Automation scripts for installing and configuring a server or developer machine for LLM workflows and software development.
 
 ## Core Facts
-- docker based deployment
+- setup for unix systemd based deployments
+- setup for docker based deployments
   - setup scripts generate `docker-compose.yml` for each service
-- ufw as used as firewall on the ubuntu host
+- ufw as used as firewall on the target ubuntu server
 - traefik as reverse proxy
   - integration examples: [setup-forgejo.sh](tasks/setup-forgejo.sh) and [setup-openwebui.sh](tasks/setup-openwebui.sh)
 - target service data base directory: `/srv` , e.g. for forgejo: `/srv/forgejo`
+- find project terminology in `CONTEXT.md`
 
 ## Implementation Instructions
 
