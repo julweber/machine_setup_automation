@@ -1,249 +1,147 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC1091,SC3047
-set -eu
-
-################################################################################
-# SCRIPT: setup-ssh-tunnel-user.sh
-################################################################################
+# shellcheck shell=bash
+# =============================================================================
+# setup-ssh-tunnel-user.sh — Create restricted SSH tunnel user
+# =============================================================================
 #
-# DESCRIPTION:
+# Description:
 #   Creates a restricted SSH user account for secure tunnel-only access.
-#   This script configures a locked-down SSH environment with minimal privileges,
-#   suitable for secure port forwarding without granting interactive shell access.
+#   No interactive shell access, key-based auth only.
 #
-# KEY ACTIONS PERFORMED:
-#   1. Validates username format and environment variables
-#   2. Creates system user with /usr/sbin/nologin shell
-#   3. Locks user account to disable password authentication
-#   4. Sets up .ssh directory with proper permissions (700)
-#   5. Generates ED25519 SSH keypair for the user
-#   6. Adds public key to authorized_keys file
-#   7. Updates /etc/ssh/sshd_config with Match User block for:
-#      - AllowTcpForwarding yes
-#      - GatewayPorts (configurable)
-#      - X11Forwarding no
-#      - PermitTTY no
-#   8. Validates sshd_config syntax
-#   9. Restarts SSH service to apply changes
+# Environment Variables (optional):
+#   RESTRICTED_USER      - Username to create (default: tunneluser)
+#   SSHD_PORT            - SSH port (default: 2224)
+#   ALLOW_GATEWAY_PORTS  - Allow remote port forwarding (default: no)
 #
-# SECURITY FEATURES:
-#   - Password authentication disabled (key-based only)
-#   - No interactive shell access (/usr/sbin/nologin shell)
-#   - PTY allocation disabled (PermitTTY no)
-#   - X11 forwarding disabled
-#   - Port forwarding enabled for tunneling purposes
-#   - Account locked with 'passwd -l'
-#
-# USAGE:
-#   Source the script with environment variables:
-#     RESTRICTED_USER="tunneluser" source tasks/setup-ssh-tunnel-user.sh
-#
-#   Or run directly (will use defaults):
-#     bash tasks/setup-ssh-tunnel-user.sh
-#
-# ENVIRONMENT VARIABLES:
-#   RESTRICTED_USER      - Username to create (required, default: tunneluser)
-#                          Must start with lowercase letter/underscore,
-#                          contain only [a-z0-9_-]
-#   SSHD_PORT            - SSH port for this user (default: 2224)
-#   ALLOW_GATEWAY_PORTS  - Allow remote port forwarding via GatewayPorts,
-#                          set to "yes" or "no" (default: no)
-#
-# DEPENDENCIES:
-#   - sudo privileges (root access required)
-#   - OpenSSH server package (sshd)
-#   - systemd (for service restart)
-#   - ssh-keygen (for key generation)
-#   - Standard utilities: useradd, passwd, chown, chmod, sed, grep, tee
-#
-# OUTPUT FILES:
-#   /home/$RESTRICTED_USER/.ssh/id_ed25519      - Private key (600 permissions)
-#   /home/$RESTRICTED_USER/.ssh/id_ed25519.pub  - Public key
-#   /home/$RESTRICTED_USER/.ssh/authorized_keys - Authorized keys file (600)
-#   /etc/ssh/sshd_config                        - Updated with Match User block
-#
-# TUNNEL COMMANDS:
-#   Always use -N to suppress shell session (avoids nologin rejection).
-#   Use -f to background the tunnel.
-#   Use -o IdentitiesOnly=yes to prevent "Too many authentication failures"
-#   (stops SSH offering every key in ~/.ssh/ before the correct one).
-#
-#   Local forward - access a service on the server from your local machine:
-#     ssh -N -f -o IdentitiesOnly=yes -L local_port:localhost:remote_port \
-#         -p $SSHD_PORT $RESTRICTED_USER@<server> -i <key>
-#
-#   Remote forward - expose a local service on the server (requires ALLOW_GATEWAY_PORTS=yes):
-#     ssh -N -f -o IdentitiesOnly=yes -R 0.0.0.0:remote_port:localhost:local_port \
-#         -p $SSHD_PORT $RESTRICTED_USER@<server> -i <key>
-#
-# CONCRETE EXAMPLES:
-#   # Access LM Studio running on the server (port 1234) at localhost:1235
-#     ssh -N -f -o IdentitiesOnly=yes -L 1235:localhost:1234 \
-#         -p $SSHD_PORT $RESTRICTED_USER@<server> -i ~/.ssh/tunnel-key
-#   Then access LM Studio at http://localhost:1235/v1/models on your local machine
-#
-#   # Create user with custom name and port
-#   RESTRICTED_USER="dbuser" SSHD_PORT=2225 source tasks/setup-ssh-tunnel-user.sh
-#
-#   # Allow gateway ports for external access to tunnels
-#   ALLOW_GATEWAY_PORTS=yes source tasks/setup-ssh-tunnel-user.sh
-#
-# IMPORTANT VARIABLES:
-#   RESTRICTED_USER      - Target username (validated for Linux compliance)
-#   SSHD_PORT            - SSH daemon port number
-#   ALLOW_GATEWAY_PORTS  - GatewayPorts setting (yes/no)
-#   SSHD_CONFIG_FILE     - Path to SSH daemon config (/etc/ssh/sshd_config)
-#   RESTRICTED_HOME      - User's home directory (/home/$RESTRICTED_USER)
-#   SSHD_MATCH_BLOCK     - SSH Match User configuration block
-#
-# IDEMPOTENCY:
-#   - Script checks if user exists and exits gracefully if found
-#   - Existing sshd_config Match User blocks are updated (not duplicated)
-#   - Safe to run multiple times without side effects
-#
-# NOTES:
-#   - Requires root/sudo privileges
-#   - Script is idempotent (safe to run multiple times)
-#   - SSH service will be restarted (brief connection interruption)
-#   - Existing sshd_config blocks for this user are automatically updated
-#   - Username validation enforces Linux user naming conventions
-#
-################################################################################
+# Usage:
+#   RESTRICTED_USER=myuser source tasks/setup-ssh-tunnel-user.sh
+#   ./setup-ssh-tunnel-user.sh
+# =============================================================================
+
+set -euo pipefail
+
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
+
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
 
 # Configuration
-RESTRICTED_USER="${RESTRICTED_USER:-tunneluser}"
-SSHD_PORT="${SSHD_PORT:-2224}"
-ALLOW_GATEWAY_PORTS="${ALLOW_GATEWAY_PORTS:-no}"
+: "${RESTRICTED_USER:=tunneluser}"
+: "${SSHD_PORT:=2224}"
+: "${ALLOW_GATEWAY_PORTS:=no}"
 SSHD_CONFIG_FILE="/etc/ssh/sshd_config"
 
-# Validate username is provided
-if [[ -z "$RESTRICTED_USER" ]]; then
-    echo "ERROR: RESTRICTED_USER environment variable must be set"
-    echo "Usage: RESTRICTED_USER=username source tasks/setup-ssh-tunnel-user.sh"
-    exit 1
+# =============================================================================
+# Main
+# =============================================================================
+
+step "Setting up restricted SSH tunnel user: ${RESTRICTED_USER}"
+
+# Validate username
+if [[ -z "${RESTRICTED_USER}" ]]; then
+  error "RESTRICTED_USER environment variable must be set"
 fi
 
-# Validate username format (alphanumeric and underscore only, start with letter)
-if ! [[ "$RESTRICTED_USER" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
-    echo "ERROR: Invalid username '$RESTRICTED_USER'. Must start with lowercase letter or underscore, and contain only lowercase letters, digits, underscores, or hyphens."
-    exit 1
+if ! [[ "${RESTRICTED_USER}" =~ ^[a-z_][a-z0-9_-]*$ ]]; then
+  error "Invalid username '${RESTRICTED_USER}'. Must start with lowercase letter/underscore."
 fi
 
-echo "Setting up restricted user: $RESTRICTED_USER"
-echo "SSH Port: $SSHD_PORT"
-echo "-------------------------------------------"
+info "SSH Port: ${SSHD_PORT}"
 
 # Check if user already exists (idempotent)
-if id "$RESTRICTED_USER" &>/dev/null; then
-    echo "User '$RESTRICTED_USER' already exists. Skipping setup steps."
-    echo "Setup complete - no changes made."
-    exit 0
+if id "${RESTRICTED_USER}" &>/dev/null; then
+  success "User '${RESTRICTED_USER}' already exists. Skipping."
+  exit 0
 fi
 
-echo "Creating user '$RESTRICTED_USER'..."
+# Create user
+step "Creating user '${RESTRICTED_USER}'"
+sudo useradd -m -s /usr/sbin/nologin "${RESTRICTED_USER}"
+info "User created with nologin shell"
 
-# Create user with:
-# - Home directory
-# - nologin shell (prevents any interactive access)
-sudo useradd -m -s /usr/sbin/nologin "$RESTRICTED_USER"
+# Lock password
+sudo passwd -l "${RESTRICTED_USER}" 2>/dev/null || true
+info "Password authentication disabled"
 
-echo "User '$RESTRICTED_USER' created with home directory and nologin shell"
+# Setup SSH directory
+RESTRICTED_HOME="/home/${RESTRICTED_USER}"
+step "Configuring SSH directory"
+sudo mkdir -p "${RESTRICTED_HOME}/.ssh"
+sudo touch "${RESTRICTED_HOME}/.ssh/authorized_keys"
+sudo chmod 700 "${RESTRICTED_HOME}/.ssh"
+sudo chmod 600 "${RESTRICTED_HOME}/.ssh/authorized_keys"
+sudo chown -R "${RESTRICTED_USER}:${RESTRICTED_USER}" "${RESTRICTED_HOME}/.ssh"
 
-# Lock the account to prevent password login
-sudo passwd -l "$RESTRICTED_USER" 2>/dev/null || true
-echo "Password authentication disabled for '$RESTRICTED_USER'"
+# Generate SSH keypair
+step "Generating SSH key pair"
+sudo -u "${RESTRICTED_USER}" ssh-keygen -t ed25519 \
+  -f "${RESTRICTED_HOME}/.ssh/id_ed25519" \
+  -N "" \
+  -C "restricted-tunnel-user@${HOSTNAME}" \
+  -q
 
-# Create .ssh directory for the restricted user
-RESTRICTED_HOME="/home/$RESTRICTED_USER"
-sudo mkdir -p "$RESTRICTED_HOME/.ssh"
-sudo touch "$RESTRICTED_HOME/.ssh/authorized_keys"
-sudo chmod 700 "$RESTRICTED_HOME/.ssh"
-sudo chmod 600 "$RESTRICTED_HOME/.ssh/authorized_keys"
-sudo chown -R "$RESTRICTED_USER:$RESTRICTED_USER" "$RESTRICTED_HOME/.ssh"
-echo "SSH directory configured at $RESTRICTED_HOME/.ssh"
+# Set permissions
+sudo chmod 600 "${RESTRICTED_HOME}/.ssh/id_ed25519"
+sudo chown "${RESTRICTED_USER}:${RESTRICTED_USER}" "${RESTRICTED_HOME}/.ssh/id_ed25519"
+sudo chown "${RESTRICTED_USER}:${RESTRICTED_USER}" "${RESTRICTED_HOME}/.ssh/id_ed25519.pub"
 
-# Generate SSH keypair for the restricted user (ed25519, no passphrase)
-echo "Generating SSH key pair for '$RESTRICTED_USER'..."
-sudo -u "$RESTRICTED_USER" ssh-keygen -t ed25519 \
-    -f "$RESTRICTED_HOME/.ssh/id_ed25519" \
-    -N "" \
-    -C "restricted-tunnel-user@$HOSTNAME" \
-    -q
+# Add public key to authorized_keys
+PUBLIC_KEY=$(sudo cat "${RESTRICTED_HOME}/.ssh/id_ed25519.pub")
+echo "${PUBLIC_KEY}" | sudo tee -a "${RESTRICTED_HOME}/.ssh/authorized_keys" > /dev/null
+sudo chmod 600 "${RESTRICTED_HOME}/.ssh/authorized_keys"
 
-# Set proper permissions on the private key
-sudo chmod 600 "$RESTRICTED_HOME/.ssh/id_ed25519"
-sudo chown "$RESTRICTED_USER:$RESTRICTED_USER" "$RESTRICTED_HOME/.ssh/id_ed25519"
+success "SSH key pair generated"
+info "Private key: ${RESTRICTED_HOME}/.ssh/id_ed25519"
 
-# chown public key to restricted user
-sudo chown "$RESTRICTED_USER:$RESTRICTED_USER" "$RESTRICTED_HOME/.ssh/id_ed25519.pub"
-
-# Copy public key to authorized_keys using sudo for proper permissions handling
-PUBLIC_KEY=$(sudo cat "$RESTRICTED_HOME/.ssh/id_ed25519.pub")
-echo "$PUBLIC_KEY" | sudo tee -a "$RESTRICTED_HOME/.ssh/authorized_keys" > /dev/null
-sudo chmod 600 "$RESTRICTED_HOME/.ssh/authorized_keys"
-
-echo "SSH key pair generated:"
-echo "  Private key: $RESTRICTED_HOME/.ssh/id_ed25519"
-echo "  Public key added to authorized_keys"
-
-# Configure SSH for the restricted user
-# Create a Match block in sshd_config for this user
-SSHD_MATCH_BLOCK="# BEGIN RESTRICTED USER: $RESTRICTED_USER
-Match User $RESTRICTED_USER
-    # Allow SSH port forwarding
+# Configure SSH Match block
+step "Configuring SSH for restricted user"
+SSHD_MATCH_BLOCK="# BEGIN RESTRICTED USER: ${RESTRICTED_USER}
+Match User ${RESTRICTED_USER}
     AllowTcpForwarding yes
-    # Gateway ports for remote port forwarding
-    GatewayPorts $ALLOW_GATEWAY_PORTS
-    # Allow X11 forwarding (optional, usually no for tunnel-only users)
+    GatewayPorts ${ALLOW_GATEWAY_PORTS}
     X11Forwarding no
-    # Disable PTY allocation (prevents interactive shell)
     PermitTTY no
-# END RESTRICTED USER: $RESTRICTED_USER"
+# END RESTRICTED USER: ${RESTRICTED_USER}"
 
-# Check if Match block for this user already exists (idempotent)
-if sudo grep -q "Match User $RESTRICTED_USER" "$SSHD_CONFIG_FILE"; then
-    echo "SSH Match block for '$RESTRICTED_USER' already exists. Updating..."
-    sudo sed -i "/# BEGIN RESTRICTED USER: $RESTRICTED_USER/,/# END RESTRICTED USER: $RESTRICTED_USER/d" "$SSHD_CONFIG_FILE"
+# Remove existing block if present
+if sudo grep -q "Match User ${RESTRICTED_USER}" "${SSHD_CONFIG_FILE}"; then
+  info "Updating existing Match block..."
+  sudo sed -i "/# BEGIN RESTRICTED USER: ${RESTRICTED_USER}/,/# END RESTRICTED USER: ${RESTRICTED_USER}/d" "${SSHD_CONFIG_FILE}"
 fi
 
-# Append the Match block
-echo "$SSHD_MATCH_BLOCK" | sudo tee -a "$SSHD_CONFIG_FILE" > /dev/null
-echo "SSH configuration updated for restricted user"
+# Append new block
+echo "${SSHD_MATCH_BLOCK}" | sudo tee -a "${SSHD_CONFIG_FILE}" > /dev/null
 
-# Keep home directory owned by the user (no chroot, so no root-ownership required)
-sudo chown "$RESTRICTED_USER:$RESTRICTED_USER" "$RESTRICTED_HOME"
-sudo chmod 700 "$RESTRICTED_HOME"
+# Set home permissions
+sudo chown "${RESTRICTED_USER}:${RESTRICTED_USER}" "${RESTRICTED_HOME}"
+sudo chmod 700 "${RESTRICTED_HOME}"
 
-# Validate SSH configuration before restarting
+# Validate and restart SSH
+step "Validating SSH configuration"
 if sudo sshd -t; then
-    echo "SSH configuration is valid"
+  success "SSH configuration is valid"
 else
-    echo "ERROR: SSH configuration is invalid. Please check $SSHD_CONFIG_FILE"
-    exit 1
+  error "SSH configuration is invalid. Check ${SSHD_CONFIG_FILE}"
 fi
 
-# Restart SSH to apply changes
-echo "Restarting SSH service..."
+step "Restarting SSH service"
 sudo systemctl restart ssh
 
+# Summary
 echo ""
-echo "==========================================="
-echo "RESTRICTED USER SETUP COMPLETE"
-echo "==========================================="
-echo "Username: $RESTRICTED_USER"
-echo "Home Directory: $RESTRICTED_HOME"
-echo "SSH Key Pair Generated:"
-echo "  Private key: $RESTRICTED_HOME/.ssh/id_ed25519"
+echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
+success "Restricted user setup complete!"
+echo -e "${BOLD}═══════════════════════════════════════════════════${RESET}"
 echo ""
-echo "Note: Password authentication is disabled. Use SSH key."
+echo "Username:  ${RESTRICTED_USER}"
+echo "Home:      ${RESTRICTED_HOME}"
+echo "Key:       ${RESTRICTED_HOME}/.ssh/id_ed25519"
 echo ""
-echo "SSH Tunnel Usage (use -N to skip shell, -o IdentitiesOnly=yes to avoid auth failures):"
-echo "  Local forward:  ssh -N -f -o IdentitiesOnly=yes -L local_port:localhost:remote_port -p $SSHD_PORT $RESTRICTED_USER@<server> -i <key>"
-echo "  Remote forward: ssh -N -f -o IdentitiesOnly=yes -R 0.0.0.0:remote_port:localhost:local_port -p $SSHD_PORT $RESTRICTED_USER@<server> -i <key>"
-echo ""
-echo "Example - Access LM Studio on server (port 1234) via local port 1235:"
-echo "  ssh -N -f -o IdentitiesOnly=yes -L 1235:localhost:1234 -p $SSHD_PORT $RESTRICTED_USER@<server> -i ~/.ssh/tunnel-key"
-echo "  Then access LM Studio at http://localhost:1235/v1/models"
-echo ""
-echo "Place authorized public keys in: $RESTRICTED_HOME/.ssh/authorized_keys"
-echo "==========================================="
+echo "Tunnel usage:"
+echo "  Local:  ssh -N -o IdentitiesOnly=yes -L 1235:localhost:1234 -p ${SSHD_PORT} ${RESTRICTED_USER}@<host> -i <key>"
+echo "  Remote: ssh -N -o IdentitiesOnly=yes -R 0.0.0.0:port:localhost:localport -p ${SSHD_PORT} ${RESTRICTED_USER}@<host> -i <key>"

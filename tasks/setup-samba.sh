@@ -1,118 +1,143 @@
 #!/usr/bin/env bash
-################################################################################
-# SAMBA SHARE SETUP SCRIPT
-################################################################################
+# shellcheck shell=bash
+# =============================================================================
+# setup-samba.sh — Configure Samba file sharing
+# =============================================================================
 #
-# DESCRIPTION:
-#   This script automates the installation and configuration of a Samba file
-#   sharing server on Debian/Ubuntu systems. It creates a shared directory
-#   accessible over the network with proper permissions and user authentication.
+# Description:
+#   Automates the installation and configuration of a Samba file sharing server.
 #
-# KEY ACTIONS:
-#   1. Creates base share directory structure and developer group
-#   2. Sets up proper ownership and permissions (770) for share paths
-#   3. Installs Samba package via apt
-#   4. Enables and starts the smbd service
-#   5. Backs up original Samba configuration
-#   6. Adds share definition to /etc/samba/smb.conf
-#   7. Creates Samba user (if doesn't exist) with no-login system account
-#   8. Prompts for Samba password configuration
-#   9. Displays network access information
+# Environment Variables (optional):
+#   BASE_SHARE_PATH      - Root directory for Samba shares (default: /home/samba)
+#   SAMBA_SHARE_NAME     - Name of the share (default: shared)
+#   SAMBA_USER           - System user for Samba auth (default: sambauser)
+#   DEVELOPER_GROUP_NAME - Group with share access (default: devs)
 #
-# IMPORTANT VARIABLES:
-#   BASE_SHARE_PATH      - Root directory for Samba shares (/home/samba)
-#   SAMBA_SHARE_NAME     - Name of the share visible on network (shared)
-#   SHARE_PATH           - Full path to shared directory
-#   SAMBA_USER           - System user for Samba authentication (sambauser)
-#   DEVELOPER_GROUP_NAME - Group with access to shares (devs)
-#
-# DEPENDENCIES:
-#   - apt package manager (Debian/Ubuntu)
-#   - sudo privileges
-#   - samba package
-#   - systemd (for service management)
-#
-# SIDE EFFECTS:
-#   - Modifies /etc/samba/smb.conf (creates backup first)
-#   - Creates system user and group
-#   - Adds current user to developer group
-#   - Opens network share (SMB protocol, typically port 445)
-#
-################################################################################
-set -eu
+# Usage:
+#   ./setup-samba.sh
+# =============================================================================
 
-# ---------------- samba --------------------
+set -euo pipefail
 
-# Variables (customize as needed)
-BASE_SHARE_PATH="/home/samba"
-SAMBA_SHARE_NAME="shared"
-SHARE_PATH="$BASE_SHARE_PATH/shared"
-SAMBA_USER="sambauser"
-DEVELOPER_GROUP_NAME="devs"
+# Determine script directory and source shared library
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
 
-# Create developer group if it doesn't exist (idempotent)
-if ! getent group "$DEVELOPER_GROUP_NAME" >/dev/null 2>&1; then
-    sudo groupadd "$DEVELOPER_GROUP_NAME"
+# shellcheck disable=SC1090
+source "${LIB_PATH}" || {
+  echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
+  exit 1
+}
+
+# Configuration
+: "${BASE_SHARE_PATH:=/home/samba}"
+: "${SAMBA_SHARE_NAME:=shared}"
+: "${SAMBA_USER:=sambauser}"
+: "${DEVELOPER_GROUP_NAME:=devs}"
+SHARE_PATH="${BASE_SHARE_PATH}/${SAMBA_SHARE_NAME}"
+SMB_CONF="/etc/samba/smb.conf"
+
+# Validate configuration values to prevent injection in config files
+# Share name: alphanumeric and underscores only
+if [[ ! "${SAMBA_SHARE_NAME}" =~ ^[a-zA-Z0-9_]+$ ]]; then
+  error "SAMBA_SHARE_NAME contains invalid characters. Only alphanumeric and underscores allowed."
 fi
 
-# Create Samba user if it doesn't exist (idempotent)
-if ! id -u "$SAMBA_USER" >/dev/null 2>&1; then
-    sudo adduser --no-create-home --disabled-password --gecos "" "$SAMBA_USER"
+# Share path: must be absolute and not contain dangerous characters
+# Check: starts with /, no spaces, no shell metacharacters
+if [[ ! "${SHARE_PATH}" =~ ^/[a-zA-Z0-9_./-]+$ ]]; then
+  error "SHARE_PATH must be an absolute path containing only alphanumeric, underscore, dot, slash, or hyphen."
 fi
 
-# Add users to developer group (idempotent - usermod handles existing membership gracefully)
-sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$SAMBA_USER"
-sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$USER"
+# Samba user: alphanumeric and underscores only
+if [[ ! "${SAMBA_USER}" =~ ^[a-zA-Z0-9_]+$ ]]; then
+  error "SAMBA_USER contains invalid characters. Only alphanumeric and underscores allowed."
+fi
 
-# Set ownership on directories (now that user exists!)
-sudo chown "$SAMBA_USER":devs "$BASE_SHARE_PATH"
-sudo chmod -R 770 "$BASE_SHARE_PATH"
+# =============================================================================
+# Main
+# =============================================================================
 
-sudo chown "$SAMBA_USER":devs "$SHARE_PATH"
-sudo chmod -R 770 "$SHARE_PATH"
+step "Setting up Samba file sharing"
 
+# Check if already configured
+if grep -q "^\[${SAMBA_SHARE_NAME}\]" "${SMB_CONF}" 2>/dev/null; then
+  success "Samba share '${SAMBA_SHARE_NAME}' already configured in ${SMB_CONF}"
+  info "Share path: ${SHARE_PATH}"
+  exit 0
+fi
 
+info "Configuring Samba..."
 
-# 1. Update package list and install Samba
+# Create developer group (idempotent)
+if ! getent group "${DEVELOPER_GROUP_NAME}" >/dev/null 2>&1; then
+  step "Creating developer group '${DEVELOPER_GROUP_NAME}'"
+  sudo groupadd "${DEVELOPER_GROUP_NAME}"
+else
+  info "Group '${DEVELOPER_GROUP_NAME}' already exists"
+fi
+
+# Create Samba user (idempotent)
+if ! id -u "${SAMBA_USER}" >/dev/null 2>&1; then
+  step "Creating Samba user '${SAMBA_USER}'"
+  sudo adduser --no-create-home --disabled-password --gecos "" "${SAMBA_USER}"
+else
+  info "User '${SAMBA_USER}' already exists"
+fi
+
+# Add users to developer group (idempotent)
+step "Adding users to group '${DEVELOPER_GROUP_NAME}'"
+sudo usermod -aG "${DEVELOPER_GROUP_NAME}" "${SAMBA_USER}"
+sudo usermod -aG "${DEVELOPER_GROUP_NAME}" "${USER}"
+
+# Create share directory
+step "Creating share directory"
+sudo mkdir -p "${SHARE_PATH}"
+sudo chown "${SAMBA_USER}:${DEVELOPER_GROUP_NAME}" "${SHARE_PATH}"
+sudo chmod -R 770 "${SHARE_PATH}"
+
+# Install Samba
+step "Installing Samba"
 sudo apt update
-sudo apt install samba -y
+sudo apt install -y samba
 
-# 2. Enable and start the Samba service
+# Enable and start service
+step "Enabling and starting Samba service"
 sudo systemctl enable smbd
 sudo systemctl start smbd
 
-# 3. Create the shared directory and set permissions
-# sudo mkdir -p "$SHARE_PATH"
-# sudo chown "$USER":"$USER" "$SHARE_PATH"
+# Backup config
+step "Backing up Samba configuration"
+sudo cp "${SMB_CONF}" "${SMB_CONF}.backup"
 
-# 4. Backup the original Samba config
-sudo cp /etc/samba/smb.conf /etc/samba/smb.conf.backup
+# Add share definition (with idempotency check already done at top)
+step "Adding share definition to ${SMB_CONF}"
+# Use quoted heredoc to prevent any expansion; values are validated above
+sudo tee -a "${SMB_CONF}" > /dev/null <<'SAMBA_SHARE'
 
-# 5. Add Samba share definition to smb.conf
-sudo bash -c "cat >> /etc/samba/smb.conf <<EOL
-
-[$SAMBA_SHARE_NAME]
-   path = $SHARE_PATH
+[${SAMBA_SHARE_NAME}]
+   path = ${SHARE_PATH}
    read only = no
    browsable = yes
-EOL
-"
+SAMBA_SHARE
 
-# 6. Restart Samba to apply changes
+# Replace the placeholder variables with actual validated values
+sudo sed -i \
+  -e "s/\${SAMBA_SHARE_NAME}/${SAMBA_SHARE_NAME}/g" \
+  -e "s|\${SHARE_PATH}|${SHARE_PATH}|g" \
+  "${SMB_CONF}"
+
+# Restart Samba
 sudo systemctl restart smbd
 
-# 7. Add a new system user if it doesn't exist
-if ! id -u "$SAMBA_USER" >/dev/null 2>&1; then
-    sudo adduser --no-create-home --disabled-password --gecos "" "$SAMBA_USER"
-    sudo usermod -aG "$DEVELOPER_GROUP_NAME" "$SAMBA_USER"
+# Set Samba password
+step "Setting Samba password for user '${SAMBA_USER}'"
+if sudo pdbedit -L | grep -q "^${SAMBA_USER}:"; then
+  info "Samba password already set for '${SAMBA_USER}'"
+else
+  sudo smbpasswd -a "${SAMBA_USER}"
 fi
 
-# 8. Set Samba password for the user
-echo "Set Samba password for user $SAMBA_USER:"
-sudo smbpasswd -a "$SAMBA_USER"
-
-echo "Samba has been installed and configured."
-echo "Share path: $SHARE_PATH"
-printf 'Access it on the network as: \\\\\\%s\\\%s\n' "$(hostname -I | awk '{print $1}')" "$SAMBA_SHARE_NAME"
-
-# ---------------------------------
+success "Samba configured successfully"
+info "Share path: ${SHARE_PATH}"
+printf "Access it on the network as: \\\\\\\\%s\\\\%s\n" "$(hostname -I | awk '{print $1}')" "${SAMBA_SHARE_NAME}"
