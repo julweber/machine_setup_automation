@@ -1,0 +1,68 @@
+# yamllint disable rule:line-length
+---
+name: omnigent
+
+services:
+  omnigent:
+    image: ${OMNIGENT_IMAGE}:${OMNIGENT_IMAGE_TAG}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      - OMNIGENT_AUTH_ENABLED=${OMNIGENT_AUTH_ENABLED:-1}
+      - OMNIGENT_ADMIN_CREDENTIALS_PATH=/data/admin-credentials
+      - DATABASE_URL=postgresql+psycopg://${POSTGRES_USER:-omnigent}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-omnigent}
+      - ARTIFACT_DIR=/data/artifacts
+      - HOST=0.0.0.0
+      - PORT=8000
+      - OMNIGENT_AUTH_PROVIDER=${OMNIGENT_AUTH_PROVIDER:-}
+      - OMNIGENT_ACCOUNTS_BASE_URL=${OMNIGENT_ACCOUNTS_BASE_URL:-}
+      - OMNIGENT_ACCOUNTS_AUTO_OPEN=0
+      - OMNIGENT_OIDC_ISSUER=${OMNIGENT_OIDC_ISSUER:-}
+      - OMNIGENT_OIDC_CLIENT_ID=${OMNIGENT_OIDC_CLIENT_ID:-}
+      - OMNIGENT_OIDC_CLIENT_SECRET=${OMNIGENT_OIDC_CLIENT_SECRET:-}
+      - OMNIGENT_OIDC_COOKIE_SECRET=${OMNIGENT_OIDC_COOKIE_SECRET:-}
+      - OMNIGENT_OIDC_SCOPES=${OMNIGENT_OIDC_SCOPES:-}
+      - OMNIGENT_OIDC_SESSION_TTL_HOURS=${OMNIGENT_OIDC_SESSION_TTL_HOURS:-8}
+      - OMNIGENT_OIDC_ALLOWED_DOMAINS=${OMNIGENT_OIDC_ALLOWED_DOMAINS:-}
+      - OMNIGENT_OIDC_LOGOUT_REDIRECT_URI=${OMNIGENT_OIDC_LOGOUT_REDIRECT_URI:-}
+      - OMNIGENT_DOMAIN=${OMNIGENT_DOMAIN:-}
+      - OMNIGENT_ACCOUNTS_COOKIE_SECRET=${OMNIGENT_ACCOUNTS_COOKIE_SECRET:-}
+      - OMNIGENT_ACCOUNTS_INIT_ADMIN_USERNAME=${OMNIGENT_ACCOUNTS_INIT_ADMIN_USERNAME:-}
+      - OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD=${OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD:-}
+      - OMNIGENT_ACCOUNTS_SESSION_TTL_HOURS=${OMNIGENT_ACCOUNTS_SESSION_TTL_HOURS:-8}
+      - OMNIGENT_ACCOUNTS_INVITE_TTL_HOURS=${OMNIGENT_ACCOUNTS_INVITE_TTL_HOURS:-72}
+      - OMNIGENT_ACCOUNTS_MAGIC_TTL_MINUTES=${OMNIGENT_ACCOUNTS_MAGIC_TTL_MINUTES:-10}
+    networks:
+      - omnigent
+    volumes:
+      - artifact-data:/data
+    ports:
+      - "${OMNIGENT_PORT}:8000"
+
+  postgres:
+    image: postgres:16-alpine
+    container_name: omnigent-postgres
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-omnigent}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      - POSTGRES_DB=${POSTGRES_DB:-omnigent}
+    networks:
+      - omnigent
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-omnigent} -d ${POSTGRES_DB:-omnigent}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  postgres-data:
+  artifact-data:
+
+networks:
+  omnigent:
+    external: false
