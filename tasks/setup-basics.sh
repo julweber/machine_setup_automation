@@ -132,4 +132,14 @@ else
   curl -LsSf https://hf.co/cli/install.sh | bash
 fi
 
+# Install herdr
+step "Installing herdr"
+if command -v herdr &>/dev/null; then
+  success "herdr already installed. Updating version to latest..."
+  herdr update
+else
+  info "Installing herdr..."
+  curl -LsSf https://herdr.dev/install.sh | bash
+fi
+
 success "Development basics installed successfully"
