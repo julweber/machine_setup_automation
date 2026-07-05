@@ -32,7 +32,7 @@ When implementing a script in `tasks/` -> ALWAYS inspect the library scripts in 
 
 #### Idempotency
 
-All scripts should be executable multiple times without destroying existing component data or configuration.
+All scripts require to be executable multiple times without destroying existing component data or configuration.
 
 #### Configuration
 
@@ -45,4 +45,4 @@ Scripts use environment variables for their main configuration options and provi
 
 #### Templating
 
-If you need to use templating (e.g. for creating configuration files) you should put template files in the according `templates/<component-name>` directory. Avoid putting inline templates into the bash scripts except this is explicitly required.
+If you need to use templating (e.g. for creating configuration files) you require to put template files in the according `templates/<component-name>` directory. DO NOT put inline templates into the bash scripts except this is explicitly required.
