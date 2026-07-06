@@ -153,12 +153,6 @@ if [[ $EUID -ne 0 ]]; then
   warn "Not running as root. Commands requiring root privileges will use sudo."
 fi
 
-# Check port availability
-if ss -tln 2>/dev/null | grep -q ":${LLAMA_SWAP_PORT} " || \
-   netstat -tln 2>/dev/null | grep -q ":${LLAMA_SWAP_PORT} "; then
-  error "Port ${LLAMA_SWAP_PORT} is already in use. Choose a different LLAMA_SWAP_PORT."
-fi
-
 LLAMA_SWAP_ARCH="$(detect_arch)"
 info "Detected architecture: ${LLAMA_SWAP_ARCH}"
 
@@ -215,6 +209,12 @@ if [[ -f "$SERVICE_FILE" ]]; then
   sudo systemctl stop llama-swap 2>/dev/null || true
   sudo systemctl disable llama-swap 2>/dev/null || true
   success "Old service stopped and disabled."
+else
+  # No existing installation — check port availability
+  if ss -tln 2>/dev/null | grep -q ":${LLAMA_SWAP_PORT} " || \
+     netstat -tln 2>/dev/null | grep -q ":${LLAMA_SWAP_PORT} "; then
+    error "Port ${LLAMA_SWAP_PORT} is already in use. Choose a different LLAMA_SWAP_PORT."
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
