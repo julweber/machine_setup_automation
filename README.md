@@ -112,7 +112,7 @@ All service setup scripts are located in the `tasks/` directory. Below is a comp
 ### System & Infrastructure
 
 #### `setup-basics.sh`
-Installs common system packages (curl, git, python3, etc.), **uv** Python package manager, and Node.js/npm.
+Installs common system packages (curl, git, python3, etc.), **uv** Python package manager, **herdr** CLI tool, Node.js/npm, and the **huggingface-cli**.
 
 **Environment variables:** None
 
@@ -202,6 +202,19 @@ Deploys vLLM as a Docker-based OpenAI-compatible inference server. Supports NVID
 - Optional Traefik reverse-proxy integration
 - Input validation for all configuration values
 - Supports `--nvidia`, `--amd`, `--cpu`, `--force`, `--check` flags
+
+#### `setup-omnigent.sh`
+Deploys Omnigent — an open-source meta-harness providing a common orchestration layer over multiple AI coding agents (Claude Code, Codex, Cursor, Pi, etc.) — via Docker Compose with Postgres + FastAPI. Also installs the runner CLI (`omnigent`) on the host for local agent execution.
+
+**Environment variables:** `OMNIGENT_HOME` (default `/srv/omnigent`), `OMNIGENT_IMAGE` (default `ghcr.io/omnigent-ai/omnigent-server`), `OMNIGENT_IMAGE_TAG` (default `latest`), `OMNIGENT_PORT` (default `8008`), `OMNIGENT_TRAEFIK` (default `false`), `OMNIGENT_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`), `OMNIGENT_AUTH_ENABLED` (default `1`), `OMNIGENT_AUTH_PROVIDER` (`accounts`, `oidc`, or `header`), `OMNIGENT_ACCOUNTS_BASE_URL`, `OMNIGENT_ACCOUNTS_AUTO_OPEN` (default `0`), `OMNIGENT_ACCOUNTS_INIT_ADMIN_USERNAME` (default `admin`), `OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD`, `POSTGRES_USER` (default `omnigent`), `POSTGRES_DB` (default `omnigent`)
+
+**Features:**
+- Docker Compose deployment with Postgres backend
+- Runner CLI installed on host for local agent execution
+- Optional Traefik reverse-proxy integration
+- Auto-generated secure secrets in `.env` file
+- Health check polling (up to 120s)
+- UFW firewall rule configuration (direct mode)
 
 #### `setup-agent-docker-runner.sh`
 Installs the Agent Docker Runner (ADR) CLI, a tool that runs coding agents inside isolated Docker containers with a single command. Supports multiple agents: pi, opencode, claude, codex.
