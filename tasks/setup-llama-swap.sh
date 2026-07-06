@@ -44,6 +44,7 @@
 # USAGE:
 #   ./setup-llama-swap.sh                          # defaults
 #   ./setup-llama-swap.sh --check                  # check status only
+#   ./setup-llama-swap.sh --force                  # force reinstall/update without prompts
 #
 # REFERENCE:
 #   https://github.com/mostlygeek/llama-swap
@@ -108,12 +109,14 @@ CONFIG_DIR="${LLAMA_SWAP_DIR}/config"
 CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 SERVICE_FILE="/etc/systemd/system/llama-swap.service"
 CHECK_ONLY=0
+FORCE=0
 GITHUB_REPO="mostlygeek/llama-swap"
 
 # Parse additional flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --check) CHECK_ONLY=1 ;;
+    --force) FORCE=1 ;;
     *) error "Unknown option: $1 (use --help for usage)" ;;
   esac
   shift
@@ -198,10 +201,14 @@ if [[ -f "$SERVICE_FILE" ]]; then
   echo ""
   info "Existing config at ${CONFIG_FILE} will be PRESERVED (not overwritten)."
   info "The llama-swap binary will be updated to the latest version."
-  read -rp "    Re-install and update binary? [y/N] " answer
-  if [[ "${answer,,}" != "y" ]]; then
-    info "Keeping existing setup. Exiting."
-    exit 0
+  if [[ "$FORCE" -eq 1 ]]; then
+    info "--force flag set — proceeding automatically."
+  else
+    read -rp "    Re-install and update binary? [y/N] " answer
+    if [[ "${answer,,}" != "y" ]]; then
+      info "Keeping existing setup. Exiting."
+      exit 0
+    fi
   fi
   # Stop and disable existing service before re-install
   info "Stopping existing service..."
@@ -225,70 +232,81 @@ success "Directories ready."
 
 step "Downloading llama-swap binary"
 
+SKIP_BINARY_DOWNLOAD=0
 if [[ -x "$LLAMA_SWAP_BIN_PATH" ]]; then
   EXISTING_VERSION=$("$LLAMA_SWAP_BIN_PATH" -version 2>/dev/null || echo "unknown")
   info "Existing binary found: ${EXISTING_VERSION}"
-  read -rp "    Re-download and replace binary? [y/N] " answer
-  if [[ "${answer,,}" != "y" ]]; then
-    info "Keeping existing binary. Skipping download."
+  if [[ "$FORCE" -eq 1 ]]; then
+    info "--force flag set — proceeding with binary replacement."
+  else
+    read -rp "    Re-download and replace binary? [y/N] " answer
+    if [[ "${answer,,}" != "y" ]]; then
+      info "Keeping existing binary. Skipping download."
+      SKIP_BINARY_DOWNLOAD=1
+    fi
   fi
 fi
 
-# Determine download URL
-if [[ "$LLAMA_SWAP_VERSION" == "latest" ]]; then
-  info "Fetching latest release from GitHub..."
-  RELEASE_INFO=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | jq -r '.tag_name')
-  if [[ -z "$RELEASE_INFO" || "$RELEASE_INFO" == "null" ]]; then
-    error "Failed to fetch latest release from GitHub. Check network connectivity."
+if [[ "$SKIP_BINARY_DOWNLOAD" -eq 1 ]]; then
+  INSTALLED_VERSION=$("$LLAMA_SWAP_BIN_PATH" -version 2>/dev/null || echo "unknown")
+  success "Binary unchanged at ${LLAMA_SWAP_BIN_PATH} (version: ${INSTALLED_VERSION})"
+else
+  # Determine download URL
+  if [[ "$LLAMA_SWAP_VERSION" == "latest" ]]; then
+    info "Fetching latest release from GitHub..."
+    RELEASE_INFO=$(curl -s "https://api.github.com/repos/${GITHUB_REPO}/releases/latest" | jq -r '.tag_name')
+    if [[ -z "$RELEASE_INFO" || "$RELEASE_INFO" == "null" ]]; then
+      error "Failed to fetch latest release from GitHub. Check network connectivity."
+    fi
+    LLAMA_SWAP_VERSION="$RELEASE_INFO"
+    info "Latest release: ${LLAMA_SWAP_VERSION}"
   fi
-  LLAMA_SWAP_VERSION="$RELEASE_INFO"
-  info "Latest release: ${LLAMA_SWAP_VERSION}"
+
+  # Build tarball name: llama-swap_<version_without_v>_linux_<arch>.tar.gz
+  VERSION_TAG="${LLAMA_SWAP_VERSION#v}"  # strip leading 'v' if present
+  TARBALL_NAME="llama-swap_${VERSION_TAG}_linux_${LLAMA_SWAP_ARCH}.tar.gz"
+  DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${LLAMA_SWAP_VERSION}/${TARBALL_NAME}"
+
+  info "Downloading from: ${DOWNLOAD_URL}"
+
+  # Download the tar.gz archive to a temp file
+  TEMP_TARBALL="$(mktemp /tmp/llama-swap-download.XXXXXX.tar.gz)"
+  if ! curl -fsSL --retry 3 --retry-delay 5 -o "$TEMP_TARBALL" "$DOWNLOAD_URL"; then
+    error "Failed to download binary archive from ${DOWNLOAD_URL}"
+  fi
+
+  # Extract the binary from the archive
+  TEMP_EXTRACT_DIR="$(mktemp -d /tmp/llama-swap-extract.XXXXXX)"
+  if ! tar -xzf "$TEMP_TARBALL" -C "$TEMP_EXTRACT_DIR"; then
+    error "Failed to extract binary archive from ${TEMP_TARBALL}"
+  fi
+
+  # Find the extracted binary (it may be named llama-swap inside the tarball)
+  TEMP_BIN="$(find "$TEMP_EXTRACT_DIR" -name 'llama-swap' -type f | head -1)"
+  if [[ -z "$TEMP_BIN" ]]; then
+    error "Could not find 'llama-swap' binary inside extracted archive. Contents:"
+    ls -laR "$TEMP_EXTRACT_DIR"
+  fi
+
+  # Verify it's a valid ELF binary
+  if ! file "$TEMP_BIN" | grep -q "ELF"; then
+    error "Extracted file is not a valid ELF binary. Possible corrupted download."
+  fi
+
+  # Install to target path
+  if [[ -x "$LLAMA_SWAP_BIN_PATH" ]]; then
+    info "Replacing existing binary at ${LLAMA_SWAP_BIN_PATH}"
+  fi
+
+  sudo install -m 755 "$TEMP_BIN" "$LLAMA_SWAP_BIN_PATH"
+
+  # Cleanup temp files
+  rm -f "$TEMP_TARBALL"
+  rm -rf "$TEMP_EXTRACT_DIR"
+
+  INSTALLED_VERSION=$("$LLAMA_SWAP_BIN_PATH" -version 2>/dev/null || echo "unknown")
+  success "Binary installed at ${LLAMA_SWAP_BIN_PATH} (version: ${INSTALLED_VERSION})"
 fi
-
-# Build tarball name: llama-swap_<version_without_v>_linux_<arch>.tar.gz
-VERSION_TAG="${LLAMA_SWAP_VERSION#v}"  # strip leading 'v' if present
-TARBALL_NAME="llama-swap_${VERSION_TAG}_linux_${LLAMA_SWAP_ARCH}.tar.gz"
-DOWNLOAD_URL="https://github.com/${GITHUB_REPO}/releases/download/${LLAMA_SWAP_VERSION}/${TARBALL_NAME}"
-
-info "Downloading from: ${DOWNLOAD_URL}"
-
-# Download the tar.gz archive to a temp file
-TEMP_TARBALL="$(mktemp /tmp/llama-swap-download.XXXXXX.tar.gz)"
-if ! curl -fsSL --retry 3 --retry-delay 5 -o "$TEMP_TARBALL" "$DOWNLOAD_URL"; then
-  error "Failed to download binary archive from ${DOWNLOAD_URL}"
-fi
-
-# Extract the binary from the archive
-TEMP_EXTRACT_DIR="$(mktemp -d /tmp/llama-swap-extract.XXXXXX)"
-if ! tar -xzf "$TEMP_TARBALL" -C "$TEMP_EXTRACT_DIR"; then
-  error "Failed to extract binary archive from ${TEMP_TARBALL}"
-fi
-
-# Find the extracted binary (it may be named llama-swap inside the tarball)
-TEMP_BIN="$(find "$TEMP_EXTRACT_DIR" -name 'llama-swap' -type f | head -1)"
-if [[ -z "$TEMP_BIN" ]]; then
-  error "Could not find 'llama-swap' binary inside extracted archive. Contents:"
-  ls -laR "$TEMP_EXTRACT_DIR"
-fi
-
-# Verify it's a valid ELF binary
-if ! file "$TEMP_BIN" | grep -q "ELF"; then
-  error "Extracted file is not a valid ELF binary. Possible corrupted download."
-fi
-
-# Install to target path
-if [[ -x "$LLAMA_SWAP_BIN_PATH" ]]; then
-  info "Replacing existing binary at ${LLAMA_SWAP_BIN_PATH}"
-fi
-
-sudo install -m 755 "$TEMP_BIN" "$LLAMA_SWAP_BIN_PATH"
-
-# Cleanup temp files
-rm -f "$TEMP_TARBALL"
-rm -rf "$TEMP_EXTRACT_DIR"
-
-INSTALLED_VERSION=$("$LLAMA_SWAP_BIN_PATH" -version 2>/dev/null || echo "unknown")
-success "Binary installed at ${LLAMA_SWAP_BIN_PATH} (version: ${INSTALLED_VERSION})"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GENERATE CONFIG.YAML FROM TEMPLATE
