@@ -3,7 +3,15 @@
 Automation scripts for installing and configuring a server or developer machine for LLM workflows and software development.
 
 ## Getting help
-When the user asks for usage instructions and basic information: first read and then execute the instructions in `skills/machine-setup-automation-assistant/SKILL.md`
+**ALWAYS** read `skills/machine-setup-automation-assistant/SKILL.md` and follow its instructions when the user:
+- asks for help, usage instructions, or how to use the repo
+- asks to understand, explain, or describe the repository
+- asks what services are available or which to install
+- asks how to configure or set up a machine
+- asks about the orchestrator, `run-setup.sh`, or `machine-config.yml`
+- says anything like "help me", "what does this do", "show me", "guide me"
+
+Do NOT answer these questions from your own knowledge — always delegate to the skill.
 
 ## Core Facts
 - setup for unix systemd based deployments
