@@ -28,7 +28,7 @@
 #   OMNIGENT_HOME                    - Host directory for persistent data (default: /srv/omnigent)
 #   OMNIGENT_IMAGE                   - Docker image tag to use (default: ghcr.io/omnigent-ai/omnigent-server)
 #   OMNIGENT_IMAGE_TAG               - Docker image tag (default: latest)
-#   OMNIGENT_PORT                    - Host port for direct web UI access (default: 8000)
+#   OMNIGENT_PORT                    - Host port for direct web UI access (default: 8008)
 #   OMNIGENT_TRAEFIK                 - Set to "true" to enable Traefik routing (default: false)
 #   OMNIGENT_DOMAIN                  - Domain for Traefik access (required when Traefik=true)
 #   PROXY_NETWORK                    - Traefik's external Docker network name (default: proxy)
@@ -87,7 +87,7 @@ Environment Variables:
   OMNIGENT_HOME                    Data directory (default: /srv/omnigent)
   OMNIGENT_IMAGE                   Docker image (default: ghcr.io/omnigent-ai/omnigent-server)
   OMNIGENT_IMAGE_TAG               Image tag (default: latest)
-  OMNIGENT_PORT                    Host port, direct mode (default: 8000)
+  OMNIGENT_PORT                    Host port, direct mode (default: 8008)
   OMNIGENT_TRAEFIK                 Enable Traefik: "true" or "false" (default: false)
   OMNIGENT_DOMAIN                  Domain for Traefik access (required when Traefik=true)
   PROXY_NETWORK                    Traefik network name (default: proxy)
@@ -141,7 +141,7 @@ done
 OMNIGENT_HOME="${OMNIGENT_HOME:-/srv/omnigent}"            # Host directory for persistent data
 OMNIGENT_IMAGE="${OMNIGENT_IMAGE:-ghcr.io/omnigent-ai/omnigent-server}"  # Docker image
 OMNIGENT_IMAGE_TAG="${OMNIGENT_IMAGE_TAG:-latest}"         # Docker image tag
-OMNIGENT_PORT="${OMNIGENT_PORT:-8000}"                     # Host port (direct mode)
+OMNIGENT_PORT="${OMNIGENT_PORT:-8008}"                     # Host port (direct mode)
 
 # Traefik reverse-proxy integration (opt-in)
 OMNIGENT_TRAEFIK="${OMNIGENT_TRAEFIK:-false}"              # Set to "true" to enable Traefik routing
@@ -802,14 +802,19 @@ if [[ -n "$OMNIGENT_ADMIN_USERNAME" && -n "$OMNIGENT_ADMIN_PASSWORD" ]]; then
   echo -e "  ${CYAN}Credentials file:${RESET}  ${ENV_FILE}"
 fi
 
-# ── STEP 2: Register the host as a runner ───────────────────────────────────
+# ── STEP 2: run omnigent setup ───────────────────────────────────
 echo ""
-echo -e "${YELLOW}${BOLD}Step 2: Register this machine as a runner${RESET}"
+echo -e "${YELLOW}${BOLD}Step 2: Run ominigent setup${RESET}"
+echo -e "  Run:  omnigent Setup"
+
+# ── STEP 3: Register the host as a runner ───────────────────────────────────
+echo ""
+echo -e "${YELLOW}${BOLD}Step 3: Register this machine as a runner${RESET}"
 echo -e "  Run:  omnigent host ${OMNIGENT_SERVER_URL}"
 
-# ── STEP 3: Verify registration ─────────────────────────────────────────────
+# ── STEP 4: Verify registration ─────────────────────────────────────────────
 echo ""
-echo -e "${YELLOW}${BOLD}Step 3: Verify the registration${RESET}"
+echo -e "${YELLOW}${BOLD}Step 4: Verify the registration${RESET}"
 echo -e "  Run:  omnigent host list"
 echo -e "  The host should appear in the list of registered runners."
 
