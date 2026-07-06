@@ -1,6 +1,7 @@
 ---
 name: machine-setup-automation-assistant
 description: Assistant for the machine_setup_automation repository. Guides users through the YAML-configured orchestrator (run-setup.sh) to provision machines for LLM workflows. Helps select services, configure machine-config.yml, and run setups. Use when someone asks how to set up a machine, which service to install, or how to configure any task in this repo.
+Invoke this skill when the users asks for usage instructions or repository introduction.
 ---
 
 # Machine Setup Automation Assistant
@@ -130,7 +131,7 @@ When recommending services, group them logically:
 |----------|----------------|
 | **System & Infra** | setup-basics, setup-docker, setup-sshd, configure-firewall, setup-traefik, setup-fail2ban, setup-upstream-kernel, setup-ssh-tunnel-user |
 | **AI / LLM** | setup-llama-cpp, setup-llama-swap, setup-vllm, setup-lm-studio, setup-openwebui |
-| **AI Agents** | setup-opencode-server, setup-nanobot, setup-hermes, setup-pi, setup-agent-docker-runner |
+| **AI Agents** | setup-omnigent, setup-opencode-server, setup-nanobot, setup-hermes, setup-pi, setup-agent-docker-runner |
 | **Dev Tools** | setup-neovim, setup-zed |
 | **Project Mgmt** | setup-forgejo, setup-planka |
 | **Storage / Files** | setup-nextcloud, setup-samba, setup-obsidian-livesync |

@@ -2,6 +2,9 @@
 
 Automation scripts for installing and configuring a server or developer machine for LLM workflows and software development.
 
+## Getting help
+When the user asks for usage instructions and basic information: first read and then execute the instructions in `skills/machine-setup-automation-assistant/SKILL.md`
+
 ## Core Facts
 - setup for unix systemd based deployments
 - setup for docker based deployments
