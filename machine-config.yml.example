@@ -1,3 +1,4 @@
+---
 version: 1
 
 scripts:
@@ -178,4 +179,12 @@ scripts:
     enabled: false
     description: Install Concourse CI/CD
     env: {}
+    args: []
+  setup-omnigent:
+    enabled: false
+    description: Install Omnigent (AI coding agent meta-harness)
+    env:
+      OMNIGENT_HOME: /srv/omnigent
+      OMNIGENT_PORT: '8008'
+      OMNIGENT_TRAEFIK: 'false'
     args: []
