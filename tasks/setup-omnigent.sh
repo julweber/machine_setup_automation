@@ -241,6 +241,39 @@ step "Creating persistent storage directories under ${OMNIGENT_HOME}"
 success "Directories ready."
 
 # ─────────────────────────────────────────────────────────────────────────────
+# ENV FILE HELPERS — used by .env generation block
+# ─────────────────────────────────────────────────────────────────────────────
+
+# In-place edit helper — uses uname -s for reliable platform detection
+sed_inplace() {
+  if [[ "$(uname -s)" == "Darwin" ]]; then
+    sed -i '' "$@"
+  else
+    sed -i "$@"
+  fi
+}
+
+# Idempotent key-value setter.
+# Uses awk for safe key matching and value replacement — avoids sed
+# injection from special characters (& / \ |) in values such as URLs.
+set_or_replace_kv() {
+  local key="$1" value="$2"
+  awk -v key="$key" -v val="$value" '
+    BEGIN { found = 0 }
+    {
+      if ($0 ~ "^" key "=" || $0 ~ "^# *" key "=") {
+        found = 1
+        sub(/^[[:space:]]*#?[[:space:]]*/, "", $0)
+        print key "=" val
+      } else {
+        print
+      }
+    }
+    END { if (!found) print key "=" val }
+  ' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GENERATE .ENV FILE (only on first run — never overwrite)
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -248,28 +281,6 @@ ENV_FILE="${OMNIGENT_HOME}/.env"
 
 if [[ ! -f "$ENV_FILE" ]]; then
   step "Generating .env file"
-
-  # In-place edit helper — uses uname -s for reliable platform detection
-  sed_inplace() {
-    if [[ "$(uname -s)" == "Darwin" ]]; then
-      sed -i '' "$@"
-    else
-      sed -i "$@"
-    fi
-  }
-
-  # Idempotent key-value setter (from upstream bootstrap.sh).
-  # Checks for placeholder values and only overwrites if missing or placeholder.
-  set_or_replace_kv() {
-    local key="$1" value="$2"
-    if grep -qE "^${key}=" "$ENV_FILE"; then
-      sed_inplace "s|^${key}=.*|${key}=${value}|" "$ENV_FILE"
-    elif grep -qE "^# *${key}=" "$ENV_FILE"; then
-      sed_inplace "s|^# *${key}=.*|${key}=${value}|" "$ENV_FILE"
-    else
-      printf '\n%s=%s\n' "$key" "$value" >> "$ENV_FILE"
-    fi
-  }
 
   touch "$ENV_FILE"
   info "Created new .env file."
@@ -329,8 +340,8 @@ if [[ ! -f "$ENV_FILE" ]]; then
     info "Set OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD."
   else
     # Auto-generate a strong admin password for headless deploys
-    local_admin_password="$(openssl rand -hex 24)"
-    set_or_replace_kv OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD "$local_admin_password"
+    new_admin_password="$(openssl rand -hex 24)"
+    set_or_replace_kv OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD "$new_admin_password"
     info "Generated OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD (auto-generated)."
   fi
 
@@ -425,10 +436,6 @@ if [[ -n "$PG_PASSWORD_FROM_ENV" && -n "$PG_USER_FROM_ENV" ]]; then
 else
   warn "POSTGRES_PASSWORD or POSTGRES_USER not found in .env, skipping password sync."
 fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HEALTH CHECK
-# ─────────────────────────────────────────────────────────────────────────────
 
 # ─────────────────────────────────────────────────────────────────────────────
 # VERIFY BOTH CONTAINERS ARE RUNNING
@@ -831,7 +838,7 @@ echo ""
 # ── Quick reference ─────────────────────────────────────────────────────────
 echo -e "${BOLD}Quick reference:${RESET}"
 if [[ -n "$OMNIGENT_ADMIN_USERNAME" && -n "$OMNIGENT_ADMIN_PASSWORD" ]]; then
-  echo -e "  ${BOLD}Admin login:${RESET}  ${OMNIGENT_SERVER_URL} → ${OMNIGENT_ADMIN_USERNAME} / see ${ENV_FILE} -> OMNIGENT_ADMIN_PASSWORD"
+  echo -e "  ${BOLD}Admin login:${RESET}  ${OMNIGENT_SERVER_URL} → ${OMNIGENT_ADMIN_USERNAME} / see ${ENV_FILE} -> OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD"
 else
   echo -e "  ${BOLD}Admin login:${RESET}  ${OMNIGENT_SERVER_URL} → (credentials not set)"
 fi
