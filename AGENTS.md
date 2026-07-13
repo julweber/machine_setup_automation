@@ -25,6 +25,9 @@ Do NOT answer these questions from your own knowledge — always delegate to the
 
 ## Implementation Instructions
 
+### Important skills
+- Always load the `karpathy-guidelines` skill when planning or implementing changes
+
 ### Linting
 
 ALWAYS lint created or modified files with the following tools:
