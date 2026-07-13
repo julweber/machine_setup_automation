@@ -3,7 +3,7 @@
 ```bash
 # search models
 QUERY="Qwen3.6 un"
-hf models ls --search "${QUERY}" --sort downloads --limit 10
+hf models ls --search "${QUERY}" --sort downloads --limit 10 --json | jq '.'
 
 # check available files for model -> shows model repo files available
 MODEL="unsloth/Qwen3.6-35B-A3B-GGUF"
