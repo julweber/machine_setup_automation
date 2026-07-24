@@ -215,6 +215,18 @@ Deploys vLLM as a Docker-based OpenAI-compatible inference server. Supports NVID
 - Input validation for all configuration values
 - Supports `--nvidia`, `--amd`, `--cpu`, `--force`, `--check` flags
 
+#### `setup-vllm-omni.sh`
+Deploys **vLLM-Omni** — the official vLLM sub-project for omni-modality serving (TTS/speech, diffusion, image/video generation, any-to-any models like Qwen3-Omni / Cosmos3) — as a Docker-based, OpenAI-compatible server. Uses prebuilt Docker Hub images (no local build), auto-detects the GPU backend, and serves via `vllm serve <model> --omni`. Runs alongside `setup-vllm.sh` on its own port and directory.
+
+**Environment variables:** `PROJECT_DIR` (default `/srv/vllm-omni`), `HF_CACHE_DIR`, `VLLM_OMNI_VERSION` (default `latest`), `VLLM_OMNI_PORT` (default `8091`), `VLLM_OMNI_MODEL`, `HF_TOKEN`, `VLLM_OMNI_GPU_UTIL` (default `0.90`), `VLLM_OMNI_TENSOR_PARALLEL` (default `1`), `VLLM_OMNI_MAX_MODEL_LEN`, `VLLM_OMNI_SHM_SIZE` (default `8g`), `VLLM_OMNI_EXTRA_ARGS`, `VLLM_OMNI_TRAEFIK` (default `false`), `VLLM_OMNI_DOMAIN`, `PROXY_NETWORK` (default `proxy`)
+
+**Features:**
+- Prebuilt images: `vllm/vllm-omni` (NVIDIA, amd64/arm64) and `vllm/vllm-omni-rocm` (AMD)
+- Auto-detects NVIDIA / AMD / CPU backend (CPU is impractical for generative models)
+- Model-agnostic: without `VLLM_OMNI_MODEL` the container is not started (prints next steps)
+- Optional Traefik reverse-proxy integration
+- Idempotent; supports `--force` and `--check`
+
 #### `setup-omnigent.sh`
 Deploys Omnigent — an open-source meta-harness providing a common orchestration layer over multiple AI coding agents (Claude Code, Codex, Cursor, Pi, etc.) — via Docker Compose with Postgres + FastAPI. Also installs the runner CLI (`omnigent`) on the host for local agent execution.
 

@@ -130,7 +130,7 @@ When recommending services, group them logically:
 | Category | Typical Scripts |
 |----------|----------------|
 | **System & Infra** | setup-basics, setup-docker, setup-sshd, configure-firewall, setup-traefik, setup-fail2ban, setup-upstream-kernel, setup-ssh-tunnel-user |
-| **AI / LLM** | setup-llama-cpp, setup-llama-swap, setup-vllm, setup-lm-studio, setup-openwebui |
+| **AI / LLM** | setup-llama-cpp, setup-llama-swap, setup-vllm, setup-vllm-omni, setup-lm-studio, setup-openwebui |
 | **AI Agents** | setup-omnigent, setup-opencode-server, setup-nanobot, setup-hermes, setup-pi, setup-agent-docker-runner |
 | **Dev Tools** | setup-neovim, setup-zed |
 | **Project Mgmt** | setup-forgejo, setup-planka |

@@ -28,6 +28,7 @@
 - **llama-swap** — proxy for running multiple LLM endpoints via llama-cpp, routes requests between them
 - **llama-cpp** — C++ implementation for running LLMs
 - **vllm** — high-performance inference engine
+- **vllm-omni** — vLLM sub-project extending inference to omni-modality models (TTS, diffusion, image/video generation, any-to-any); served via `vllm serve <model> --omni`
 - **nanobot** — long-running AI agent in OpenClaw style
 - **whispering** — speech recognition tool for transcribing recorded audio to text
 
