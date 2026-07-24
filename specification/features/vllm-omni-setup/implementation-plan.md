@@ -529,10 +529,12 @@ if [[ "$VLLM_OMNI_TRAEFIK" == "true" ]]; then
   echo "      - ${PROXY_NETWORK}" >> "$COMPOSE_FILE"
 fi
 
-# Command — docker compose substitutes ${VLLM_OMNI_*} from .env at compose time
+# Command — docker compose substitutes ${VLLM_OMNI_*} from .env at compose time.
+# The vllm/vllm-omni images have an empty ENTRYPOINT, so the command must start
+# with `vllm serve` and take the model positionally (see behaviors.md edge case).
 {
   echo "    command: >"
-  echo "      --model \${VLLM_OMNI_MODEL}"
+  echo "      vllm serve \${VLLM_OMNI_MODEL}"
   echo "      --omni"
   echo "      --host 0.0.0.0"
   echo "      --port 8000"

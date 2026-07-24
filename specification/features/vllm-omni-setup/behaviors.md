@@ -185,12 +185,18 @@ Re-running the script without `--force` never destroys the existing `.env` or mo
     `security_opt: [seccomp=unconfined]`.
   - **Traefik mode:** router/service labels on port `8000` (`Host(${VLLM_OMNI_DOMAIN})`, `websecure`,
     `certresolver=letsencrypt`) and attach the `${PROXY_NETWORK}` network; omit the published port.
-  - `command`: `--model ${VLLM_OMNI_MODEL} --omni --host 0.0.0.0 --port 8000`, plus
+  - `command`: `vllm serve ${VLLM_OMNI_MODEL} --omni --host 0.0.0.0 --port 8000`, plus
     `--gpu-memory-utilization ${VLLM_OMNI_GPU_UTIL}` (GPU) or `--device cpu` (CPU), and the optional
     `--tensor-parallel-size` / `--max-model-len` / `${VLLM_OMNI_EXTRA_ARGS}` (emitted only when set).
+    The model is the **positional** argument of `vllm serve` (not `--model`).
 
 ### Edge Cases
 
+- **Empty ENTRYPOINT — the command must start with `vllm serve`.** The `vllm/vllm-omni*` images define
+  `ENTRYPOINT []` (verified in the upstream `docker/Dockerfile.cuda` and the official CUDA install docs, which
+  run `... vllm/vllm-omni:<tag> vllm serve <model> --omni --port <p>`). Unlike `vllm-openai` (whose entrypoint
+  already is the server), the compose `command:` here must supply the **full** `vllm serve … --omni …`
+  invocation, or the container exits immediately trying to exec `--model`.
 - The `--omni` flag is always present in the command — this is what distinguishes the Omni server.
 - The LM Studio models mount from `setup-vllm.sh` is intentionally **omitted** (Omni models are HF diffusion/TTS
   checkpoints, not GGUF).
