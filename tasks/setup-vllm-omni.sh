@@ -492,7 +492,7 @@ fi
 # Command — docker compose substitutes ${VLLM_OMNI_*} from .env at compose time
 {
   echo "    command: >"
-  echo "      --model \${VLLM_OMNI_MODEL}"
+  echo "      vllm serve \${VLLM_OMNI_MODEL}"
   echo "      --omni"
   echo "      --host 0.0.0.0"
   echo "      --port 8000"
