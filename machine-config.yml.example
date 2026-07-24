@@ -48,6 +48,13 @@ scripts:
       COLQWEN_PORT: '8100'
       # COLQWEN_MODEL_DIR: /home/<user>/.cache/huggingface
     args: []  # add --force to re-generate over an existing project
+  setup-vllm-omni:
+    enabled: false
+    description: 'Deploy vLLM-Omni (omni-modality inference engine)'
+    env:
+      VLLM_OMNI_PORT: '8091'
+      # VLLM_OMNI_MODEL: Tongyi-MAI/Z-Image-Turbo
+    args: []
   setup-lm-studio:
     enabled: false
     description: Install LM Studio server
