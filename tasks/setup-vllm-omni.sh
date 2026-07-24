@@ -315,6 +315,24 @@ detect_gpu() {
     fi
   fi
 
+  if ls /dev/dri/renderD* &>/dev/null; then
+    if command -v vulkaninfo &>/dev/null; then
+      GPU_INFO=$(vulkaninfo 2>/dev/null || true)
+      if echo "$GPU_INFO" | grep -qi "NVIDIA"; then
+        info "NVIDIA GPU detected via vulkaninfo."
+        BACKEND="nvidia"; return
+      fi
+      if echo "$GPU_INFO" | grep -Eqi "AMD|Radeon"; then
+        if [[ "$ARCH" == "aarch64" ]]; then
+          warn "AMD GPU detected but ROCm is not supported on arm64. Falling back to CPU."
+          BACKEND="cpu"; return
+        fi
+        info "AMD GPU detected via vulkaninfo."
+        BACKEND="amd"; return
+      fi
+    fi
+  fi
+
   warn "No supported GPU detected - falling back to CPU-only."
   BACKEND="cpu"
 }
@@ -418,6 +436,11 @@ services:
       - HF_HOME=/root/.cache/huggingface
       - VLLM_NO_USAGE_STATS=1
 EOF
+
+# arm64 CPU: disable AVX-512 (not available on most arm64 hosts)
+if [[ "$BACKEND" == "cpu" && "$ARCH" == "aarch64" ]]; then
+  echo "      - VLLM_CPU_DISABLE_AVX512=1" >> "$COMPOSE_FILE"
+fi
 
 # Volumes + shared memory
 cat >> "$COMPOSE_FILE" << EOF

@@ -50,7 +50,7 @@ scripts:
     args: []  # add --force to re-generate over an existing project
   setup-vllm-omni:
     enabled: false
-    description: 'Deploy vLLM-Omni (omni-modality inference engine)'
+    description: Deploy vLLM-Omni (omni-modality inference engine)
     env:
       VLLM_OMNI_PORT: '8091'
       # VLLM_OMNI_MODEL: Tongyi-MAI/Z-Image-Turbo
