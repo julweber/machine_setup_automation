@@ -25,8 +25,8 @@ All tunable values are environment variables with sensible defaults, each with a
 | Env Var | Flag | Default | Purpose |
 |---------|------|---------|---------|
 | `PROJECT_DIR` | `--dir <path>` | `/srv/colqwen` | Target directory for the generated project |
-| `COLQWEN_MODEL_DIR` | `--model-dir <path>` | `/srv/colqwen/models` | Host directory containing the model directories (e.g. `colqwen2.5-base/`, `colqwen2.5-v0.2/`) |
-| `COLQWEN_MODEL_NAME` | `--model-name <name>` | `colqwen2.5-v0.2` | Subdirectory of `COLQWEN_MODEL_DIR` the service loads |
+| `COLQWEN_MODEL_DIR` | `--model-dir <path>` | `$HOME/.cache/huggingface` | Host directory containing the models — typically the Hugging Face cache (`hub/models--vidore--colqwen2.5-v0.2/…`), but any directory with model folders works |
+| `COLQWEN_MODEL` | `--model <id-or-path>` | `vidore/colqwen2.5-v0.2` | Model the service loads: a HF model ID (resolved **offline** from the mounted cache) or an absolute path to a model directory inside the mount |
 | `COLPALI_VERSION` | `--colpali-version <ver>` | `0.3.17` | `colpali-engine` version installed into the image |
 | `NGC_PYTORCH_TAG` | `--ngc-tag <tag>` | `26.07-py3` | NVIDIA NGC PyTorch base image tag (`nvcr.io/nvidia/pytorch:<tag>`) |
 | `COLQWEN_PORT` | `--port <n>` | `8100` | Host port mapped to the service |
@@ -51,9 +51,9 @@ All generated files originate from static template files in `templates/colqwen/`
 
 Key characteristics:
 
-- **`.env` is the single configuration source.** `docker-compose.yml` reads all values (`NGC_PYTORCH_TAG`, `COLPALI_VERSION`, `COLQWEN_MODEL_DIR`, `COLQWEN_MODEL_NAME`, `COLQWEN_PORT`) from `.env`. The `Dockerfile` receives `NGC_PYTORCH_TAG` and `COLPALI_VERSION` as build args. Changing a version means editing `.env` and rebuilding — no file regeneration required.
+- **`.env` is the single configuration source.** `docker-compose.yml` reads all values (`NGC_PYTORCH_TAG`, `COLPALI_VERSION`, `COLQWEN_MODEL_DIR`, `COLQWEN_MODEL`, `COLQWEN_PORT`) from `.env`. The `Dockerfile` receives `NGC_PYTORCH_TAG` and `COLPALI_VERSION` as build args. Changing a version means editing `.env` and rebuilding — no file regeneration required.
 - **`colpali-engine==${COLPALI_VERSION}`** is installed via build arg (not pinned in `requirements.txt`), so a version switch only requires an `.env` edit plus `docker compose build`. `requirements.txt` holds the static dependencies only.
-- **Model volume:** `${COLQWEN_MODEL_DIR}` is mounted read-only at `/models` inside the container. The service loads `/models/${COLQWEN_MODEL_NAME}`.
+- **Model volume:** `${COLQWEN_MODEL_DIR}` is mounted read-only at the **identical absolute path** inside the container. Rationale: adapter models carry an absolute `base_model_name_or_path` in their `adapter_config.json` (pointing into the host's HF cache); with an identical-path mount these paths resolve inside the container without modifying `adapter_config.json` (which is out of scope). `HF_HOME` points at the mount so HF model IDs resolve offline from the cache.
 - **Offline enforcement:** the container sets `HF_HUB_OFFLINE=1` and `TRANSFORMERS_OFFLINE=1`. No weights are downloaded at build or runtime.
 - **GPU:** the compose file reserves NVIDIA GPUs (`driver: nvidia`, `count: all`); `restart: unless-stopped`.
 - Template placeholders must keep the templates lintable (hadolint for the Dockerfile, yamllint for the compose file).
@@ -71,6 +71,7 @@ The script validates its environment and inputs before generating anything. It n
 3. Validates inputs:
    - `COLQWEN_PORT` is numeric and within 1–65535.
    - `COLPALI_VERSION` and `NGC_PYTORCH_TAG` contain only safe characters (`[A-Za-z0-9._-]`), preventing template injection.
+   - `COLQWEN_MODEL` contains only safe characters plus `/` and no `..` segments.
    - `PROJECT_DIR` and `COLQWEN_MODEL_DIR` are absolute paths.
 4. Verifies Docker is installed and the daemon is running; warns if Docker Compose is older than v2.
 5. Proceeds to generation.
@@ -118,7 +119,7 @@ The script can be run repeatedly without destroying an existing installation or 
 All user-supplied settings are persisted in `PROJECT_DIR/.env`; the generated Docker files read their configuration exclusively from it.
 
 ### Happy Path
-1. The rendered `.env` contains: `NGC_PYTORCH_TAG`, `COLPALI_VERSION`, `COLQWEN_MODEL_DIR`, `COLQWEN_MODEL_NAME`, `COLQWEN_PORT` — each with a short explanatory comment.
+1. The rendered `.env` contains: `NGC_PYTORCH_TAG`, `COLPALI_VERSION`, `COLQWEN_MODEL_DIR`, `COLQWEN_MODEL`, `COLQWEN_PORT` — each with a short explanatory comment.
 2. `docker compose` automatically loads `.env` from the project directory; the compose file forwards `NGC_PYTORCH_TAG` and `COLPALI_VERSION` as build args and uses the remaining values for volume, environment, and port configuration.
 3. The user changes a value (e.g. `COLPALI_VERSION`), runs `docker compose build && docker compose up -d`, and the service uses the new configuration — without re-running the setup script.
 
@@ -136,19 +137,20 @@ All user-supplied settings are persisted in `PROJECT_DIR/.env`; the generated Do
 Models live outside the image and outside the generated project files; they are provided by the user and mounted as a read-only volume.
 
 ### Happy Path
-1. `COLQWEN_MODEL_DIR` points to a host directory containing model directories such as `colqwen2.5-base/` and `colqwen2.5-v0.2/`.
-2. The compose file mounts it read-only at `/models`.
-3. The service receives `MODEL_PATH=/models/${COLQWEN_MODEL_NAME}` via the container environment.
-4. No model download happens at any point — not by the script, not by the container.
+1. `COLQWEN_MODEL_DIR` points to the host directory containing the models — typically the Hugging Face cache (`$HOME/.cache/huggingface`, with models under `hub/models--vidore--colqwen2.5-v0.2/snapshots/<hash>/`), populated e.g. via `hf download`.
+2. The compose file mounts it read-only at the **identical absolute path** inside the container and sets `HF_HOME` to it.
+3. The service receives `COLQWEN_MODEL` via the container environment — either a HF model ID (e.g. `vidore/colqwen2.5-v0.2`, resolved offline from the mounted cache) or an absolute path to a model directory inside the mount.
+4. Adapter models whose `adapter_config.json` carries an absolute `base_model_name_or_path` into the host's HF cache resolve without modification, because host path and container path are identical.
+5. No model download happens at any point — not by the script, not by the container.
 
 ### Error Cases
 - None fatal at generation time (missing models block the *service*, not the *generation*).
 
 ### Edge Cases
-- **Default model dir does not exist:** the script creates `/srv/colqwen/models` (empty) and warns that models must be placed there before starting the service.
+- **Default model dir does not exist:** the script creates `$HOME/.cache/huggingface` (empty) and warns that models must be placed there before starting the service.
 - **Explicitly given `COLQWEN_MODEL_DIR` does not exist:** the script warns (possible typo) but does **not** create it and continues generating.
-- **`COLQWEN_MODEL_DIR/COLQWEN_MODEL_NAME` missing:** the script warns that the configured model is not present yet; generation continues.
-- **Adapter models:** if the configured model is an adapter whose `adapter_config.json` references a base model, the referenced path must resolve inside the container (user responsibility; adjusting `adapter_config.json` is out of scope).
+- **Configured model not found:** for a path-form `COLQWEN_MODEL` the script warns when the directory is missing; for an ID-form model it warns when `COLQWEN_MODEL_DIR/hub/models--<org>--<name>` is absent. Warning only — generation continues.
+- **Flat model layout:** users with plain model directories (e.g. `/srv/models/colqwen2.5-v0.2/`) set `COLQWEN_MODEL_DIR=/srv/models` and `COLQWEN_MODEL=/srv/models/colqwen2.5-v0.2` (path form); the identical-path mount makes this work unchanged.
 
 ---
 
@@ -158,14 +160,14 @@ Models live outside the image and outside the generated project files; they are 
 The generated `app/main.py` is a FastAPI service that loads the ColQwen2.5 model once and serves multi-vector embeddings for the lifetime of the container.
 
 ### Happy Path
-1. On startup the app loads model and processor from `MODEL_PATH` via `colpali-engine` (`ColQwen2_5` / `ColQwen2_5_Processor`), on CUDA with `bfloat16`.
+1. On startup the app loads model and processor via `colpali-engine` (`ColQwen2_5` / `ColQwen2_5_Processor`), on CUDA with `bfloat16`, from `COLQWEN_MODEL` — a HF model ID resolved offline from the mounted cache, or an absolute model directory path.
 2. The model stays loaded for the entire container lifetime; requests never trigger a (re-)load.
 3. `POST /embed/images` — accepts one or more images as multipart file uploads; responds with `{"embeddings": [...]}` containing one multi-vector embedding (list of vectors) per image, in input order.
 4. `POST /embed/queries` — accepts JSON `{"queries": ["...", ...]}`; responds with `{"embeddings": [...]}` containing one multi-vector embedding per query, in input order.
 5. The app listens on container port 8000 (mapped to `COLQWEN_PORT` on the host).
 
 ### Error Cases
-- **`MODEL_PATH` missing or unreadable at startup:** the app logs a clear error naming the expected path and exits non-zero (container stops; visible via `docker compose logs`). No silent retry loop, no download attempt.
+- **Configured model missing or unloadable at startup:** the app logs a clear error naming the configured model reference and exits non-zero (container stops; visible via `docker compose logs`). No silent retry loop, no download attempt.
 - **Empty request** (no files / empty query list): HTTP 400 with a descriptive message.
 - **Non-image upload on `/embed/images`:** HTTP 400 naming the offending file.
 
@@ -181,7 +183,7 @@ The generated `app/main.py` is a FastAPI service that loads the ColQwen2.5 model
 The script ends with a colourful, expressive summary so the user sees at a glance what was generated and what to do next.
 
 ### Happy Path
-1. Prints (colour-coded via `lib/helpers.sh`): project directory, model directory and configured model name, NGC PyTorch tag, colpali-engine version, host port, and `.env` location.
+1. Prints (colour-coded via `lib/helpers.sh`): project directory, model directory (noting the identical-path mount), configured model, NGC PyTorch tag, colpali-engine version, host port, and `.env` location.
 2. Prints the next steps verbatim:
    ```bash
    cd /srv/colqwen

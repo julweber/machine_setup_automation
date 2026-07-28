@@ -29,8 +29,8 @@ TEMPLATE_DIR="${SCRIPT_DIR}/../templates/colqwen"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 PROJECT_DIR="${PROJECT_DIR:-/srv/colqwen}"
-COLQWEN_MODEL_DIR="${COLQWEN_MODEL_DIR:-}"   # empty = default (PROJECT_DIR/models)
-COLQWEN_MODEL_NAME="${COLQWEN_MODEL_NAME:-colqwen2.5-v0.2}"
+COLQWEN_MODEL_DIR="${COLQWEN_MODEL_DIR:-}"   # empty = default (HF cache)
+COLQWEN_MODEL="${COLQWEN_MODEL:-vidore/colqwen2.5-v0.2}"
 COLPALI_VERSION="${COLPALI_VERSION:-0.3.17}"
 NGC_PYTORCH_TAG="${NGC_PYTORCH_TAG:-26.07-py3}"
 COLQWEN_PORT="${COLQWEN_PORT:-8100}"
@@ -49,10 +49,14 @@ usage() {
   echo ""
   echo -e "${BOLD}Options:${RESET}"
   echo "  --dir <path>              Project directory  (default: /srv/colqwen)"
-  echo "  --model-dir <path>        Host directory with the model directories,"
-  echo "                            e.g. colqwen2.5-base/, colqwen2.5-v0.2/"
-  echo "                            (default: <project dir>/models)"
-  echo "  --model-name <name>       Model subdirectory to load  (default: colqwen2.5-v0.2)"
+  echo "  --model-dir <path>        Host directory with the models - typically the"
+  echo "                            HF cache. Mounted read-only at the IDENTICAL"
+  echo "                            path in the container so absolute base-model"
+  echo "                            paths in adapter_config.json resolve."
+  echo "                            (default: \$HOME/.cache/huggingface)"
+  echo "  --model <id-or-path>      Model to load: HF model ID (resolved offline"
+  echo "                            from the mounted cache) or absolute model dir"
+  echo "                            path  (default: vidore/colqwen2.5-v0.2)"
   echo "  --colpali-version <ver>   colpali-engine version  (default: 0.3.17)"
   echo "  --ngc-tag <tag>           NGC PyTorch base image tag  (default: 26.07-py3)"
   echo "  --port <n>                Host port for the service  (default: 8100)"
@@ -61,12 +65,13 @@ usage() {
   echo "  --help                    Show this help"
   echo ""
   echo -e "${BOLD}Environment variables${RESET} (flag equivalents):"
-  echo "  PROJECT_DIR, COLQWEN_MODEL_DIR, COLQWEN_MODEL_NAME,"
+  echo "  PROJECT_DIR, COLQWEN_MODEL_DIR, COLQWEN_MODEL,"
   echo "  COLPALI_VERSION, NGC_PYTORCH_TAG, COLQWEN_PORT"
   echo ""
   echo -e "${BOLD}Examples:${RESET}"
   echo "  $0                                        # generate with defaults"
-  echo "  $0 --model-dir /srv/models --port 8101"
+  echo "  $0 --model vidore/colqwen2.5-v0.2 --port 8101"
+  echo "  $0 --model-dir /srv/models --model /srv/models/colqwen2.5-v0.2"
   echo "  $0 --ngc-tag 25.04-py3 --colpali-version 0.3.12"
   echo "  $0 --force                                # re-generate (.env backed up)"
   exit 0
@@ -77,7 +82,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --dir)              shift; PROJECT_DIR="$1" ;;
     --model-dir)        shift; COLQWEN_MODEL_DIR="$1" ;;
-    --model-name)       shift; COLQWEN_MODEL_NAME="$1" ;;
+    --model)            shift; COLQWEN_MODEL="$1" ;;
     --colpali-version)  shift; COLPALI_VERSION="$1" ;;
     --ngc-tag)          shift; NGC_PYTORCH_TAG="$1" ;;
     --port)             shift; COLQWEN_PORT="$1" ;;
@@ -92,7 +97,7 @@ done
 # Resolve the model dir default and remember whether it was user-provided.
 MODEL_DIR_EXPLICIT=1
 if [[ -z "$COLQWEN_MODEL_DIR" ]]; then
-  COLQWEN_MODEL_DIR="${PROJECT_DIR}/models"
+  COLQWEN_MODEL_DIR="${HOME}/.cache/huggingface"
   MODEL_DIR_EXPLICIT=0
 fi
 
@@ -120,9 +125,16 @@ validate_port() {
   fi
 }
 
+# HF model ID or absolute path - like safe strings but slashes are allowed.
+validate_model() {
+  if [[ ! "$COLQWEN_MODEL" =~ ^[A-Za-z0-9._/-]+$ || "$COLQWEN_MODEL" == *..* ]]; then
+    error "COLQWEN_MODEL contains invalid characters. Allowed: A-Z a-z 0-9 . _ / -  (no '..')"
+  fi
+}
+
 validate_abs_path  "PROJECT_DIR"        "$PROJECT_DIR"
 validate_abs_path  "COLQWEN_MODEL_DIR"  "$COLQWEN_MODEL_DIR"
-validate_safe_string "COLQWEN_MODEL_NAME" "$COLQWEN_MODEL_NAME"
+validate_model
 validate_safe_string "COLPALI_VERSION"    "$COLPALI_VERSION"
 validate_safe_string "NGC_PYTORCH_TAG"    "$NGC_PYTORCH_TAG"
 validate_port
@@ -220,11 +232,18 @@ if [[ ! -d "$COLQWEN_MODEL_DIR" ]]; then
     add_warning "Model directory ${COLQWEN_MODEL_DIR} does not exist (typo?) - it was NOT created."
   fi
 fi
-if [[ ! -d "${COLQWEN_MODEL_DIR}/${COLQWEN_MODEL_NAME}" ]]; then
-  add_warning "Configured model '${COLQWEN_MODEL_NAME}' not found in ${COLQWEN_MODEL_DIR} - the service will not start until it is present."
+# Path-form model: the directory itself must exist.
+# ID-form model (e.g. vidore/colqwen2.5-v0.2): expect the HF cache layout.
+if [[ "$COLQWEN_MODEL" == /* ]]; then
+  MODEL_CHECK_DIR="$COLQWEN_MODEL"
+else
+  MODEL_CHECK_DIR="${COLQWEN_MODEL_DIR}/hub/models--${COLQWEN_MODEL//\//--}"
+fi
+if [[ ! -d "$MODEL_CHECK_DIR" ]]; then
+  add_warning "Configured model '${COLQWEN_MODEL}' not found (expected: ${MODEL_CHECK_DIR}) - the service will not start until it is present."
 fi
 if [[ ${#WARNINGS[@]} -eq 0 ]]; then
-  success "Model found: ${COLQWEN_MODEL_DIR}/${COLQWEN_MODEL_NAME}"
+  success "Model found: ${MODEL_CHECK_DIR}"
 fi
 
 # ── Generate project files ────────────────────────────────────────────────────
@@ -237,10 +256,10 @@ if [[ -f "$ENV_FILE" ]]; then
 fi
 
 GENERATED_DATE="$(date -Iseconds)"
-export NGC_PYTORCH_TAG COLPALI_VERSION COLQWEN_MODEL_DIR COLQWEN_MODEL_NAME \
+export NGC_PYTORCH_TAG COLPALI_VERSION COLQWEN_MODEL_DIR COLQWEN_MODEL \
   COLQWEN_PORT GENERATED_DATE
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
-envsubst '${NGC_PYTORCH_TAG} ${COLPALI_VERSION} ${COLQWEN_MODEL_DIR} ${COLQWEN_MODEL_NAME} ${COLQWEN_PORT} ${GENERATED_DATE}' \
+envsubst '${NGC_PYTORCH_TAG} ${COLPALI_VERSION} ${COLQWEN_MODEL_DIR} ${COLQWEN_MODEL} ${COLQWEN_PORT} ${GENERATED_DATE}' \
   < "${TEMPLATE_DIR}/env.template" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 success ".env written (mode 600): ${ENV_FILE}"
@@ -258,8 +277,8 @@ echo -e "${BOLD}${GREEN}║      ColQwen project generated!              ║${RE
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  ${BOLD}Project dir:${RESET}      ${PROJECT_DIR}"
-echo -e "  ${BOLD}Model dir:${RESET}        ${COLQWEN_MODEL_DIR}  →  /models (read-only, in container)"
-echo -e "  ${BOLD}Model:${RESET}            ${COLQWEN_MODEL_NAME}"
+echo -e "  ${BOLD}Model dir:${RESET}        ${COLQWEN_MODEL_DIR}  (mounted read-only at the identical path)"
+echo -e "  ${BOLD}Model:${RESET}            ${COLQWEN_MODEL}"
 echo -e "  ${BOLD}NGC PyTorch tag:${RESET}  ${NGC_PYTORCH_TAG}"
 echo -e "  ${BOLD}colpali-engine:${RESET}   ${COLPALI_VERSION}"
 echo -e "  ${BOLD}Port:${RESET}             ${COLQWEN_PORT}"

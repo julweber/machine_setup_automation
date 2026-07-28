@@ -64,7 +64,7 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 
 | Test ID | Description | Expected Result |
 |---------|-------------|-----------------|
-| T3.1 | Inspect generated `.env` | Contains `NGC_PYTORCH_TAG`, `COLPALI_VERSION`, `COLQWEN_MODEL_DIR`, `COLQWEN_MODEL_NAME`, `COLQWEN_PORT` with comments |
+| T3.1 | Inspect generated `.env` | Contains `NGC_PYTORCH_TAG`, `COLPALI_VERSION`, `COLQWEN_MODEL_DIR`, `COLQWEN_MODEL`, `COLQWEN_PORT` with comments |
 | T3.2 | `docker compose config` in project dir | Values from `.env` resolved into build args, volume, environment, and port mapping |
 | T3.3 | Change `COLPALI_VERSION` in `.env`, rebuild | Image contains new colpali-engine version (`pip show colpali-engine` inside container) without re-running the setup script |
 | T3.4 | Re-run script with different `--port` but without `--force` | Existing `.env` untouched; status output points this out |
@@ -75,11 +75,12 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 
 | Test ID | Description | Expected Result |
 |---------|-------------|-----------------|
-| T4.1 | Fresh run with default model dir absent | `/srv/colqwen/models` created empty, warning printed |
+| T4.1 | Fresh run with default model dir absent | `$HOME/.cache/huggingface` created empty, warning printed |
 | T4.2 | Run with `--model-dir /nonexistent/path` | Warning printed, directory NOT created, generation continues |
-| T4.3 | Model dir exists but configured model subdir missing | Warning printed, generation continues |
-| T4.4 | Start service with models present | Container sees `/models` read-only; write attempt inside container fails |
+| T4.3 | ID-form `COLQWEN_MODEL` without matching `hub/models--<org>--<name>` dir; path-form with missing directory | Warning printed in both cases, generation continues |
+| T4.4 | Start service with models present | Model dir is mounted read-only at the identical container path; write attempt inside container fails |
 | T4.5 | Inspect image (`docker image ls`, `docker history`) | Model weights not part of the image (image size independent of model size) |
+| T4.6 | Start service with the adapter model `vidore/colqwen2.5-v0.2` whose `adapter_config.json` references the base model via an absolute host path | Base model resolves through the identical-path mount without modifying `adapter_config.json` |
 
 ---
 
@@ -91,7 +92,7 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 | T5.2 | `curl -X POST :8100/embed/queries` with `{"queries": ["test query"]}` | 200, one multi-vector embedding (list of vectors) returned |
 | T5.3 | `curl -X POST :8100/embed/images` with two image files | 200, two multi-vector embeddings in input order |
 | T5.4 | Send several requests in a row | No re-load in logs; response times stable (model stays in memory) |
-| T5.5 | Start with `COLQWEN_MODEL_NAME` pointing to a missing directory | Container exits non-zero; log names the expected path; no download attempt |
+| T5.5 | Start with `COLQWEN_MODEL` pointing to a missing model (ID or path form) | Container exits non-zero; log names the configured model reference; no download attempt |
 | T5.6 | POST empty query list / no files | HTTP 400 with descriptive message |
 | T5.7 | Upload a non-image file to `/embed/images` | HTTP 400 naming the offending file |
 | T5.8 | Disconnect host from the internet, restart the container | Service starts and serves requests (fully offline; `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`) |

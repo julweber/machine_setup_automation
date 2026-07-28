@@ -12,11 +12,14 @@ services:
     container_name: colqwen
     restart: unless-stopped
     environment:
-      - MODEL_PATH=/models/${COLQWEN_MODEL_NAME}
+      - COLQWEN_MODEL=${COLQWEN_MODEL}
+      - HF_HOME=${COLQWEN_MODEL_DIR}
       - HF_HUB_OFFLINE=1
       - TRANSFORMERS_OFFLINE=1
+    # The model dir is mounted at the IDENTICAL path so absolute
+    # base_model_name_or_path entries in adapter_config.json resolve.
     volumes:
-      - "${COLQWEN_MODEL_DIR}:/models:ro"
+      - "${COLQWEN_MODEL_DIR}:${COLQWEN_MODEL_DIR}:ro"
     ports:
       - "${COLQWEN_PORT}:8000"
     deploy:

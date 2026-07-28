@@ -8,34 +8,47 @@ queries. Fully offline - models are mounted read-only, nothing is downloaded.
 import os
 import sys
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 import torch
 from colpali_engine.models import ColQwen2_5, ColQwen2_5_Processor
 from fastapi import FastAPI, File, HTTPException, UploadFile
-from PIL import Image, UnidentifiedImageError
+from PIL import Image
 from pydantic import BaseModel
 
-MODEL_PATH = os.environ.get("MODEL_PATH", "/models/colqwen2.5-v0.2")
+# HF model ID (resolved offline from the mounted cache via HF_HOME) or an
+# absolute path to a model directory inside the mounted model dir.
+MODEL_REF = os.environ.get("COLQWEN_MODEL", "")
 
 state = {}
 
 
+def _fail(message: str):
+    print(f"ERROR: {message}", file=sys.stderr)
+    sys.exit(1)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
-    if not os.path.isdir(MODEL_PATH):
-        print(
-            f"ERROR: model directory '{MODEL_PATH}' does not exist or is not "
-            "readable. Place the model in the mounted model directory and "
-            "check COLQWEN_MODEL_DIR / COLQWEN_MODEL_NAME in the .env file.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-    state["model"] = ColQwen2_5.from_pretrained(
-        MODEL_PATH,
-        torch_dtype=torch.bfloat16,
-        device_map="cuda:0",
-    ).eval()
-    state["processor"] = ColQwen2_5_Processor.from_pretrained(MODEL_PATH)
+    if not MODEL_REF:
+        _fail("COLQWEN_MODEL is not set. Set it in the .env file next to "
+              "docker-compose.yml.")
+    if MODEL_REF.startswith("/") and not os.path.isdir(MODEL_REF):
+        _fail(f"model directory '{MODEL_REF}' does not exist or is not "
+              "readable. Check COLQWEN_MODEL_DIR / COLQWEN_MODEL in the "
+              ".env file.")
+    try:
+        state["model"] = ColQwen2_5.from_pretrained(
+            MODEL_REF,
+            torch_dtype=torch.bfloat16,
+            device_map="cuda:0",
+        ).eval()
+        state["processor"] = ColQwen2_5_Processor.from_pretrained(MODEL_REF)
+    except Exception as exc:  # noqa: BLE001 - fail loud with full context
+        _fail(f"failed to load model '{MODEL_REF}': {exc}\n"
+              "The service runs fully offline - the model (and, for LoRA "
+              "adapters, the base model referenced by adapter_config.json) "
+              "must be available under the mounted COLQWEN_MODEL_DIR.")
     yield
 
 
@@ -73,7 +86,7 @@ async def embed_queries(request: QueriesRequest):
 
 
 @app.post("/embed/images")
-async def embed_images(files: list[UploadFile] = File(default=[])):
+async def embed_images(files: Annotated[list[UploadFile], File()] = []):
     if not files:
         raise HTTPException(
             status_code=400, detail="at least one image file is required"
@@ -83,7 +96,7 @@ async def embed_images(files: list[UploadFile] = File(default=[])):
         try:
             image = Image.open(upload.file)
             image.load()
-        except (UnidentifiedImageError, OSError) as exc:
+        except OSError as exc:
             raise HTTPException(
                 status_code=400,
                 detail=f"file '{upload.filename}' is not a readable image",
