@@ -75,6 +75,14 @@ def _embed(batch) -> list[list[list[float]]]:
     ]
 
 
+# Requests are only served after the lifespan startup (= model load)
+# completed, so a 200 here means the model is ready. Used as readiness
+# probe by reverse proxies such as llama-swap (default checkEndpoint).
+@app.get("/health")
+async def health():
+    return {"status": "ok"}
+
+
 @app.post("/embed/queries")
 async def embed_queries(request: QueriesRequest):
     if not request.queries:

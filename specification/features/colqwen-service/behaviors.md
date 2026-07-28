@@ -164,7 +164,8 @@ The generated `app/main.py` is a FastAPI service that loads the ColQwen2.5 model
 2. The model stays loaded for the entire container lifetime; requests never trigger a (re-)load.
 3. `POST /embed/images` — accepts one or more images as multipart file uploads; responds with `{"embeddings": [...]}` containing one multi-vector embedding (list of vectors) per image, in input order.
 4. `POST /embed/queries` — accepts JSON `{"queries": ["...", ...]}`; responds with `{"embeddings": [...]}` containing one multi-vector embedding per query, in input order.
-5. The app listens on container port 8000 (mapped to `COLQWEN_PORT` on the host).
+5. `GET /health` — responds `200 {"status": "ok"}`. Requests are only served after startup (= model load) completed, so a 200 implies the model is ready; usable as readiness probe by reverse proxies such as llama-swap (default `checkEndpoint: /health`).
+6. The app listens on container port 8000 (mapped to `COLQWEN_PORT` on the host).
 
 ### Error Cases
 - **Configured model missing or unloadable at startup:** the app logs a clear error naming the configured model reference and exits non-zero (container stops; visible via `docker compose logs`). No silent retry loop, no download attempt.
@@ -211,7 +212,7 @@ Explicitly **not** part of this feature (from the original ticket, plus repo-spe
 - automatic compatibility checks between NGC, PyTorch, and colpali-engine versions
 - automatic adjustment of `adapter_config.json`
 - LlamaSwap integration
-- health checks or integration tests (neither in the script nor in the compose file)
+- health checks in the setup script or compose file, and integration tests (the app itself exposes `GET /health`, see Behavior 5)
 - automatic GPU or BF16 validation
 - Traefik reverse-proxy integration and ufw firewall rules
 - building or starting the service from the setup script (`docker compose build`/`up` remain user steps)

@@ -96,6 +96,7 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 | T5.6 | POST empty query list / no files | HTTP 400 with descriptive message |
 | T5.7 | Upload a non-image file to `/embed/images` | HTTP 400 naming the offending file |
 | T5.8 | Disconnect host from the internet, restart the container | Service starts and serves requests (fully offline; `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`) |
+| T5.9 | `curl :8100/health` after the container finished starting; same call while the model is still loading | 200 `{"status": "ok"}` once ready; during model load the connection is refused / not yet answered (no 200 before the model is loaded) |
 
 ---
 
