@@ -1,0 +1,28 @@
+---
+# ColQwen2.5 embedding service.
+# All configuration is read from the .env file next to this compose file -
+# edit .env, then: docker compose build && docker compose up -d
+services:
+  colqwen:
+    build:
+      context: .
+      args:
+        NGC_PYTORCH_TAG: "${NGC_PYTORCH_TAG}"
+        COLPALI_VERSION: "${COLPALI_VERSION}"
+    container_name: colqwen
+    restart: unless-stopped
+    environment:
+      - MODEL_PATH=/models/${COLQWEN_MODEL_NAME}
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+    volumes:
+      - "${COLQWEN_MODEL_DIR}:/models:ro"
+    ports:
+      - "${COLQWEN_PORT}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
