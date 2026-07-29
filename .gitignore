@@ -10,3 +10,4 @@ __pycache__/
 .ralph/
 .tickets/
 machine-config.yml
+.pi-subagents/
