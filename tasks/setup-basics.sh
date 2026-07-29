@@ -142,4 +142,14 @@ else
   curl -LsSf https://herdr.dev/install.sh | bash
 fi
 
+# Install hunk
+step "Installing hunk"
+if command -v hunk &>/dev/null; then
+  success "hunk already installed. Updating to latest..."
+  npm update -g hunkdiff
+else
+  info "Installing hunk..."
+  npm i -g hunkdiff
+fi
+
 success "Development basics installed successfully"
