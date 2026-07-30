@@ -23,6 +23,11 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 - Run `yamllint templates/colqwen/docker-compose.yml`
 - **Pass:** No errors or warnings.
 
+### T-04: ShellCheck — `templates/colqwen/test.sh`
+
+- Run `shellcheck templates/colqwen/test.sh`
+- **Pass:** No errors or warnings.
+
 ---
 
 ## Manual Test Scenarios
@@ -52,7 +57,7 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 
 | Test ID | Description | Expected Result |
 |---------|-------------|-----------------|
-| T2.1 | Fresh run on clean machine | `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `.env` (mode 600), `app/main.py` created under `/srv/colqwen` |
+| T2.1 | Fresh run on clean machine | `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `.env` (mode 600), `app/main.py`, `test.sh` (executable), `test.png` created under `/srv/colqwen` |
 | T2.2 | Run a second time without flags | Status printed, nothing modified (verify file mtimes unchanged), exit 0 |
 | T2.3 | Run with `--check` (fresh and existing state) | Status only, no files created or changed, exit 0 |
 | T2.4 | Edit `.env`, run with `--force` | `.env` backed up to `.env.bak`, all files re-rendered |
@@ -85,6 +90,8 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 ---
 
 ## Behavior 5: ColQwen Embedding Service (app)
+
+> T5.2, T5.3, T5.6, T5.7 and T5.9 (ready state) can be executed in one go via the generated smoke test: `cd /srv/colqwen && ./test.sh`
 
 | Test ID | Description | Expected Result |
 |---------|-------------|-----------------|

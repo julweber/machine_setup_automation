@@ -45,6 +45,8 @@ All generated files originate from static template files in `templates/colqwen/`
 ├── docker-compose.yml    # build args, model volume, GPU reservation, port mapping
 ├── requirements.txt      # static app dependencies (fastapi, uvicorn, pillow, ...)
 ├── .env                  # single source of configuration for the generated project
+├── test.sh               # post-install smoke test (run once the service is up)
+├── test.png              # fixture image for test.sh
 └── app/
     └── main.py           # FastAPI embedding service
 ```
@@ -95,7 +97,7 @@ The script can be run repeatedly without destroying an existing installation or 
 
 ### Happy Path (fresh install)
 1. Creates `PROJECT_DIR` (via sudo if required, then chowns to the invoking user) and `app/`.
-2. Renders all templates from `templates/colqwen/` into `PROJECT_DIR`: `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `.env`, `app/main.py`.
+2. Renders all templates from `templates/colqwen/` into `PROJECT_DIR`: `Dockerfile`, `docker-compose.yml`, `requirements.txt`, `.env`, `app/main.py`, `test.sh` (executable), `test.png`.
 3. Sets `.env` permissions to `600`.
 4. Prints the summary (see Behavior 6) and exits 0.
 
@@ -191,6 +193,7 @@ The script ends with a colourful, expressive summary so the user sees at a glanc
    cd /srv/colqwen
    docker compose build
    docker compose up -d
+   ./test.sh    # smoke test, once the log shows 'Application startup complete'
    ```
 3. Prints example `curl` calls for `POST /embed/queries` and `POST /embed/images`.
 4. Repeats any warnings raised during generation (e.g. model directory empty).
