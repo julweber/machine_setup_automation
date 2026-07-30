@@ -40,6 +40,14 @@ scripts:
       VLLM_PORT: '8000'
       VLLM_HOST: 0.0.0.0
     args: []
+  setup-colqwen:
+    enabled: false
+    description: Generate ColQwen2.5 embedding-service project (build manually)
+    env:
+      COLQWEN_MODEL: vidore/colqwen2.5-v0.2
+      COLQWEN_PORT: '8100'
+      # COLQWEN_MODEL_DIR: /home/<user>/.cache/huggingface
+    args: []  # add --force to re-generate over an existing project
   setup-lm-studio:
     enabled: false
     description: Install LM Studio server
