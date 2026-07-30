@@ -11,6 +11,15 @@ services:
         COLPALI_VERSION: "${COLPALI_VERSION}"
     container_name: colqwen
     restart: unless-stopped
+    # NGC PyTorch images recommend host IPC plus raised memlock/stack limits
+    # (docker run --ipc=host --ulimit memlock=-1 --ulimit stack=67108864).
+    # Not strictly needed for this single-process inference service, but it
+    # silences the SHMEM startup NOTE and avoids the 64MB /dev/shm cap if
+    # multi-process code (e.g. DataLoader workers) is ever added.
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
     environment:
       - COLQWEN_MODEL=${COLQWEN_MODEL}
       - HF_HOME=${COLQWEN_MODEL_DIR}
