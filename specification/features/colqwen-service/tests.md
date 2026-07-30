@@ -44,7 +44,7 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 | T1.4 | Run with `--colpali-version '0.3.17; rm -rf /'` | Exit non-zero, unsafe characters rejected |
 | T1.5 | Run with relative `--dir ./colqwen` | Exit non-zero, absolute path required |
 | T1.6 | Run while Docker daemon is stopped | Exit non-zero suggesting `sudo systemctl start docker` |
-| T1.7 | Run without any flags or env vars | Defaults applied (`/srv/colqwen`, port 8100, `0.3.17`, `26.07-py3`); no interactive prompt at any point |
+| T1.7 | Run without any flags or env vars | Defaults applied (`/srv/colqwen`, port 8100, `0.3.13`, `25.10-py3`); no interactive prompt at any point |
 
 ---
 
@@ -97,6 +97,7 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 | T5.7 | Upload a non-image file to `/embed/images` | HTTP 400 naming the offending file |
 | T5.8 | Disconnect host from the internet, restart the container | Service starts and serves requests (fully offline; `HF_HUB_OFFLINE=1`, `TRANSFORMERS_OFFLINE=1`) |
 | T5.9 | `curl :8100/health` after the container finished starting; same call while the model is still loading | 200 `{"status": "ok"}` once ready; during model load the connection is refused / not yet answered (no 200 before the model is loaded) |
+| T5.10 | Build with a `COLPALI_VERSION` / `NGC_PYTORCH_TAG` combination that drops the LoRA adapter weights (e.g. `0.3.17` / transformers 5.x with `vidore/colqwen2.5-v0.2`) | Container exits non-zero; log states that all `lora_B` weights are zero and points at the `.env` version combination; no 200 on `/health` |
 
 ---
 

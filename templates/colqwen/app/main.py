@@ -28,6 +28,25 @@ def _fail(message: str):
     sys.exit(1)
 
 
+def _verify_adapter_loaded(model):
+    """Fail hard if LoRA adapter weights were silently dropped.
+
+    peft initializes lora_B with zeros; trained adapters have non-zero
+    lora_B weights. If the model carries LoRA modules but ALL lora_B are
+    still zero after loading, the checkpoint's adapter weights were not
+    applied (e.g. key-mapping mismatch between the checkpoint and the
+    installed transformers version) and the service would silently serve
+    base-model embeddings.
+    """
+    lora_b = [p for n, p in model.named_parameters() if "lora_B" in n]
+    if lora_b and not any(bool((p != 0).any()) for p in lora_b):
+        _fail(f"model '{MODEL_REF}' loaded, but all LoRA lora_B weights "
+              "are zero - the adapter weights were dropped during loading "
+              "(key-mapping mismatch between checkpoint and transformers "
+              "version). Embeddings would be base-model only. Check the "
+              "COLPALI_VERSION / NGC_PYTORCH_TAG combination in .env.")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI):
     if not MODEL_REF:
@@ -49,6 +68,7 @@ async def lifespan(_app: FastAPI):
               "The service runs fully offline - the model (and, for LoRA "
               "adapters, the base model referenced by adapter_config.json) "
               "must be available under the mounted COLQWEN_MODEL_DIR.")
+    _verify_adapter_loaded(state["model"])
     yield
 
 

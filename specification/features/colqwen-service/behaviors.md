@@ -27,8 +27,8 @@ All tunable values are environment variables with sensible defaults, each with a
 | `PROJECT_DIR` | `--dir <path>` | `/srv/colqwen` | Target directory for the generated project |
 | `COLQWEN_MODEL_DIR` | `--model-dir <path>` | `$HOME/.cache/huggingface` | Host directory containing the models — typically the Hugging Face cache (`hub/models--vidore--colqwen2.5-v0.2/…`), but any directory with model folders works |
 | `COLQWEN_MODEL` | `--model <id-or-path>` | `vidore/colqwen2.5-v0.2` | Model the service loads: a HF model ID (resolved **offline** from the mounted cache) or an absolute path to a model directory inside the mount |
-| `COLPALI_VERSION` | `--colpali-version <ver>` | `0.3.17` | `colpali-engine` version installed into the image |
-| `NGC_PYTORCH_TAG` | `--ngc-tag <tag>` | `26.07-py3` | NVIDIA NGC PyTorch base image tag (`nvcr.io/nvidia/pytorch:<tag>`) |
+| `COLPALI_VERSION` | `--colpali-version <ver>` | `0.3.13` | `colpali-engine` version installed into the image (last transformers-4.x release; 0.3.14+ pull transformers 5.x, which drops the vidore LoRA adapter weights) |
+| `NGC_PYTORCH_TAG` | `--ngc-tag <tag>` | `25.10-py3` | NVIDIA NGC PyTorch base image tag (`nvcr.io/nvidia/pytorch:<tag>`); torch 2.9 / CUDA 13.0.2, satisfies the colpali-engine 0.3.13 torch pin and runs on driver 580.x |
 | `COLQWEN_PORT` | `--port <n>` | `8100` | Host port mapped to the service |
 
 Additional flags: `--force` (re-generate over an existing installation), `--check` (status only, no changes), `--help`.
@@ -169,6 +169,7 @@ The generated `app/main.py` is a FastAPI service that loads the ColQwen2.5 model
 
 ### Error Cases
 - **Configured model missing or unloadable at startup:** the app logs a clear error naming the configured model reference and exits non-zero (container stops; visible via `docker compose logs`). No silent retry loop, no download attempt.
+- **LoRA adapter weights silently dropped at load** (key-mapping mismatch between checkpoint and installed transformers version — all `lora_B` weights still zero after loading): the app logs a clear error pointing at the `COLPALI_VERSION` / `NGC_PYTORCH_TAG` combination and exits non-zero. The service must never silently serve base-model embeddings for an adapter model.
 - **Empty request** (no files / empty query list): HTTP 400 with a descriptive message.
 - **Non-image upload on `/embed/images`:** HTTP 400 naming the offending file.
 
