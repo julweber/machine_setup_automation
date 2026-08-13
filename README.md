@@ -190,6 +190,18 @@ Deploys llama-swap, a multi-model LLM proxy with hot-swap support, as a native s
 - Health check endpoint at `/health`
 - Comprehensive config with all options documented
 
+#### `setup-colqwen.sh`
+Generates a ColQwen2.5 embedding-service Docker project (FastAPI + colpali-engine on an NVIDIA NGC PyTorch base image). Serves multi-vector embeddings (dim 128) for document images and text queries — the retrieval side of visual document RAG. The script only generates the project; build and start it yourself. Models are mounted read-only from the HF cache at the identical path (adapter `base_model_name_or_path` entries resolve) and are never downloaded (fully offline: `HF_HUB_OFFLINE=1`).
+
+**Environment variables:** `PROJECT_DIR` (default `/srv/colqwen`), `COLQWEN_MODEL_DIR` (default `~/.cache/huggingface`), `COLQWEN_MODEL` (default `vidore/colqwen2.5-v0.2`), `COLPALI_VERSION` (default `0.3.13`), `NGC_PYTORCH_TAG` (default `25.10-py3`), `COLQWEN_PORT` (default `8100`)
+
+**Features:**
+- `POST /embed/queries` and `POST /embed/images` (multi-vector, one embedding per input, in order)
+- `GET /health` readiness probe (200 only after the model is loaded)
+- Fails loudly instead of serving wrong data: build aborts if pip replaced the NGC CUDA torch; startup aborts if LoRA adapter weights were silently dropped
+- Generated `./test.sh` smoke test (health, embeddings incl. dim check, error cases)
+- Tested combination for CUDA 13.0 / driver 580.x hosts (e.g. DGX Spark): NGC `25.10-py3` + colpali-engine `0.3.13` — see comments in the generated `.env` before changing versions
+
 #### `setup-vllm.sh`
 Deploys vLLM as a Docker-based OpenAI-compatible inference server. Supports NVIDIA (CUDA), AMD (ROCm), and CPU backends with auto-detection. Mounts the HuggingFace cache directory so models downloaded via `huggingface-cli` are automatically available.
 

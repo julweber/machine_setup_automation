@@ -1,0 +1,8 @@
+# Static app dependencies for the ColQwen2.5 embedding service.
+# colpali-engine is intentionally NOT pinned here - its version comes from
+# COLPALI_VERSION in .env and is installed via a Docker build arg.
+# torch is provided by the NGC PyTorch base image.
+fastapi
+uvicorn
+pillow
+python-multipart

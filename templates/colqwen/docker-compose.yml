@@ -1,0 +1,40 @@
+---
+# ColQwen2.5 embedding service.
+# All configuration is read from the .env file next to this compose file -
+# edit .env, then: docker compose build && docker compose up -d
+services:
+  colqwen:
+    build:
+      context: .
+      args:
+        NGC_PYTORCH_TAG: "${NGC_PYTORCH_TAG}"
+        COLPALI_VERSION: "${COLPALI_VERSION}"
+    container_name: colqwen
+    restart: unless-stopped
+    # NGC PyTorch images recommend host IPC plus raised memlock/stack limits
+    # (docker run --ipc=host --ulimit memlock=-1 --ulimit stack=67108864).
+    # Not strictly needed for this single-process inference service, but it
+    # silences the SHMEM startup NOTE and avoids the 64MB /dev/shm cap if
+    # multi-process code (e.g. DataLoader workers) is ever added.
+    ipc: host
+    ulimits:
+      memlock: -1
+      stack: 67108864
+    environment:
+      - COLQWEN_MODEL=${COLQWEN_MODEL}
+      - HF_HOME=${COLQWEN_MODEL_DIR}
+      - HF_HUB_OFFLINE=1
+      - TRANSFORMERS_OFFLINE=1
+    # The model dir is mounted at the IDENTICAL path so absolute
+    # base_model_name_or_path entries in adapter_config.json resolve.
+    volumes:
+      - "${COLQWEN_MODEL_DIR}:${COLQWEN_MODEL_DIR}:ro"
+    ports:
+      - "${COLQWEN_PORT}:8000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
