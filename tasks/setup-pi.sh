@@ -84,5 +84,15 @@ done
 step "Updating Pi extensions"
 pi update
 
+# Install Codegraph
+step "Installing Codegraph"
+npx @colbymchenry/codegraph install -y
+
+# Install Playwright
+step "Installing Playwright browsers and dependencies"
+npx playwright install-deps
+npx playwright install
+npx playwright install chrome
+
 success "Pi coding agent installed successfully"
 info "Run 'pi --help' to see available commands"
