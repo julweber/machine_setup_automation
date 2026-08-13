@@ -822,8 +822,7 @@ echo -e "  Run:  omnigent host ${OMNIGENT_SERVER_URL}"
 # ── STEP 4: Verify registration ─────────────────────────────────────────────
 echo ""
 echo -e "${YELLOW}${BOLD}Step 4: Verify the registration${RESET}"
-echo -e "  Run:  omnigent host list"
-echo -e "  The host should appear in the list of registered runners."
+echo -e "  Run:  omnigent host status"
 
 # ── File locations ──────────────────────────────────────────────────────────
 echo ""
