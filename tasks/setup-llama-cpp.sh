@@ -233,13 +233,40 @@ success "Base dependencies installed."
 case "${BACKEND}" in
   nvidia)
     step "Installing NVIDIA / CUDA dependencies"
-    if command -v nvcc &>/dev/null; then
-      CUDA_VER=$(nvcc --version | grep -oP 'release \K[0-9.]+')
-      success "CUDA toolkit already present (version ${CUDA_VER})."
-    else
-      info "CUDA toolkit not found – installing via apt…"
-      sudo apt-get install -y nvidia-cuda-toolkit
-      success "nvidia-cuda-toolkit installed."
+    # Prefer NVIDIA repo CUDA toolkit (e.g. /usr/local/cuda-13.0/bin/nvcc)
+    # over the broken apt nvidia-cuda-toolkit which includes ARM64 SVE headers
+    # that conflict with nvcc on aarch64.
+    CUDA_NVCC=""
+    CUDA_FOUND=0
+    for _cuda_dir in /usr/local/cuda-13.0/bin /usr/local/cuda-13/bin /usr/local/cuda/bin; do
+      if [[ -x "${_cuda_dir}/nvcc" ]]; then
+        export PATH="${_cuda_dir}:${PATH}"
+        CUDA_NVCC="${_cuda_dir}/nvcc"
+        CUDA_VER=$("${_cuda_dir}/nvcc" --version | grep -oP 'release \K[0-9.]+')
+        info "Using CUDA toolkit from ${_cuda_dir} (version ${CUDA_VER})."
+        CUDA_FOUND=1
+        break
+      fi
+    done
+    # If not found in preferred dirs, accept nvcc from PATH (unless it's the broken apt one)
+    if [[ "${CUDA_FOUND}" -eq 0 ]] && command -v nvcc &>/dev/null; then
+      _NVCC_PATH=$(command -v nvcc)
+      if [[ "${_NVCC_PATH}" == "/usr/bin/nvcc" || "${_NVCC_PATH}" == /usr/lib/nvidia-cuda-toolkit/* ]]; then
+        warn "nvcc found at ${_NVCC_PATH} appears to be the broken apt nvidia-cuda-toolkit (ARM64 SVE header conflict)."
+        warn "Make sure the NVIDIA CUDA repo toolkit is installed and in PATH."
+      else
+        CUDA_NVCC="${_NVCC_PATH}"
+        CUDA_VER=$(nvcc --version | grep -oP 'release \K[0-9.]+')
+        info "Using CUDA toolkit from PATH: ${_NVCC_PATH} (version ${CUDA_VER})."
+        CUDA_FOUND=1
+      fi
+    fi
+    # Fail early if no valid CUDA toolkit
+    if [[ "${CUDA_FOUND}" -eq 0 ]]; then
+      error "No valid CUDA toolkit (nvcc) found for NVIDIA backend."
+      error "Install the NVIDIA CUDA toolkit (e.g. from https://developer.nvidia.com/cuda-downloads)"
+      error "and ensure nvcc is in PATH, or set BACKEND=cpu for a CPU-only build."
+      exit 1
     fi
     if ! command -v nvidia-smi &>/dev/null; then
       warn "nvidia-smi not found. Make sure NVIDIA drivers are installed."
@@ -314,6 +341,10 @@ CMAKE_OPTS=(-DLLAMA_CURL=ON)
 case "${BACKEND}" in
   nvidia)
     CMAKE_OPTS+=(-DGGML_CUDA=ON)
+    if [[ -n "${CUDA_NVCC}" ]]; then
+      CMAKE_OPTS+=(-DCMAKE_CUDA_COMPILER:PATH="${CUDA_NVCC}")
+      info "CUDA compiler: ${CUDA_NVCC}"
+    fi
     info "CUDA acceleration: ON"
     ;;
   amd)
