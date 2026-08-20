@@ -415,7 +415,7 @@ Creates a locked-down SSH user with no shell access, configured exclusively for 
 Deploys a containerized observability stack (Prometheus, Grafana, Node Exporter, cAdvisor) via Docker Compose. Prometheus auto-discovers containers labeled `prometheus.scrape=true` (and `prometheus.port=<port>`) via Docker service discovery and exposes a hot-reloadable Lifecycle API. **cAdvisor** provides per-container CPU/memory/disk/network metrics. Grafana is pre-provisioned with a Node Exporter and a cAdvisor dashboard (no manual import). Data is persisted under `/srv/monitoring` and re-runs never destroy existing state (no `down -v`).
 
 **Exposure modes:**
-- **Direct** (default): Grafana at `http://127.0.0.1:3100` and the Prometheus UI at `http://127.0.0.1:9090` (loopback only). UFW allow rules are added for both ports.
+- **Direct** (default): Grafana at `http://<server-ip>:3100` (published on `0.0.0.0`, reachable from the local network) and the Prometheus UI at `http://127.0.0.1:9090` (loopback only, since the Prometheus UI has **no authentication**). Only the Grafana port gets an UFW allow rule; if you publish Prometheus beyond loopback (`PROMETHEUS_BIND_ADDRESS`), restrict it manually (e.g. `ufw allow from <subnet> to any port 9090 proto tcp`).
 - **Traefik** (`GRAFANA_TRAEFIK=true`): Grafana routed via the shared proxy network at `https://GRAFANA_DOMAIN`; Prometheus stays internal. Requires `GRAFANA_DOMAIN` and a running Traefik stack with the shared `proxy` network.
 
 **Environment variables:**
@@ -428,6 +428,8 @@ Deploys a containerized observability stack (Prometheus, Grafana, Node Exporter,
 | `GRAFANA_TRAEFIK` | `false` | Set to `true` to route Grafana via Traefik |
 | `GRAFANA_PORT` | `3100` | Host port for Grafana (direct mode) |
 | `PROMETHEUS_PORT` | `9090` | Host port for the Prometheus UI (direct mode) |
+| `GRAFANA_BIND_ADDRESS` | `0.0.0.0` | Interface to publish the Grafana port on (direct mode; `127.0.0.1` = loopback only) |
+| `PROMETHEUS_BIND_ADDRESS` | `127.0.0.1` | Interface to publish the Prometheus UI port on (direct mode; the UI is unauthenticated, so keep it loopback unless you restrict it with UFW) |
 | `GRAFANA_DOMAIN` | — | Grafana domain (required when `GRAFANA_TRAEFIK=true`) |
 | `GRAFANA_ADMIN_USER` | `admin` | Grafana admin username |
 | `GRAFANA_ADMIN_PASSWORD` | auto-generated | Grafana admin password (random if unset, stored in a mode-600 `.env`) |
@@ -439,8 +441,11 @@ Deploys a containerized observability stack (Prometheus, Grafana, Node Exporter,
 
 **Usage examples:**
 ```bash
-# Direct mode (default): http://127.0.0.1:3100
+# Direct mode (default): Grafana on the LAN (0.0.0.0), Prometheus on 127.0.0.1
 ./tasks/setup-monitoring.sh
+
+# Direct mode with everything on loopback
+GRAFANA_BIND_ADDRESS=127.0.0.1 ./tasks/setup-monitoring.sh
 
 # Traefik mode
 GRAFANA_TRAEFIK=true GRAFANA_DOMAIN=grafana.example.com ./tasks/setup-monitoring.sh

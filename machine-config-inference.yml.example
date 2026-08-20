@@ -190,6 +190,10 @@ scripts:
       # Direct mode host ports
       GRAFANA_PORT: '3100'
       PROMETHEUS_PORT: '9090'
+      # Direct mode interfaces: Grafana is exposed on the LAN by default;
+      # Prometheus stays loopback-only (its UI has no authentication)
+      # GRAFANA_BIND_ADDRESS: 0.0.0.0
+      # PROMETHEUS_BIND_ADDRESS: 127.0.0.1
       # Traefik mode: required when GRAFANA_TRAEFIK=true
       GRAFANA_DOMAIN: grafana.example.com
       # Grafana admin credentials (password auto-generated if empty, stored in a mode-600 .env)

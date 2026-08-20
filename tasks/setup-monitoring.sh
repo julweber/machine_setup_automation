@@ -15,8 +15,10 @@
 #   import).
 #
 #   Exposure modes:
-#     - direct (default): Grafana at http://127.0.0.1:GRAFANA_PORT and the
-#       Prometheus UI at http://127.0.0.1:PROMETHEUS_PORT (loopback only)
+#     - direct (default): Grafana published on GRAFANA_BIND_ADDRESS
+#       (default: 0.0.0.0 = reachable from the local network) and the
+#       Prometheus UI on PROMETHEUS_BIND_ADDRESS (default: 127.0.0.1 =
+#       loopback only, since the Prometheus UI has no authentication)
 #     - Traefik (GRAFANA_TRAEFIK=true): Grafana routed via the shared proxy
 #       network at https://GRAFANA_DOMAIN; Prometheus stays internal
 #
@@ -29,7 +31,7 @@
 #   5. Render templates (envsubst) into /srv/monitoring/{prometheus,grafana}
 #   6. Pull images and start the stack (detached)
 #   7. Health-check Prometheus and Grafana with a bounded timeout
-#   8. Add UFW allow rules for the published host ports (direct mode only)
+#   8. Add a UFW allow rule for the Grafana port (direct mode only)
 #   9. Summary with access URL, credentials location, management commands
 #
 # IMPORTANT VARIABLES:
@@ -39,6 +41,10 @@
 #   GRAFANA_TRAEFIK          - Set to "true" to route Grafana via Traefik (default: false)
 #   GRAFANA_PORT             - Host port for Grafana in direct mode (default: 3100)
 #   PROMETHEUS_PORT          - Host port for Prometheus UI in direct mode (default: 9090)
+#   GRAFANA_BIND_ADDRESS     - Interface to publish the Grafana port on (direct mode,
+#                              default: 0.0.0.0 = LAN access)
+#   PROMETHEUS_BIND_ADDRESS  - Interface to publish the Prometheus UI port on (direct mode,
+#                              default: 127.0.0.1 = loopback only; the UI has no authentication)
 #   GRAFANA_DOMAIN           - Domain for Traefik routing (required when GRAFANA_TRAEFIK=true)
 #   GRAFANA_ADMIN_USER       - Grafana admin username (default: admin)
 #   GRAFANA_ADMIN_PASSWORD   - Auto-generated via openssl rand if unset
@@ -49,9 +55,11 @@
 #   MONITORING_FORCE         - Set to "true" to re-create an existing stack
 #
 # FIREWALL:
-#   In direct mode, UFW allow rules are added for GRAFANA_PORT and
-#   PROMETHEUS_PORT (idempotent via lib/helpers.sh ufw_add_rule). In Traefik
-#   mode no direct ports are published, so no additional rules are added.
+#   In direct mode, a UFW allow rule is added for GRAFANA_PORT only (idempotent
+#   via lib/helpers.sh ufw_add_rule). No rule is added for PROMETHEUS_PORT;
+#   if you publish the unauthenticated Prometheus UI beyond loopback, restrict
+#   it manually (e.g. 'ufw allow from <subnet> to any port 9090 proto tcp').
+#   In Traefik mode no direct ports are published, so no rules are added.
 #
 # DEPENDENCIES:
 #   - Docker + daemon, Docker Compose v2+, openssl, curl, envsubst (gettext)
@@ -64,7 +72,7 @@
 #   - ${MONITORING_HOME}/monitoring/grafana/.env - Grafana admin credentials (mode 600)
 #
 # USAGE:
-#   ./tasks/setup-monitoring.sh   # direct mode (default): http://localhost:3100
+#   ./tasks/setup-monitoring.sh   # direct mode (default): Grafana on 0.0.0.0, Prometheus on 127.0.0.1
 #   GRAFANA_TRAEFIK=true GRAFANA_DOMAIN=grafana.example.com ./tasks/setup-monitoring.sh
 #
 # =============================================================================
@@ -99,6 +107,8 @@ PROXY_NETWORK="${PROXY_NETWORK:-proxy}"
 GRAFANA_TRAEFIK="${GRAFANA_TRAEFIK:-false}"
 GRAFANA_PORT="${GRAFANA_PORT:-3100}"
 PROMETHEUS_PORT="${PROMETHEUS_PORT:-9090}"
+GRAFANA_BIND_ADDRESS="${GRAFANA_BIND_ADDRESS:-0.0.0.0}"
+PROMETHEUS_BIND_ADDRESS="${PROMETHEUS_BIND_ADDRESS:-127.0.0.1}"
 GRAFANA_DOMAIN="${GRAFANA_DOMAIN:-}"
 GRAFANA_ADMIN_USER="${GRAFANA_ADMIN_USER:-admin}"
 GRAFANA_ADMIN_PASSWORD="${GRAFANA_ADMIN_PASSWORD:-}"
@@ -183,8 +193,12 @@ else
       error "Port ${port} is already in use. Choose a different GRAFANA_PORT/PROMETHEUS_PORT."
     fi
   done
-  success "Grafana will be exposed at http://127.0.0.1:${GRAFANA_PORT} (loopback only)"
-  success "Prometheus UI will be exposed at http://127.0.0.1:${PROMETHEUS_PORT} (loopback only)"
+  success "Grafana will be exposed at http://${GRAFANA_BIND_ADDRESS}:${GRAFANA_PORT}"
+  success "Prometheus UI will be exposed at http://${PROMETHEUS_BIND_ADDRESS}:${PROMETHEUS_PORT}"
+  if [[ "$PROMETHEUS_BIND_ADDRESS" != "127.0.0.1" && "$PROMETHEUS_BIND_ADDRESS" != "localhost" ]]; then
+    warn "The Prometheus UI is published beyond loopback and has NO authentication —"
+    warn "restrict access with UFW (e.g. 'ufw allow from <subnet> to any port ${PROMETHEUS_PORT} proto tcp')."
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -309,6 +323,8 @@ export PROXY_NETWORK
 export GRAFANA_DOMAIN
 export GRAFANA_PORT
 export PROMETHEUS_PORT
+export GRAFANA_BIND_ADDRESS
+export PROMETHEUS_BIND_ADDRESS
 export GRAFANA_ENV_FILE
 export PROMETHEUS_IMAGE_VERSION
 export GRAFANA_IMAGE_VERSION
@@ -398,7 +414,9 @@ fi
 
 if [[ "$GRAFANA_TRAEFIK" != "true" ]]; then
   ufw_add_rule "$GRAFANA_PORT" tcp "Grafana"
-  ufw_add_rule "$PROMETHEUS_PORT" tcp "Prometheus"
+  info "No UFW rule added for Prometheus (port ${PROMETHEUS_PORT}). If you expose"
+  info "the unauthenticated Prometheus UI beyond loopback, restrict it manually"
+  info "(e.g. 'ufw allow from <subnet> to any port ${PROMETHEUS_PORT} proto tcp')."
 fi
 
 # Disable cleanup trap on successful completion
@@ -417,8 +435,8 @@ if [[ "$GRAFANA_TRAEFIK" == "true" ]]; then
   echo -e "  ${BOLD}Grafana${RESET}            https://${GRAFANA_DOMAIN}"
   echo -e "  ${BOLD}Prometheus (internal)${RESET}  http://prometheus:9090"
 else
-  echo -e "  ${BOLD}Grafana${RESET}            http://127.0.0.1:${GRAFANA_PORT}"
-  echo -e "  ${BOLD}Prometheus${RESET}         http://127.0.0.1:${PROMETHEUS_PORT}"
+  echo -e "  ${BOLD}Grafana${RESET}            http://${GRAFANA_BIND_ADDRESS}:${GRAFANA_PORT}"
+  echo -e "  ${BOLD}Prometheus${RESET}         http://${PROMETHEUS_BIND_ADDRESS}:${PROMETHEUS_PORT}"
 fi
 echo -e "  ${BOLD}Admin credentials${RESET}  ${GRAFANA_ENV_FILE} (mode 600)"
 echo -e "  ${BOLD}Node Exporter (internal)${RESET}  http://node_exporter:9100"
