@@ -18,7 +18,7 @@
 - **Data dir:** service files live under `/srv/vllm-omni` (project convention `/srv/<service>`).
 - **Compose generation is inline** (heredocs) — justified under the AGENTS.md "except explicitly required" clause because backend/traefik/arch make the compose strongly conditional.
 - **No UFW code in the script** (parity with `setup-vllm.sh`).
-- **Docker Compose v2+** required; **Ubuntu 24.04** target.
+- **Docker Compose v2+** required; **Ubuntu** target.
 - **Lint gates:** `shellcheck` clean on the `.sh`; `yamllint` clean on edited YAML.
 - **Testing reality:** the repo has no bash unit-test framework. Verification = `shellcheck` + `bash -n` + `--help`/`--check` smoke runs + `yamllint`. Full GPU serve is verified on the target server (out of scope here).
 
@@ -299,7 +299,7 @@ step "Pre-flight checks"
 [[ "$(id -u)" -eq 0 ]] && warn "Running as root - not recommended."
 
 if ! grep -qi "ubuntu" /etc/os-release 2>/dev/null; then
-  warn "This script targets Ubuntu 24.04. Continuing anyway..."
+  warn "This script targets Ubuntu. Continuing anyway..."
 fi
 
 if ! command -v docker &>/dev/null; then

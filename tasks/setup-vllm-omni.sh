@@ -259,7 +259,7 @@ step "Pre-flight checks"
 [[ "$(id -u)" -eq 0 ]] && warn "Running as root - not recommended."
 
 if ! grep -qi "ubuntu" /etc/os-release 2>/dev/null; then
-  warn "This script targets Ubuntu 24.04. Continuing anyway..."
+  warn "This script targets Ubuntu. Continuing anyway..."
 fi
 
 if ! command -v docker &>/dev/null; then

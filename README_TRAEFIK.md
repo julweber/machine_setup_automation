@@ -32,7 +32,7 @@ This guide documents the `setup-traefik.sh` script, which deploys a production-r
 
 Before running the setup script:
 
-1. **Ubuntu 24.04** system with `sudo` privileges
+1. **Ubuntu** system with `sudo` privileges
 2. **Docker Engine** installed and running
 3. **User in docker group**: `groups $USER | grep docker` should show "docker"
 4. **Valid email address** for Let's Encrypt account registration

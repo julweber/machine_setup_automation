@@ -2,7 +2,7 @@
 
 ## Test Approach
 
-Automated testing is limited to static analysis (ShellCheck plus the project's mandatory linters), consistent with the project's current test strategy. All behaviors are verified manually on a live Ubuntu 24.04 machine with an NVIDIA GPU and locally available ColQwen2.5 model weights.
+Automated testing is limited to static analysis (ShellCheck plus the project's mandatory linters), consistent with the project's current test strategy. All behaviors are verified manually on a live Ubuntu machine with an NVIDIA GPU and locally available ColQwen2.5 model weights.
 
 ---
 
@@ -33,7 +33,7 @@ Automated testing is limited to static analysis (ShellCheck plus the project's m
 ## Manual Test Scenarios
 
 ### Prerequisites
-- Ubuntu 24.04 machine with Docker and Docker Compose v2 installed
+- Ubuntu machine with Docker and Docker Compose v2 installed
 - NVIDIA GPU with working container toolkit (`docker run --gpus all` works)
 - ColQwen2.5 model weights available locally (e.g. `colqwen2.5-base/` and `colqwen2.5-v0.2/`)
 

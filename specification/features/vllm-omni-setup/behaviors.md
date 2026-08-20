@@ -9,7 +9,7 @@
 
 This feature adds `tasks/setup-vllm-omni.sh` — a modular, idempotent Bash script that deploys a Docker-based,
 OpenAI-compatible **vLLM-Omni** inference server for omni-modality models (TTS, diffusion, image/video
-generation, any-to-any) on Ubuntu 24.04. It runs **in parallel** with the existing text-LLM `setup-vllm.sh`
+generation, any-to-any) on Ubuntu. It runs **in parallel** with the existing text-LLM `setup-vllm.sh`
 (separate port, separate `/srv/vllm-omni` directory, separate `VLLM_OMNI_*` env namespace). The existing
 `setup-vllm.sh` is **not modified**.
 

@@ -21,7 +21,7 @@ The configuration mechanism for the project. All tunable values (ports, versions
 
 | Term | Definition |
 |------|-----------|
-| **Provisioning** | The process of setting up a machine from a base Ubuntu 24.04 install to a fully configured LLM development or server environment. |
+| **Provisioning** | The process of setting up a machine from a base Ubuntu install to a fully configured LLM development or server environment. |
 | **Idempotency** | The requirement that every task script can be executed repeatedly without destroying already-made configurations or causing errors. Scripts use guard checks (e.g., `command -v`, `dpkg -l`, file existence tests) to skip work that has already been done. |
 | **Sourcing** | Bash `source` command used by entrypoints to run task scripts in the same shell process, so environment variables set by earlier scripts are visible to later ones. |
 

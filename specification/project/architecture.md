@@ -4,7 +4,7 @@
 
 - **Language:** Bash (primary)
 - **Configuration formats:** Environment variables (primary), with YAML, JSON, or `.env` files where individual components require them
-- **Target OS:** Ubuntu 24.04
+- **Target OS:** Ubuntu
 
 ## System Structure
 

@@ -2,7 +2,7 @@
 
 ## Test Approach
 
-All behaviors are verified manually on a live Ubuntu 24.04 machine. Automated testing is limited to static analysis (ShellCheck), consistent with the project's current test strategy.
+All behaviors are verified manually on a live Ubuntu machine. Automated testing is limited to static analysis (ShellCheck), consistent with the project's current test strategy.
 
 ---
 
@@ -27,4 +27,4 @@ All behaviors are verified manually on a live Ubuntu 24.04 machine. Automated te
 
 ## Manual Verification
 
-All remaining behaviors (pre-flight validation, argument parsing, idempotency handling, network creation, directory structure, credential generation, configuration file generation, Docker Compose generation, stack startup & health check, UFW firewall rules, summary output, shared helper library, and Forgejo integration) are verified manually on a live Ubuntu 24.04 machine.
+All remaining behaviors (pre-flight validation, argument parsing, idempotency handling, network creation, directory structure, credential generation, configuration file generation, Docker Compose generation, stack startup & health check, UFW firewall rules, summary output, shared helper library, and Forgejo integration) are verified manually on a live Ubuntu machine.

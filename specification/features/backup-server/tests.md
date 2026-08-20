@@ -8,7 +8,7 @@ Automated test coverage for this feature is **deferred to a future release**. Th
 ## Manual Test Scenarios
 
 ### Prerequisites
-- Ubuntu 24.04 target machine with Docker and Docker Compose installed
+- Ubuntu target machine with Docker and Docker Compose installed
 - At least one running service with Docker volumes (e.g., forgejo, openwebui)
 - External storage location or S3 credentials for multi-target tests - can be simulated with local directory
 

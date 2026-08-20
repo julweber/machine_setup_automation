@@ -2,7 +2,7 @@
 
 ## What It Does
 
-Machine Setup Automation is a collection of modular, idempotent Bash scripts that automate the provisioning of Ubuntu 24.04 machines for LLM (Large Language Model) development and server workflows. A single entrypoint script installs and configures an entire stack — from system packages and SSH hardening to Docker, LM Studio, Forgejo, and firewall rules.
+Machine Setup Automation is a collection of modular, idempotent Bash scripts that automate the provisioning of Ubuntu machines for LLM (Large Language Model) development and server workflows. A single entrypoint script installs and configures an entire stack — from system packages and SSH hardening to Docker, LM Studio, Forgejo, and firewall rules.
 
 ## Problem It Solves
 
@@ -10,7 +10,7 @@ Setting up a development or server machine for LLM work is tedious, error-prone,
 
 ## Primary Users
 
-- Developers and ML engineers who need to quickly spin up LLM-ready workstations or headless servers on Ubuntu 24.04.
+- Developers and ML engineers who need to quickly spin up LLM-ready workstations or headless servers on Ubuntu.
 - Intended to be open-sourced for the broader developer community.
 
 ## Core Capabilities
@@ -24,6 +24,6 @@ Setting up a development or server machine for LLM work is tedious, error-prone,
 
 ## Out of Scope
 
-- **Non-Linux platforms** — No Windows or macOS support. Ubuntu 24.04 only.
+- **Non-Linux platforms** — No Windows or macOS support. Ubuntu only.
 - **Application-level configuration** — The scripts install and configure services but do not manage application state (e.g., which LLM models to download, Forgejo repository setup, OpenWebUI preferences).
 - **Ongoing service management** — The project handles initial provisioning, not day-to-day operations, monitoring, or updates.

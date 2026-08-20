@@ -1,6 +1,34 @@
 # LLM Dev/Server Setup Automation Scripts
 
-Bash automation scripts to provision development and production machines for Large Language Model (LLM) workflows on **Ubuntu 24.04**.
+> **New Ubuntu machine (e.g Nvidia DGX Spark, AMD Strix Halo) → working local-LLM inference server. One YAML file. One command.**
+
+A proper inference server is ten install projects wearing a trench coat — GPU toolchain, inference engine, model proxy, web UI, hardened SSH, firewall, monitoring. Done by hand, it's a whole weekend of plumbing before your first token gets generated.
+
+**machine_setup_automation** is a repo of modular, idempotent Bash scripts plus one orchestrator that turns a fresh **Ubuntu** box into a machine that actually *serves* models — and it's replayable on every machine you buy next.
+
+```bash
+git clone https://github.com/julweber/machine_setup_automation.git
+cd machine_setup_automation
+cp machine-config-inference.yml.example machine-config.yml
+./run-setup.sh apply
+```
+
+That's it. You get llama.cpp compiled for your GPU, llama-swap hot-swapping models at `:9292`, a ChatGPT-style web UI at `:3333`, dashboards at `:3100` — with hardened SSH and UFW firewall rules on the way.
+
+```mermaid
+graph LR
+    A[Coding Agent] -->|"OpenAI-compatible API"| B[llama-swap :9292]
+    C[Open WebUI :3333] --> B
+    B -->|"loads / hot-swaps"| D[llama.cpp server<br/>GPU backend]
+```
+
+**What you get:**
+
+- **Modular & idempotent** — every `tasks/setup-*.sh` is self-contained; safe to re-run, safe to run alone
+- **Your config is the runbook** — enable/disable services and set env vars & args in one YAML file
+- **Order guaranteed** — scripts run in the order you listed them; one failure doesn't stop the rest
+- **Agent-friendly** — ships an [Agent Skill](https://agentskills.io) so Claude Code, pi, or any compatible agent can set the machine up for you
+- **Not just inference** — 30+ services: Forgejo, Nextcloud, n8n, Neovim, monitoring, remote desktop, dev tools, and more
 
 ---
 
@@ -20,7 +48,7 @@ The agent will read the README and discover available scripts on its own, then g
 ## Quick Start
 1. **Clone the repository** (or download a zip) and `cd` into it:
    ```bash
-   git clone https://github.com/your-org/machine_setup_automation.git
+   git clone https://github.com/julweber/machine_setup_automation.git
    cd machine_setup_automation
    ```
 2. **Make sure you have sudo rights** - all scripts call `sudo` where required.
