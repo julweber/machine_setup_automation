@@ -151,6 +151,7 @@ Located in `utilities/`:
 
 - **`utilities/run-llama-server.sh`** — Launch llama-server with auto flash-attention. Run without `--model` to list available `.gguf` models in `~/.lmstudio/models/`.
 - **`utilities/ssh-port-forward.sh`** — SSH tunnel wrapper: `./ssh-port-forward.sh <local_port> <remote_host> <remote_port> <ssh_user> [ssh_port]`
+- **`utilities/sync-server-files.sh`** — Incrementally sync a directory from the AI server to a local machine via rsync/SSH (e.g. repos, hermes workspaces). Config via `SYNC_REMOTE_USER`, `SYNC_REMOTE_HOST`, `SYNC_SSH_PORT` (default 2224), `SYNC_DELETE`, `SYNC_SUDO`; options `--source-directory`, `--target-directory`, `--dry-run`, `--verbose`, `--sudo`. See README.md "Utility Scripts" for full docs.
 
 ## Common Recommendations by Use Case
 

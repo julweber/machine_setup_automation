@@ -541,6 +541,67 @@ Simple SSH tunnel wrapper for creating secure port forwards from a local machine
 
 This creates an SSH tunnel that forwards connections from `localhost:3333` through the SSH connection to `192.168.0.3:3333`. The tunnel remains active until you press Ctrl+C.
 
+### `sync-server-files.sh`
+Syncs a directory from a remote AI server to a local machine (laptop, dev machine, ...) using rsync over SSH. Useful for pulling down repositories, agent workspaces (e.g. Hermes), or service data directories from the server.
+
+**Key features:**
+- Incremental sync — only changed files are transferred
+- Handles Docker volume ownership (UID 10000) gracefully by stripping ownership metadata on the destination
+- Pre-flight checks: connectivity to the server, existence of the remote path
+- Optional `--delete` mode to mirror the remote directory exactly
+- Optional `--sudo` for reading restricted files on the remote side
+- Syncs one directory per invocation — invoke once per directory to sync multiple
+
+**Environment variables:**
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `SYNC_REMOTE_USER` | SSH user on the server (**required**) | — |
+| `SYNC_REMOTE_HOST` | Server IP or hostname (**required**) | — |
+| `SYNC_SSH_PORT` | SSH port | `2224` |
+| `SYNC_DELETE` | Delete local files not on remote (`yes` to enable) | `no` |
+| `SYNC_SUDO` | Use sudo on remote side (`yes` to enable; also `--sudo` flag) | `no` |
+
+**Options:**
+- `--source-directory <path>` — Remote directory on the server to sync (required)
+- `--target-directory <path>` — Local directory to sync into (required)
+- `--dry-run` — Show what would be transferred without doing it
+- `--verbose` — Show rsync output in detail
+- `--sudo` — Use sudo on remote side for reading restricted files
+- `--help` — Show help and exit
+
+**Usage examples:**
+```bash
+# Sync the hermes agent workspace from the server
+SYNC_REMOTE_USER=alice SYNC_REMOTE_HOST=192.168.1.100 \
+  ./utilities/sync-server-files.sh --source-directory /srv/hermes --target-directory ~/backups/hermes
+
+# Mirror a directory (also delete local files removed on the server)
+SYNC_REMOTE_HOST=192.168.1.100 SYNC_DELETE=yes \
+  ./utilities/sync-server-files.sh --source-directory /srv/openwebui --target-directory ~/backups/openwebui
+
+# Read restricted files with sudo on the remote side
+SYNC_REMOTE_HOST=192.168.1.100 SYNC_SUDO=yes \
+  ./utilities/sync-server-files.sh --source-directory /srv/forgejo --target-directory ~/backups/forgejo --sudo
+
+# Preview without transferring
+SYNC_REMOTE_HOST=192.168.1.100 \
+  ./utilities/sync-server-files.sh --source-directory /srv/hermes --target-directory ~/backups/hermes --dry-run --verbose
+```
+
+**Sudo configuration (only needed with `--sudo` / `SYNC_SUDO=yes`):**
+Since rsync runs over SSH without a tty, sudo cannot prompt for a password. Grant passwordless sudo for rsync on the remote server:
+
+```bash
+sudo visudo
+# Add (adjust username as needed):
+alice ALL=(ALL) NOPASSWD: /usr/bin/rsync
+```
+
+This only grants passwordless access to rsync, not to arbitrary commands. For tighter restrictions, limit to specific paths:
+```
+alice ALL=(ALL) NOPASSWD: /usr/bin/rsync --server * /srv/hermes
+```
+
 ---
 
 ## Customization & Environment Variables
