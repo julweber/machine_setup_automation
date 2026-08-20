@@ -57,6 +57,9 @@ The orchestrator reads `machine-config.yml` to determine which setup scripts to 
 cp machine-config.yml.example machine-config.yml
 ```
 
+A pre-configured inference stack is also available as `machine-config-inference.yml.example`,
+which enables the scripts needed for local LLM inference (llama.cpp, llama-swap, Open WebUI, vLLM, etc.).
+
 ### YAML Format
 
 ```yaml
@@ -403,6 +406,47 @@ Creates a locked-down SSH user with no shell access, configured exclusively for 
 **Environment variables:** `RESTRICTED_USER` (default `tunneluser`)
 
 > **Note:** See `utilities/ssh-port-forward.sh` for SSH tunneling utilities.
+
+---
+
+### Monitoring & Observability
+
+#### `setup-monitoring.sh`
+Deploys a containerized observability stack (Prometheus, Grafana, Node Exporter, cAdvisor) via Docker Compose. Prometheus auto-discovers containers labeled `prometheus.scrape=true` (and `prometheus.port=<port>`) via Docker service discovery and exposes a hot-reloadable Lifecycle API. **cAdvisor** provides per-container CPU/memory/disk/network metrics. Grafana is pre-provisioned with a Node Exporter and a cAdvisor dashboard (no manual import). Data is persisted under `/srv/monitoring` and re-runs never destroy existing state (no `down -v`).
+
+**Exposure modes:**
+- **Direct** (default): Grafana at `http://127.0.0.1:3100` and the Prometheus UI at `http://127.0.0.1:9090` (loopback only). UFW allow rules are added for both ports.
+- **Traefik** (`GRAFANA_TRAEFIK=true`): Grafana routed via the shared proxy network at `https://GRAFANA_DOMAIN`; Prometheus stays internal. Requires `GRAFANA_DOMAIN` and a running Traefik stack with the shared `proxy` network.
+
+**Environment variables:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MONITORING_HOME` | `/srv` | Base data directory (compose + config live under `$MONITORING_HOME/monitoring`) |
+| `MONITORING_DOCKER_NETWORK` | `monitoring-net` | Internal monitoring Docker network |
+| `PROXY_NETWORK` | `proxy` | Traefik external network (Traefik mode) |
+| `GRAFANA_TRAEFIK` | `false` | Set to `true` to route Grafana via Traefik |
+| `GRAFANA_PORT` | `3100` | Host port for Grafana (direct mode) |
+| `PROMETHEUS_PORT` | `9090` | Host port for the Prometheus UI (direct mode) |
+| `GRAFANA_DOMAIN` | — | Grafana domain (required when `GRAFANA_TRAEFIK=true`) |
+| `GRAFANA_ADMIN_USER` | `admin` | Grafana admin username |
+| `GRAFANA_ADMIN_PASSWORD` | auto-generated | Grafana admin password (random if unset, stored in a mode-600 `.env`) |
+| `PROMETHEUS_IMAGE_VERSION` | `prom/prometheus:v3.13.2` | Prometheus image tag |
+| `GRAFANA_IMAGE_VERSION` | `grafana/grafana:13.1.1` | Grafana image tag |
+| `NODE_EXPORTER_IMAGE_VERSION` | `quay.io/prometheus/node-exporter:v1.12.1` | Node Exporter image tag |
+| `CADVISOR_IMAGE_VERSION` | `ghcr.io/google/cadvisor:v0.60.5` | cAdvisor image tag |
+| `MONITORING_FORCE` | `false` | Set to `true` to re-create an existing stack (data preserved) |
+
+**Usage examples:**
+```bash
+# Direct mode (default): http://127.0.0.1:3100
+./tasks/setup-monitoring.sh
+
+# Traefik mode
+GRAFANA_TRAEFIK=true GRAFANA_DOMAIN=grafana.example.com ./tasks/setup-monitoring.sh
+```
+
+> **Note:** To monitor a service, label its container `prometheus.scrape=true` and `prometheus.port=<port>`. The Grafana admin password is stored in `/srv/monitoring/grafana/.env` (mode 600). Reload Prometheus config without a restart: `docker compose -f /srv/monitoring/docker-compose.yml exec prometheus wget -q --post-data='' http://localhost:9090/-/reload`.
 
 ---
 

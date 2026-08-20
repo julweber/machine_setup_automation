@@ -1,0 +1,205 @@
+---
+# =============================================================================
+# machine-config-inference.yml.example
+# =============================================================================
+# Inference-focused machine configuration.
+# Installs and configures the stack needed for local LLM inference:
+#   1. setup-basics.sh       — Essential dev tools
+#   2. setup-sshd.sh         — SSH server (hardened)
+#   3. configure-firewall.sh — UFW firewall rules
+#   4. setup-docker.sh       — Docker Engine
+#   5. setup-llama-cpp.sh    — llama.cpp (GPU/CPU backend)
+#   6. setup-llama-swap.sh   — llama-swap (multi-model LLM proxy, systemd)
+#   7. setup-openwebui.sh    — Open WebUI (web interface for LLMs, Docker)
+#   8. setup-pi.sh           — Pi coding agent
+#   9. setup-vllm.sh         — vLLM (OpenAI-compatible inference server, Docker)
+#  10. setup-monitoring.sh   — Monitoring stack (Prometheus + Grafana + Node Exporter + cAdvisor, Docker)
+#
+# NOTE: The orchestrator (run-setup.sh) executes the enabled scripts in the
+# order they are listed in the .scripts mapping of this file.
+# =============================================================================
+
+version: 1
+
+scripts:
+  setup-basics:
+    enabled: true
+    description: Install essential development tools (git, jq, yq, node, etc.)
+    env:
+      NVM_VERSION: '0.40.4'
+      NVM_DIR: $HOME/.nvm
+    args: []
+
+  setup-sshd:
+    enabled: true
+    description: Configure OpenSSH server with pubkey-only auth on custom port
+    env:
+      SSHD_PORT: '2224'
+    args: []
+
+  configure-firewall:
+    enabled: true
+    description: Configure UFW firewall rules for inference services
+    env:
+      SSHD_PORT: '2224'
+      LM_STUDIO_PORT: '1234'
+      OPENCODE_PORT: '4096'
+      OPENWEBUI_PORT: '3333'
+      KUBERNETES_API_PORT: '6443'
+      GNOME_REMOTE_PORT: '3389'
+    args: []
+
+  setup-docker:
+    enabled: true
+    description: Install Docker Engine and related components
+    env: {}
+    args: []
+
+  setup-llama-cpp:
+    enabled: true
+    description: Build and install llama.cpp with GPU backend
+    env:
+      # Install source directory (default: /opt/llama.cpp)
+      INSTALL_DIR: /opt/llama.cpp
+      # Number of parallel build jobs (default: nproc)
+      JOBS: ''
+    args:
+      # Force reinstall; --nvidia (CUDA), --amd (Vulkan), --cpu (CPU-only)
+      - --force
+      - --nvidia
+
+  setup-llama-swap:
+    enabled: true
+    description: Deploy llama-swap as a systemd daemon (multi-model LLM proxy)
+    env:
+      LLAMA_SWAP_PORT: '9292'
+      LLAMA_SWAP_DIR: /srv/llama-swap
+      # Health check timeout in seconds (default: 500)
+      LLAMA_SWAP_HEALTH_TIMEOUT: '500'
+      # Log level: debug, info, warn, error (default: info)
+      LLAMA_SWAP_LOG_LEVEL: info
+      # Starting port for PORT macro in config (default: 10001)
+      LLAMA_SWAP_START_PORT: '10001'
+      # Default model idle TTL in seconds (default: 0 = never)
+      LLAMA_SWAP_GLOBAL_TTL: '0'
+      # Bind address (default: 0.0.0.0:9292)
+      LLAMA_SWAP_LISTEN_ADDR: '0.0.0.0:9292'
+      # Service runtime user (default: root)
+      LLAMA_SWAP_USER: root
+    args:
+      # - --force
+
+  setup-openwebui:
+    enabled: true
+    description: Install Open WebUI (web interface for LLMs) via Docker Compose
+    env:
+      # Host port for web UI access (default: 3333)
+      OPENWEBUI_PORT: '3333'
+      # Port where LM Studio API is listening (default: 1234)
+      LM_STUDIO_PORT: '1234'
+      # Installation directory (default: $HOME/open-webui)
+      PROJECT_DIR: $HOME/open-webui
+      # Custom secret key (auto-generated if not set)
+      WEBUI_SECRET_KEY: ''
+      # Traefik integration (default: false)
+      OPENWEBUI_TRAEFIK: 'false'
+      # Domain for Traefik access (required when Traefik=true)
+      OPENWEBUI_DOMAIN: ''
+      # Traefik's external Docker network name (default: proxy)
+      PROXY_NETWORK: proxy
+    args: []
+
+  setup-pi:
+    enabled: true
+    description: Install Pi coding agent with extensions
+    env:
+      NVM_DIR: $HOME/.nvm
+    args: []
+
+  setup-vllm:
+    enabled: true
+    description: Deploy vLLM as Docker-based OpenAI-compatible inference server
+    env:
+      # Installation directory (default: /srv/vllm)
+      PROJECT_DIR: /srv/vllm
+      # HuggingFace cache directory (default: $HOME/.cache/huggingface)
+      HF_CACHE_DIR: $HOME/.cache/huggingface
+      # vLLM API port (default: 8000)
+      VLLM_PORT: '8000'
+      # HuggingFace model ID or path (optional)
+      VLLM_MODEL: ''
+      # HuggingFace token (optional, required for gated models)
+      HF_TOKEN: ''
+      # Full image override (default: pinned vllm/vllm-openai)
+      VLLM_IMAGE: ''
+      # GPU memory utilization (default: empty = auto)
+      VLLM_GPU_UTIL: ''
+      # Additional vLLM server arguments (space-separated)
+      VLLM_EXTRA_ARGS: ''
+      # Tensor-parallel degree / number of GPUs (default: 1)
+      VLLM_TENSOR_PARALLEL: '1'
+      # Cap context length (optional)
+      VLLM_MAX_MODEL_LEN: ''
+      # Model dtype: auto|bfloat16|float16|float32 (default: auto)
+      VLLM_DTYPE: auto
+      # Shared memory size (default: 8g)
+      VLLM_SHM_SIZE: 8g
+      # Max concurrent sequences (optional)
+      VLLM_MAX_NUM_SEQS: ''
+      # Max batched tokens per iteration (optional)
+      VLLM_MAX_NUM_BATCHED_TOKENS: ''
+      # Served model name (optional)
+      VLLM_SERVED_MODEL_NAME: ''
+      # Trust remote code: true|false (optional)
+      VLLM_TRUST_REMOTE_CODE: ''
+      # Load format (e.g. fastsafetensors) (optional)
+      VLLM_LOAD_FORMAT: ''
+      # Reasoning parser (e.g. qwen3, nemotron_v3) (optional)
+      VLLM_REASONING_PARSER: ''
+      # Tool call parser (e.g. qwen3, qwen3_xml) (optional)
+      VLLM_TOOL_CALL_PARSER: ''
+      # Enable auto tool choice: true|false (optional)
+      VLLM_ENABLE_AUTO_TOOL_CHOICE: ''
+      # Spark extra env vars (optional, GB10 workarounds)
+      VLLM_SPARK_EXTRA_ENV: ''
+      # Health check timeout (empty = 900s GPU / 120s CPU)
+      VLLM_HEALTH_TIMEOUT: ''
+      # Traefik integration (default: false)
+      VLLM_TRAEFIK: 'false'
+      # Domain for Traefik access (optional)
+      VLLM_DOMAIN: ''
+      # Traefik's external Docker network name (default: proxy)
+      PROXY_NETWORK: proxy
+    args:
+      # --nvidia (CUDA), --amd (ROCm), --cpu (CPU-only), --force to recreate
+      - --force
+      # - --nvidia
+
+  setup-monitoring:
+    enabled: true
+    description: Deploy monitoring stack (Prometheus + Grafana + Node Exporter + cAdvisor) via Docker Compose
+    env:
+      # Base data directory (compose + config live under $MONITORING_HOME/monitoring)
+      MONITORING_HOME: /srv
+      # Internal monitoring Docker network (default: monitoring-net)
+      # MONITORING_DOCKER_NETWORK: monitoring-net
+      # Traefik external network (Traefik mode only, default: proxy)
+      PROXY_NETWORK: proxy
+      # Exposure mode: false = direct (loopback), true = route Grafana via Traefik
+      GRAFANA_TRAEFIK: 'false'
+      # Direct mode host ports
+      GRAFANA_PORT: '3100'
+      PROMETHEUS_PORT: '9090'
+      # Traefik mode: required when GRAFANA_TRAEFIK=true
+      GRAFANA_DOMAIN: grafana.example.com
+      # Grafana admin credentials (password auto-generated if empty, stored in a mode-600 .env)
+      GRAFANA_ADMIN_USER: admin
+      # GRAFANA_ADMIN_PASSWORD: ''
+      # Image tags (defaults shown; override to pin a different version)
+      PROMETHEUS_IMAGE_VERSION: prom/prometheus:v3.13.2
+      GRAFANA_IMAGE_VERSION: grafana/grafana:13.1.1
+      NODE_EXPORTER_IMAGE_VERSION: quay.io/prometheus/node-exporter:v1.12.1
+      CADVISOR_IMAGE_VERSION: ghcr.io/google/cadvisor:v0.60.5
+      # Set to true to re-create an existing stack (data preserved)
+      MONITORING_FORCE: 'false'
+    args: []

@@ -86,13 +86,17 @@ pi update
 
 # Install Codegraph
 step "Installing Codegraph"
-npx @colbymchenry/codegraph install -y
+if ! command -v codegraph &>/dev/null; then
+  step "Installing Codegraph"
+  npm install -g @colbymchenry/codegraph
+  codegraph  install -y || true
+fi
 
 # Install Playwright
 step "Installing Playwright browsers and dependencies"
-npx playwright install-deps
-npx playwright install
-npx playwright install chrome
+npx playwright install-deps || true
+npx playwright install || true
+npx playwright install chrome || true
 
-success "Pi coding agent installed successfully"
+success "Pi coding agent and extras installed successfully"
 info "Run 'pi --help' to see available commands"

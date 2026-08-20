@@ -34,6 +34,7 @@ NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 # Packages to install
 declare -a APT_PACKAGES=(
   curl
+  gettext-base
   tldr
   bat
   git

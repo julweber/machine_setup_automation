@@ -105,6 +105,18 @@ discover_scripts() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# config_script_order
+#   Prints script names (without .sh suffix) in the order they are
+#   defined in the .scripts mapping of the configuration file.
+#   Note: yq "keys" sorts alphabetically; "to_entries" preserves
+#   document order.
+# ─────────────────────────────────────────────────────────────────────────────
+
+config_script_order() {
+  yq -r '.scripts | to_entries[] | .key' "$CONFIG_FILE"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # is_script_enabled
 #   Checks if a script is enabled in the config.
 #   Returns 0 if enabled, 1 if disabled/not found.
@@ -206,17 +218,23 @@ cmd_status() {
   printf '%bScript Status:%b\n' "${BOLD}" "${RESET}"
   echo
   
-  # Discover scripts into an array (safe for names with spaces)
+  # List scripts in the order defined in the config file, then append
+  # scripts found on disk that are not in the config (sorted alphabetically)
   local -a scripts_array=()
-  local scripts_source
-  # shellcheck disable=SC2119  # discover_scripts uses default pattern
-  scripts_source=$(discover_scripts) || {
-    log_warn "Could not discover scripts from $TASKS_DIR"
-    scripts_source=$(yq '.scripts | keys | .[]' "$CONFIG_FILE")
-  }
+  local -A seen=()
+  local line
   while IFS= read -r line; do
-    [[ -n "$line" ]] && scripts_array+=("$line")
-  done <<< "$scripts_source"
+    if [[ -n "$line" ]]; then
+      scripts_array+=("${line}.sh")
+      seen["$line"]=1
+    fi
+  done < <(config_script_order)
+
+  while IFS= read -r line; do
+    if [[ -n "$line" && -z "${seen[${line%.sh}]:-}" ]]; then
+      scripts_array+=("$line")
+    fi
+  done < <(discover_scripts)
 
   if (( ${#scripts_array[@]} == 0 )); then
     log_error "No scripts found"
@@ -277,7 +295,7 @@ cmd_status() {
         env_vars=$(get_script_env "$script")
         if [[ -n "$env_vars" ]]; then
           echo "    Environment:"
-          echo "${env_vars//$'\n'/\n      }"
+          echo "      ${env_vars//$'\n'/$'\n      '}"
         fi
 
         # Show args
@@ -285,7 +303,7 @@ cmd_status() {
         args=$(get_script_args "$script")
         if [[ -n "$args" ]]; then
           echo "    Arguments:"
-          echo "${args//$'\n'/\n      }"
+          echo "      ${args//$'\n'/$'\n      '}"
         fi
       fi
     fi
@@ -365,17 +383,17 @@ cmd_apply() {
   log_info "Found ${enabled_count} enabled script(s)"
   echo
   
-  # shellcheck disable=SC2119  # discover_scripts uses default pattern
-  # Discover scripts into an array (safe for names with spaces)
+  # Run scripts in the order they are defined in the config file
   local -a scripts_array=()
-  local scripts_source
-  scripts_source=$(discover_scripts) || {
-    log_warn "Could not discover scripts from $TASKS_DIR"
-    scripts_source=$(yq '.scripts | keys | .[]' "$CONFIG_FILE")
-  }
+  local line
   while IFS= read -r line; do
-    [[ -n "$line" ]] && scripts_array+=("$line")
-  done <<< "$scripts_source"
+    [[ -n "$line" ]] && scripts_array+=("${line}.sh")
+  done < <(config_script_order)
+
+  if (( ${#scripts_array[@]} == 0 )); then
+    log_error "No scripts found in configuration"
+    exit 1
+  fi
 
   # Run each enabled script
   local failed_count=0

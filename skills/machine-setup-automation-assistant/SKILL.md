@@ -33,6 +33,9 @@ Guide the user through these steps:
 # Step 1: Copy the example config
 cp machine-config.yml.example machine-config.yml
 
+# Or use the pre-configured inference stack:
+# cp machine-config-inference.yml.example machine-config.yml
+
 # Step 2: Preview what's available
 ./run-setup.sh status
 ```
