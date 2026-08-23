@@ -20,6 +20,7 @@
 #
 # Options:
 #   --build-only - Only pull the Docker image, don't configure files
+#   -h, --help   - Show help and exit
 #
 # Usage:
 #   ./setup-hermes.sh
@@ -46,6 +47,28 @@ HERMES_WORKSPACE_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY}/workspace"
 TEMPLATES_DIR="${SCRIPT_DIR}/../templates/hermes"
 HERMES_IMAGE="nousresearch/hermes-agent:latest"
 
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Sets up the Hermes Agent environment using the official prebuilt Docker image
+(nousresearch/hermes-agent). Creates the target directory, generates
+configuration files from templates, and provides convenience scripts.
+Uses the LOCAL terminal backend by default.
+
+${BOLD}Options:${RESET}
+  --build-only    Only pull the Docker image, don't configure files
+  -h, --help      Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  HERMES_TARGET_REPO_DIRECTORY  Directory to set up Hermes (default: /srv/hermes)
+EOF
+}
+
 # Parse arguments
 BUILD_ONLY=false
 for arg in "$@"; do
@@ -53,8 +76,12 @@ for arg in "$@"; do
     --build-only)
       BUILD_ONLY=true
       ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
     *)
-      error "Unknown argument: $arg. Usage: $0 [--build-only]"
+      error "Unknown argument: $arg (see --help)"
       ;;
   esac
 done

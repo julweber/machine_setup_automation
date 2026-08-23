@@ -13,6 +13,7 @@
 #
 # Usage:
 #   ./setup-virtualization.sh
+#   ./setup-virtualization.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -26,6 +27,39 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs or updates libvirt (virtualization API) and virt-manager
+(graphical VM manager) on Debian/Ubuntu-based systems, and adds the
+configured user to the libvirt group. Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  VIRT_USERNAME   Username to add to the libvirt group (default: current user)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${VIRT_USERNAME:="${USER}"}"

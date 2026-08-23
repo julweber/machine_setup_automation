@@ -15,6 +15,7 @@
 #
 # Usage:
 #   ./setup-deepseek-harness.sh
+#   ./setup-deepseek-harness.sh --help
 #
 # Requirements:
 #   - Node.js ^22.19.0 or >=24
@@ -35,6 +36,42 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs and configures DeepSeek Harness (dsh) — an open-source agent harness
+from DeepSeek AI. Ensures Node.js 22.19+ is installed (via NVM) and then
+installs dsh globally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  NVM_DIR            NVM directory path (default: $HOME/.nvm)
+  DSH_NODE_VERSION   Node.js version to install (default: 22)
+
+${BOLD}After install:${RESET} run 'dsh web' to start the Web UI at http://127.0.0.1:3080
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 NVM_DIR="${NVM_DIR:-$HOME/.nvm}"

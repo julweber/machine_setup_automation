@@ -10,6 +10,7 @@
 #
 # Usage:
 #   ./setup-upstream-kernel.sh
+#   ./setup-upstream-kernel.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -23,6 +24,42 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Prepares the Zabbly mainline kernel apt repository on Ubuntu
+(https://pkgs.zabbly.com/kernel/stable): installs the GPG keyring,
+adds the sources file, and updates the package lists. Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Notes:${RESET}
+  - Ubuntu only (tested with noble/jammy).
+  - Secure Boot check: Zabbly kernels are unsigned and will not boot with
+    Secure Boot enabled.
+  - Mainline kernels may break NVIDIA drivers.
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 KEYRING_DIR="/etc/apt/keyrings"

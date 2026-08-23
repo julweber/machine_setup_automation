@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 
 # Generalized llama-server launcher
-# Usage: ./run-llama-server.sh [llama-server args...]
+# Usage: ./run-llama-server.sh [OPTIONS] [llama-server args...]
+#        ./run-llama-server.sh --help
 
 set -e
 
@@ -77,12 +78,62 @@ list_models() {
     exit 0
 }
 
+usage() {
+    cat <<EOF
+Usage: $0 [OPTIONS] [llama-server args...]
+
+Generalized llama-server launcher. Builds a llama-server command from the
+flags below (with sensible defaults) and any extra arguments passed through
+as-is. If no --model is given, lists all available GGUF models instead.
+Unrecognized arguments are passed through to llama-server.
+
+Options (each takes a value unless noted):
+  -m, --model <path>          Path to the GGUF model file
+      --model-base-dir <dir>  Directory to search for models (default: ~/.lmstudio/models)
+  -p, --port <port>           Server port (default: 1236)
+  -b, --host <host>           Bind host (default: 0.0.0.0)
+  -t, --temperature <num>     Sampling temperature (default: 0.6)
+      --top-k <num>           Top-k sampling (default: 40)
+      --top-p <num>           Top-p sampling (default: 0.95)
+      --repeat-penalty <num>  Repeat penalty (default: 1.00)
+      --presence-penalty <num> Presence penalty (default: 0.00)
+      --threads <num>         CPU threads (default: 14)
+      --prio <num>            Process priority (default: 1)
+      --ctx-size <num>        Context size (default: 100000)
+      --batch-size <num>      Batch size (default: 512)
+  -fa, --flash-attn <on|off>  Flash attention (default: on)
+  -ngl, --n-gpu-layers <n>    GPU layers (default: all/auto)
+      --cache-type-k-draft <type> K cache type for draft (default: q4_0)
+      --cache-type-v-draft <type> V cache type for draft (default: q4_0)
+      --kv-unified            Use unified KV cache (flag)
+      --no-mmap               Do not mmap the model (flag)
+      --parallel <num>        Parallel slots (default: 1)
+  -h, --help                  Show this help and exit
+
+Environment variables (defaults, overridable by flags):
+  MODEL_PATH, HOST, PORT, TEMPERATURE, TOP_K, TOP_P, REPEAT_PENALTY,
+  PRESENCE_PENALTY, PARALLEL, THREADS_COUNT, PRIO, CONTEXT_SIZE,
+  BATCH_SIZE, FLASH_ATTENTION, GPU_LAYERS, KV_CACHE_TYPE, NO_MMAP,
+  KV_UNIFIED
+
+Examples:
+  $0                              # list available models
+  $0 -m /path/to/model.gguf       # start server with defaults
+  $0 --model <path> --port 8080   # custom port
+  $0 --model <path> -ngl 99       # pass-through/override any llama-server arg
+EOF
+}
+
 # Parse arguments into associative array and collect extra args
 declare -A arg_map
 llama_args=()
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        -h|--help)
+            usage
+            exit 0
+            ;;
         --model|-m)
             arg_map["--model"]="$2"
             shift 2

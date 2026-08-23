@@ -74,6 +74,7 @@
 # USAGE:
 #   ./tasks/setup-monitoring.sh   # direct mode (default): Grafana on 0.0.0.0, Prometheus on 127.0.0.1
 #   GRAFANA_TRAEFIK=true GRAFANA_DOMAIN=grafana.example.com ./tasks/setup-monitoring.sh
+#   ./tasks/setup-monitoring.sh --help
 #
 # =============================================================================
 
@@ -138,6 +139,55 @@ source "${LIB_PATH}" || {
 }
 
 TEMPLATES_DIR="$(realpath "${SCRIPT_DIR}/../templates/monitoring")"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Deploys a containerized monitoring stack (Prometheus + Grafana + Node
+Exporter + cAdvisor) via Docker Compose. Prometheus auto-discovers containers
+labeled prometheus.scrape=true. Grafana is pre-provisioned with Node Exporter
+and cAdvisor dashboards. Re-runs are idempotent (data is never wiped).
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  MONITORING_HOME            Base data directory (default: /srv)
+  MONITORING_DOCKER_NETWORK  Internal monitoring network (default: monitoring-net)
+  PROXY_NETWORK              Traefik external network (default: proxy)
+  GRAFANA_TRAEFIK            Set to "true" to route Grafana via Traefik (default: false)
+  GRAFANA_PORT               Grafana host port in direct mode (default: 3100)
+  PROMETHEUS_PORT            Prometheus UI host port in direct mode (default: 9090)
+  GRAFANA_BIND_ADDRESS       Grafana publish interface, direct mode (default: 0.0.0.0)
+  PROMETHEUS_BIND_ADDRESS    Prometheus UI publish interface, direct mode (default: 127.0.0.1)
+  GRAFANA_DOMAIN             Domain for Traefik routing (required when GRAFANA_TRAEFIK=true)
+  GRAFANA_ADMIN_USER         Grafana admin username (default: admin)
+  GRAFANA_ADMIN_PASSWORD     Grafana admin password (auto-generated if unset)
+  PROMETHEUS_IMAGE_VERSION   Prometheus image tag (default: prom/prometheus:v3.13.2)
+  GRAFANA_IMAGE_VERSION      Grafana image tag (default: grafana/grafana:13.1.1)
+  NODE_EXPORTER_IMAGE_VERSION  Node Exporter image tag (default: quay.io/prometheus/node-exporter:v1.12.1)
+  CADVISOR_IMAGE_VERSION     cAdvisor image tag (default: ghcr.io/google/cadvisor:v0.60.5)
+  MONITORING_FORCE           Set to "true" to re-create an existing stack (default: false)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS

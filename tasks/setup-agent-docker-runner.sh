@@ -16,6 +16,7 @@
 # Usage:
 #   ./setup-agent-docker-runner.sh
 #   ADR_BUILD_AGENTS="pi,claude" ./setup-agent-docker-runner.sh
+#   ./setup-agent-docker-runner.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -29,6 +30,43 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs the agent-docker-runner (adr) CLI tool that runs coding agents
+inside isolated Docker containers.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  ADR_REPO_URL        Git repository URL (default: https://github.com/julweber/agent-docker-runner.git)
+  ADR_INSTALL_DIR     Clone destination (default: $HOME/tools/agent-docker-runner)
+  ADR_BUILD_AGENTS    Comma-separated agents to build
+                      (default: pi,opencode,claude,codex)
+
+${BOLD}Note:${RESET} Docker must be installed and running (run setup-docker.sh first).
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 ADR_REPO_URL="${ADR_REPO_URL:-https://github.com/julweber/agent-docker-runner.git}"

@@ -52,6 +52,9 @@
 #   # Or with custom configuration:
 #   CONCOURSE_WEB_PORT=9000 CONCOURSE_ADMIN_USER=myuser sudo ./setup-concourse.sh
 #
+#   # Show help:
+#   sudo ./setup-concourse.sh --help
+#
 # REFERENCE:
 #   Implementation plan: docs/concourse/concourse-ci-implementation-plan.md
 #
@@ -85,6 +88,51 @@ PROXY_NETWORK="${PROXY_NETWORK:-proxy}"                     # Traefik's network 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/../lib/helpers.sh"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} sudo $0 [OPTIONS]
+
+Deploys Concourse CI using Docker Compose (web UI + PostgreSQL + worker),
+generates TSA/worker RSA keys, writes ${CONCOURSE_HOME}/.env with credentials,
+and installs/configures the fly CLI.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  CONCOURSE_HOME            Base installation directory (default: /srv/concourse)
+  CONCOURSE_WEB_PORT        Host port for web UI (default: 8089)
+  CONCOURSE_ADMIN_USER      Admin username (default: admin)
+  CONCOURSE_ADMIN_PASSWORD  Admin password (auto-generated if not set)
+  CONCOURSE_DB_PASSWORD     Database password (auto-generated if not set)
+  CONCOURSE_CLUSTER_NAME    Display name in UI (default: denkfabrik)
+  CONCOURSE_DNS_SERVER      DNS for worker containers (default: 8.8.8.8)
+  CONCOURSE_EXTERNAL_URL    External URL (auto-detected if not set)
+  CONCOURSE_FLY_TARGET      Target name in ~/.flyrc (default: concourse)
+  CONCOURSE_TRAEFIK         Enable Traefik integration: true/false (default: false)
+  CONCOURSE_DOMAIN          Domain for Traefik routing (required when CONCOURSE_TRAEFIK=true)
+  PROXY_NETWORK             Traefik's network name (default: proxy)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -10,6 +10,7 @@
 #
 # Usage:
 #   ./setup-brave.sh
+#   ./setup-brave.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -23,6 +24,40 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs the Brave web browser on Debian/Ubuntu-based systems by adding
+the official Brave repository and installing the brave-browser package.
+Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Notes:${RESET}
+  curl is required. The script is idempotent: existing GPG key and sources
+  file are reused, and an already installed package is left untouched.
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 BRAVE_GPG_KEY_URL="https://brave-browser-apt-release.s3.brave.com/brave-browser-archive-keyring.gpg"

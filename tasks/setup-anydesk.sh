@@ -3,6 +3,15 @@
 # =============================================================================
 # setup-anydesk.sh — Install AnyDesk remote desktop application
 # =============================================================================
+#
+# Description:
+#   Adds the official AnyDesk apt repository and installs the AnyDesk
+#   remote desktop application. Uses sudo internally.
+#
+# Usage:
+#   ./setup-anydesk.sh
+#   ./setup-anydesk.sh --help
+# =============================================================================
 
 set -euo pipefail
 
@@ -15,6 +24,41 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Adds the official AnyDesk apt repository and installs the AnyDesk
+remote desktop application. Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  ANYDESK_KEY_PATH    Location of the AnyDesk GPG key
+                      (default: /etc/apt/keyrings/keys.anydesk.com.asc)
+  ANYDESK_LIST_PATH   Location of the AnyDesk apt sources list
+                      (default: /etc/apt/sources.list.d/anydesk-stable.list)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${ANYDESK_KEY_PATH:="/etc/apt/keyrings/keys.anydesk.com.asc"}"

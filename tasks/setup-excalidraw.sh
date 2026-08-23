@@ -53,6 +53,9 @@
 #   # With Traefik integration:
 #   EXCALIDRAW_TRAEFIK=true EXCALIDRAW_DOMAIN=whiteboard.example.com sudo ./setup-excalidraw.sh
 #
+#   # Show help:
+#   sudo ./setup-excalidraw.sh --help
+#
 # =============================================================================
 
 set -euo pipefail
@@ -85,6 +88,46 @@ step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
 
 # Trap for error handling
 trap 'info "Setup failed. Check container state with: docker ps -a"' ERR
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: sudo $0 [OPTIONS]
+
+Deploys Excalidraw (virtual whiteboard) using Docker. Supports direct host
+port access or Traefik reverse-proxy integration with TLS termination.
+
+Options:
+  -h, --help    Show this help and exit
+
+Environment variables (all optional):
+  HOST_PORT           Host port for direct access (default: 5005)
+  EXCALIDRAW_IMAGE    Docker image tag to use (default: excalidraw/excalidraw:latest)
+  CONTAINER_NAME      Container name (default: excalidraw)
+  EXCALIDRAW_TRAEFIK  Set to "true" to enable Traefik labels (default: false)
+  EXCALIDRAW_DOMAIN   Domain for Traefik routing (required when EXCALIDRAW_TRAEFIK=true)
+  PROXY_NETWORK       Traefik's external Docker network name (default: proxy)
+
+Prerequisites (Traefik mode): running Traefik on the PROXY_NETWORK,
+DNS A-record for EXCALIDRAW_DOMAIN, and port 443 open for Let's Encrypt.
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS

@@ -16,6 +16,7 @@
 # Usage:
 #   RESTRICTED_USER=myuser source tasks/setup-ssh-tunnel-user.sh
 #   ./setup-ssh-tunnel-user.sh
+#   ./setup-ssh-tunnel-user.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -29,6 +30,41 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Creates a restricted SSH user account for secure tunnel-only access:
+nologin shell, key-based auth only, and an sshd Match block enabling TCP
+forwarding. Uses sudo internally and restarts the SSH service.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  RESTRICTED_USER      Username to create (default: tunneluser)
+  SSHD_PORT            SSH port (default: 2224)
+  ALLOW_GATEWAY_PORTS  Allow remote port forwarding: yes/no (default: no)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${RESTRICTED_USER:=tunneluser}"

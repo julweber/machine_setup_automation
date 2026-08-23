@@ -17,23 +17,10 @@
 #   LM_STUDIO_VERSION=0.4.5-2 ./setup-lm-studio.sh
 #   INSTALL_LLMSTER_ENABLED=false ./setup-lm-studio.sh
 #   ./setup-lm-studio.sh --force   # Re-install even if already installed
+#   ./setup-lm-studio.sh --help    # Show help and exit
 # =============================================================================
 
 set -euo pipefail
-
-# Parse command-line arguments
-FORCE=false
-for arg in "$@"; do
-  case "${arg}" in
-    --force)
-      FORCE=true
-      ;;
-    *)
-      error "Unknown argument: ${arg}"
-      exit 1
-      ;;
-  esac
-done
 
 # Determine script directory and source shared library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
@@ -44,6 +31,51 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs LM Studio on Linux systems with AppImage and optionally installs
+the llmster CLI tool (lms).
+
+${BOLD}Options:${RESET}
+  --force     Re-install even if already installed
+  -h, --help  Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  LM_STUDIO_VERSION       Specific version (default: auto-detect latest)
+  INSTALL_LLMSTER_ENABLED Install llmster CLI (default: true)
+  DESKTOP_LINK_TARGET_PATH  Desktop shortcut location
+                            (default: $HOME/Desktop/LM-Studio.desktop)
+  START_SCRIPT_TARGET_PATH  Start script location (default: $HOME/lmstudio)
+  APP_IMAGE_TARGET_PATH     AppImage location (default: $HOME/lmstudio_bin)
+  APP_IMAGE_BACKUP_PATH     Backup location for replaced AppImage
+                            (default: $HOME/lmstudio_bin_backup)
+EOF
+}
+
+# Parse command-line arguments
+FORCE=false
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --force)
+      FORCE=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown argument: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${INSTALL_LLMSTER_ENABLED:=true}"

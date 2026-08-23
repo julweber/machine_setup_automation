@@ -16,7 +16,7 @@ Setting up a development or server machine for LLM work is tedious, error-prone,
 ## Core Capabilities
 
 - **Modular task scripts** — Each `setup_*.sh` script is self-contained and idempotent; scripts can be run individually or composed via entrypoints.
-- **Two entrypoints** — `setup-server.sh` (headless/cloud) and `setup-dev-machine.sh` (desktop workstation) source the appropriate subset of tasks.
+- **One entrypoints** — `run-setup.sh`
 - **Environment-variable configuration** — All tunable values (ports, versions, feature flags) have sensible defaults and can be overridden without editing scripts.
 - **Core provisioning** — System packages, SSH (custom port, key-only auth), Docker, LM Studio (with optional `lms` CLI), UFW firewall.
 - **Optional components** — Kubernetes (k3s + k9s), Brave browser, VS Code, ROCm (AMD GPU), Samba file sharing, Opencode server, Forgejo (self-hosted Git), AnyDesk, Excalidraw.

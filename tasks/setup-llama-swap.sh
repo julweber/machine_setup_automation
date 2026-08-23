@@ -45,6 +45,7 @@
 #   ./setup-llama-swap.sh                          # defaults
 #   ./setup-llama-swap.sh --check                  # check status only
 #   ./setup-llama-swap.sh --force                  # force reinstall/update without prompts
+#   ./setup-llama-swap.sh --help                   # show help and exit
 #
 # REFERENCE:
 #   https://github.com/mostlygeek/llama-swap
@@ -112,11 +113,42 @@ CHECK_ONLY=0
 FORCE=0
 GITHUB_REPO="mostlygeek/llama-swap"
 
+# ─────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs llama-swap, a multi-model LLM proxy with hot-swap support, as a
+native systemd service. Runs the single Go binary directly on the host.
+
+${BOLD}Options:${RESET}
+  --check     Check installation status only (no changes)
+  --force     Force reinstall/update without prompts
+  -h, --help  Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  LLAMA_SWAP_PORT          Host port for web UI access (default: 9292)
+  LLAMA_SWAP_DIR           Host directory for config & data (default: /srv/llama-swap)
+  LLAMA_SWAP_HEALTH_TIMEOUT  Health check timeout in seconds (default: 500)
+  LLAMA_SWAP_LOG_LEVEL     Log level: debug, info, warn, error (default: info)
+  LLAMA_SWAP_START_PORT    Starting port for \${PORT} macro in config (default: 10001)
+  LLAMA_SWAP_GLOBAL_TTL    Default model idle TTL in seconds (default: 0 = never)
+  LLAMA_SWAP_LISTEN_ADDR   Bind address (default: 0.0.0.0:9292)
+  LLAMA_SWAP_USER          Service runtime user (default: root)
+  LLAMA_SWAP_BIN_PATH      Binary install path (default: /usr/local/bin/llama-swap)
+  LLAMA_SWAP_VERSION       Release version to install (default: latest)
+EOF
+}
+
 # Parse additional flags
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --check) CHECK_ONLY=1 ;;
     --force) FORCE=1 ;;
+    -h|--help) usage; exit 0 ;;
     *) error "Unknown option: $1 (use --help for usage)" ;;
   esac
   shift

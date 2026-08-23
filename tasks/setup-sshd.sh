@@ -14,6 +14,7 @@
 # Usage:
 #   ./setup-sshd.sh
 #   SSHD_PORT=2224 ./setup-sshd.sh
+#   ./setup-sshd.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -27,6 +28,41 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs and configures the OpenSSH server with security-hardened settings:
+public key authentication only and a custom port. Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  SSHD_PORT     SSH daemon port (default: 2224)
+
+${BOLD}Note:${RESET} Make sure you can still reach the server on the configured
+port after running this (public key auth only — set up your key first).
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${SSHD_PORT:=2224}"

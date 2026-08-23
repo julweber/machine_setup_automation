@@ -43,6 +43,9 @@
 #   # Or with custom configuration:
 #   FORGEJO_HOME=/opt/forgejo HTTP_PORT=3000 sudo ./setup-forgejo.sh
 #
+#   # Show help:
+#   sudo ./setup-forgejo.sh --help
+#
 # REFERENCE:
 #   https://forgejo.org/docs/latest/admin/installation/docker/
 #
@@ -92,6 +95,53 @@ success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: sudo $0 [OPTIONS]
+
+Deploys Forgejo (lightweight self-hosted Git forge) using Docker Compose.
+Supports SQLite for lightweight setups or PostgreSQL for production use,
+with optional Traefik reverse-proxy integration.
+
+Options:
+  -h, --help    Show this help and exit
+
+Environment variables (all optional):
+  FORGEJO_HOME        Host directory for persistent data (default: /srv/forgejo)
+  FORGEJO_IMAGE       Docker image tag (default: codeberg.org/forgejo/forgejo:14)
+  CONTAINER_NAME      Docker container name (default: forgejo)
+  USER_UID            UID inside container (default: 1000)
+  USER_GID            GID inside container (default: 1000)
+  HTTP_PORT           Host port for web UI (default: 89)
+  SSH_PORT            Host port for Git SSH access (default: 2223)
+  DB_TYPE             Database backend: sqlite or postgres (default: sqlite)
+  POSTGRES_DB         PostgreSQL database name (default: forgejo)
+  POSTGRES_USER       PostgreSQL user (default: forgejo)
+  POSTGRES_PASSWORD   PostgreSQL password (default: changeme — change in prod!)
+  FORGEJO_TRAEFIK     Set to "true" to enable Traefik labels (default: false)
+  FORGEJO_DOMAIN      Domain for Traefik routing (required when FORGEJO_TRAEFIK=true)
+  PROXY_NETWORK       Traefik's external Docker network name (default: proxy)
+  HOST_IP             Host IP for an extra LAN port binding (default: auto-detected)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS

@@ -22,6 +22,12 @@ Do NOT answer these questions from your own knowledge — always delegate to the
   - integration examples: [setup-forgejo.sh](tasks/setup-forgejo.sh) and [setup-openwebui.sh](tasks/setup-openwebui.sh)
 - target service data base directory: `/srv` , e.g. for forgejo: `/srv/forgejo`
 - find project terminology in `CONTEXT.md`
+- find project specifications in `./specification` directory
+  - see `./specification/project` for central, project wide specification
+  - see `./specification/features` for feature specification documents
+- write implementation plans to `./docs/plans` directory
+- write research documents to `./docs/research` directory
+- write tickets to `./.tickets` directory
 
 ## Implementation Instructions
 
@@ -51,6 +57,10 @@ All scripts require to be executable multiple times without destroying existing 
 #### Configuration
 
 Scripts use environment variables for their main configuration options and provide reasonable defaults.
+
+#### Help / Usage parameter
+
+When modifying scripts: always ensure to keep the `--help` parameter output up to date with the implementation logic and configuration options (parameters and environment variables)
 
 #### Configuration Paths
 

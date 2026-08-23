@@ -10,8 +10,7 @@
 
 ```text
 repository root
-├── setup-server.sh          # Entrypoint: headless/cloud server
-├── setup-dev-machine.sh     # Entrypoint: developer workstation
+├── run-setup.sh          # Entrypoint: Run automation on the machine as configured in machine-config.yml
 ├── tasks/                   # Task scripts (one per component)
 │   ├── setup-basics.sh
 │   ├── setup-sshd.sh
@@ -49,25 +48,9 @@ The architecture follows a simple **linear sourcing model**:
 
 Task scripts pull from external sources during provisioning:
 
-| Source | Examples |
-|--------|----------|
-| **OS package repos** | `apt` for system packages |
-| **Vendor apt repos** | Docker, Brave |
-| **GitHub releases** | k3s, k9s |
-| **Direct downloads** | LM Studio AppImage |
-| **Install scripts** | k3s (`get.k3s.io`), Node.js |
-| **Docker images** | Forgejo, OpenWebUI, Excalidraw |
-
 Download URLs and versions are currently hardcoded with env var overrides. A future iteration may centralise these in a YAML configuration file.
 
 ## Deployment
 
 The repository is cloned directly onto the target machine and executed locally:
-
-```bash
-git clone <repo-url>
-cd machine_setup_automation
-./setup-server.sh   # or ./setup-dev-machine.sh
-```
-
 There is no remote execution, CI/CD pipeline, or container wrapping the scripts themselves.

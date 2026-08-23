@@ -53,6 +53,9 @@
 #   # With Traefik integration:
 #   OPENWEBUI_TRAEFIK=true OPENWEBUI_DOMAIN=openwebui.example.com ./setup-openwebui.sh
 #
+#   # Show help:
+#   ./setup-openwebui.sh --help
+#
 # REFERENCE:
 #   https://openwebui.com/docs/
 #
@@ -106,6 +109,47 @@ success() { echo -e "${GREEN}[OK]${RESET}    $*"; }
 warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: $0 [OPTIONS]
+
+Installs and configures Open WebUI using Docker Compose, connecting to an
+external LM Studio instance for AI model inference. Supports direct host
+port access or Traefik reverse-proxy integration.
+
+Options:
+  -h, --help    Show this help and exit
+
+Environment variables (all optional):
+  OPENWEBUI_PORT     Host port for direct web UI access (default: 3333)
+  LM_STUDIO_PORT     Port where LM Studio API is listening (default: 1234)
+  PROJECT_DIR        Installation directory (default: $HOME/open-webui)
+  WEBUI_SECRET_KEY   Custom secret key (auto-generated if not set, stored in .env)
+  OPENWEBUI_TRAEFIK  Set to "true" to enable Traefik routing (default: false)
+  OPENWEBUI_DOMAIN   Domain for Traefik access (required when OPENWEBUI_TRAEFIK=true)
+  PROXY_NETWORK      Traefik's external Docker network name (default: proxy)
+
+Note: LM Studio must be running on LM_STUDIO_PORT.
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS

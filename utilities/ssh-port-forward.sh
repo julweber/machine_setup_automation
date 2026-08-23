@@ -5,6 +5,37 @@
 # ./ssh-port-forward.sh $LOCAL_PORT $TARGET_MACHINE $REMOTE_PORT $TARGET_MACHINE_SSH_USER $TARGET_MACHINE_SSH_PORT
 # e.g.:
 # ./ssh-port-forward.sh 3333 192.168.0.3 3333 myuser 2224
+# ./ssh-port-forward.sh --help
+
+usage() {
+    cat <<EOF
+Usage: $0 <local_port> <remote_host> <remote_port> <ssh_user> [ssh_port]
+
+Establishes an SSH local port forward: local port <local_port> on this
+machine is forwarded to localhost:<remote_port> on <remote_host>.
+
+Arguments:
+  local_port    Local port to bind (numeric)
+  remote_host   Host to connect to via SSH (IP or hostname)
+  remote_port   Port on the remote host to forward to (numeric)
+  ssh_user      SSH user on the remote host
+  ssh_port      SSH port of the remote server (optional, default: 22)
+
+Options:
+  -h, --help    Show this help and exit
+
+Example:
+  $0 3333 192.168.0.3 3333 myuser 2224
+EOF
+}
+
+# Handle help flag before positional arguments
+case "${1:-}" in
+    -h|--help)
+        usage
+        exit 0
+        ;;
+esac
 
 # Parameters
 LOCAL_PORT=$1

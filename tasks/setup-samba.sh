@@ -15,6 +15,7 @@
 #
 # Usage:
 #   ./setup-samba.sh
+#   ./setup-samba.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -28,6 +29,42 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs and configures a Samba file sharing server: creates the share
+directory, system user and developer group, installs Samba, and adds the
+share definition to /etc/samba/smb.conf. Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  BASE_SHARE_PATH       Root directory for Samba shares (default: /home/samba)
+  SAMBA_SHARE_NAME      Name of the share (default: shared)
+  SAMBA_USER            System user for Samba auth (default: sambauser)
+  DEVELOPER_GROUP_NAME  Group with share access (default: devs)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${BASE_SHARE_PATH:=/home/samba}"

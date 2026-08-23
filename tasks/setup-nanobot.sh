@@ -14,6 +14,7 @@
 # Usage:
 #   ./setup-nanobot.sh
 #   NANOBOT_TARGET_REPO_DIRECTORY=/opt/nanobot ./setup-nanobot.sh
+#   ./setup-nanobot.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -27,6 +28,41 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Sets up the nanobot environment by cloning the repository (HKUDS/nanobot),
+building Docker images, and initializing the nanobot container.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  NANOBOT_TARGET_REPO_DIRECTORY  Clone destination (default: $HOME/nanobot)
+
+${BOLD}Note:${RESET} A restart_nanobot.sh script (supports --rebuild) is created
+in the target directory for managing the container.
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${NANOBOT_TARGET_REPO_DIRECTORY:=$HOME/nanobot}"

@@ -17,6 +17,7 @@
 # Usage:
 #   ./setup-fail2ban.sh
 #   FAIL2BAN_SSHD_PORT=2222 ./setup-fail2ban.sh
+#   ./setup-fail2ban.sh --help
 #
 # Python 3.12 Compatibility:
 #   Python 3.12 removed the asynchat/asyncore modules from the standard library.
@@ -35,6 +36,42 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# ---------------------------------------------------------------------------
+# USAGE / HELP
+# ---------------------------------------------------------------------------
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs fail2ban, applies the Python 3.12 compatibility fix (pyasynchat),
+and configures it to monitor the custom SSH port with sensible defaults.
+Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  FAIL2BAN_SSHD_PORT    Custom SSH port to monitor (default: ${SSHD_PORT:-2224})
+  FAIL2BAN_MAXRETRY     Max failed attempts before ban (default: 5)
+  FAIL2BAN_BANTIME      Ban duration in seconds (default: 3600)
+  FAIL2BAN_FINDTIME     Time window for detecting attempts (default: 600)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # ---------------------------------------------------------------------------
 # Configuration

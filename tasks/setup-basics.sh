@@ -13,6 +13,7 @@
 #
 # Usage:
 #   ./setup-basics.sh
+#   ./setup-basics.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -26,6 +27,39 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs essential system packages and tools for the development environment
+(apt packages, uv, NVM, huggingface-cli, herdr, hunk). Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  NVM_VERSION     NVM version to install (default: 0.40.4)
+  NVM_DIR         NVM installation directory (default: $HOME/.nvm)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${NVM_VERSION:=0.40.4}"

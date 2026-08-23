@@ -19,6 +19,7 @@
 
 - **Idempotency** — Every task script must be safe to run repeatedly. Use guard checks (`command -v`, `dpkg -l`, file existence) to skip already-completed work.
 - **Non-interactive by default** — Scripts must not prompt the user for input during normal execution. Interactive behaviour is only allowed when the script is explicitly invoked with a `--interactive` flag.
+- **Help and Usage instructions** - All shell scripts have a `--help` parameter to display usage and configuration information
 - **Env var configuration** — All tunable values must be exposed as environment variables with sensible defaults defined at the top of each script.
 - **Single-process sourcing** — Task scripts are sourced (not executed as subprocesses) so that env vars flow between scripts.
 

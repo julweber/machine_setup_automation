@@ -70,6 +70,9 @@
 #   # PostgreSQL backend:
 #   DB_TYPE=postgres POSTGRES_PASSWORD=secret ./setup-nextcloud.sh
 #
+#   # Show help:
+#   ./setup-nextcloud.sh --help
+#
 # REFERENCE:
 #   https://hub.docker.com/_/nextcloud
 #   https://github.com/nextcloud/docker
@@ -149,6 +152,57 @@ step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
 
 # Register cleanup trap now that all helper functions are defined
 trap cleanup_on_failure EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+Usage: $0 [OPTIONS]
+
+Deploys Nextcloud (self-hosted file sync and collaboration platform) using
+Docker Compose. Supports MariaDB (default), PostgreSQL, or SQLite database
+backends, optional Redis caching, and Traefik reverse-proxy integration.
+Secrets are written to ${NEXTCLOUD_HOME:-/srv/nextcloud}/.env (mode 600), never in compose.
+
+Options:
+  -h, --help    Show this help and exit
+
+Environment variables (all optional):
+  NEXTCLOUD_HOME            Host directory for persistent data (default: /srv/nextcloud)
+  NEXTCLOUD_IMAGE           Docker image tag (default: nextcloud:stable)
+  CONTAINER_NAME            App container name (default: nextcloud)
+  HTTP_PORT                 Host port for web UI (default: 8080)
+  DB_TYPE                   Database backend: mariadb | postgres | sqlite (default: mariadb)
+  MYSQL_DATABASE            MariaDB/MySQL database name (default: nextcloud)
+  MYSQL_USER                MariaDB/MySQL user (default: nextcloud)
+  MYSQL_PASSWORD            MariaDB/MySQL password (auto-generated if unset)
+  MYSQL_ROOT_PASSWORD       MariaDB root password (auto-generated if unset)
+  POSTGRES_DB               PostgreSQL database name (default: nextcloud)
+  POSTGRES_USER             PostgreSQL user (default: nextcloud)
+  POSTGRES_PASSWORD         PostgreSQL password (auto-generated if unset)
+  NEXTCLOUD_ADMIN_USER      Initial admin username (default: admin)
+  NEXTCLOUD_ADMIN_PASSWORD  Initial admin password (auto-generated if unset)
+  REDIS_ENABLED             Enable Redis caching (default: true)
+  NEXTCLOUD_TRAEFIK         Set to "true" to enable Traefik labels (default: false)
+  NEXTCLOUD_DOMAIN          Domain for Traefik access (required when NEXTCLOUD_TRAEFIK=true)
+  PROXY_NETWORK             Traefik's external Docker network name (default: proxy)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS

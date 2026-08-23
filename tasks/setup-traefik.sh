@@ -18,6 +18,7 @@
 #   ./tasks/setup-traefik.sh                      # Default setup
 #   TRAEFIK_DASHBOARD=true ACME_EMAIL=x@y.com \
 #     ./tasks/setup-traefik.sh --interactive
+#   ./tasks/setup-traefik.sh --help               # Show help and exit
 #
 # =============================================================================
 
@@ -89,10 +90,42 @@ HTTPS_PORT="${HTTPS_PORT:-443}"
 
 INTERACTIVE=false
 
+# USAGE / HELP
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Deploys production-ready Traefik v3 reverse proxy on Ubuntu with Docker
+Compose: TLS via Let's Encrypt (HTTP or DNS challenge), security headers,
+rate limiting, and optional dashboard with basic auth.
+
+${BOLD}Options:${RESET}
+  --interactive   Prompt for configuration interactively
+  -h, --help      Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  TRAEFIK_HOME        Config directory (default: /opt/traefik)
+  TRAEFIK_IMAGE       Traefik image tag (default: traefik:v3)
+  TRAEFIK_DOMAIN      Traefik's own domain (default: traefik.example.com)
+  TRAEFIK_DASHBOARD   Enable dashboard: true/false (default: false)
+  ACME_EMAIL          Let's Encrypt email (default: admin@example.com)
+  ACME_STAGING        Use Let's Encrypt staging: true/false (default: false)
+  DNS_PROVIDER        Cloudflare (or empty for HTTP challenge) (default: empty)
+  CF_DNS_API_TOKEN    Cloudflare API token (required for DNS challenge)
+  TRAEFIK_ADMIN_USER  Dashboard basic-auth user (default: admin)
+  TRAEFIK_ADMIN_PASS  Dashboard basic-auth password (auto-generated if empty)
+  PROXY_NETWORK       Shared Docker network name (default: proxy)
+  USE_SOCKET_PROXY    Route via docker.sock proxy: true/false (default: true)
+  HTTP_PORT           HTTP entrypoint port (default: 80)
+  HTTPS_PORT          HTTPS entrypoint port (default: 443)
+EOF
+}
+
 for arg in "$@"; do
   case "$arg" in
     --interactive) INTERACTIVE=true ;;
-    *) warn "Unknown flag: ${arg} (ignored)" ;;
+    -h|--help) usage; exit 0 ;;
+    *) error "Unknown option: $arg (see --help)" ;;
   esac
 done
 

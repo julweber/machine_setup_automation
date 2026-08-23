@@ -21,6 +21,7 @@
 # Usage:
 #   ./configure-firewall.sh
 #   SSHD_PORT=2224 LM_STUDIO_PORT=1234 ./configure-firewall.sh
+#   ./configure-firewall.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -34,6 +35,46 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Configures UFW (Uncomplicated Firewall) rules for a development machine.
+Uses sudo internally for privileged operations. Assumes default-deny policy.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  SSHD_PORT             SSH port to allow (default: 2224)
+  LM_STUDIO_PORT        LM Studio port to allow (default: 1234)
+  OPENCODE_PORT         OpenCode port to allow (default: 4096)
+  OPENWEBUI_PORT        (displayed only; rule not added by default) (default: 3333)
+  KUBERNETES_API_PORT   (displayed only; rule not added by default) (default: 6443)
+  GNOME_REMOTE_PORT     (displayed only; rule not added by default) (default: 3389)
+
+${BOLD}WARNING:${RESET} When running over SSH, ensure SSHD_PORT is correct before
+enabling the firewall to avoid remote lockout.
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${SSHD_PORT:=2224}"

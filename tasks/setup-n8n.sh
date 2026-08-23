@@ -14,6 +14,7 @@
 # Usage:
 #   ./setup-n8n.sh
 #   TRAEFIK_ENABLED=true ./setup-n8n.sh
+#   ./setup-n8n.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -27,6 +28,42 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs n8n (automation platform) with PostgreSQL using Docker Compose.
+Can optionally configure Traefik integration.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  N8N_DIR           Installation directory (default: /srv/n8n)
+  TRAEFIK_ENABLED   Enable Traefik integration (default: false)
+
+${BOLD}Note:${RESET} A .env template with placeholder values is written to
+${N8N_DIR:-/srv/n8n}/.env — review it before starting n8n.
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 : "${N8N_DIR:=/srv/n8n}"

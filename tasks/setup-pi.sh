@@ -13,6 +13,7 @@
 #
 # Usage:
 #   ./setup-pi.sh
+#   ./setup-pi.sh --help
 # =============================================================================
 
 set -euo pipefail
@@ -26,6 +27,41 @@ source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
 }
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs and configures the Pi coding agent environment. Ensures the latest
+Node.js version is installed (via NVM) and then installs Pi globally,
+including a set of Pi extensions.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  NVM_DIR     NVM directory path (default: $HOME/.nvm)
+
+${BOLD}Note:${RESET} NVM must be installed (run setup-basics.sh first).
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # Configuration
 NVM_DIR="${NVM_DIR:-$HOME/.nvm}"

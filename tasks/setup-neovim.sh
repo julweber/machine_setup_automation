@@ -14,6 +14,10 @@
 # Pre-requisites:
 #   - Ubuntu/Debian-based Linux
 #   - Root/sudo access for installation
+#
+# Usage:
+#   ./setup-neovim.sh
+#   ./setup-neovim.sh --help
 ################################################################################
 set -euo pipefail
 
@@ -23,6 +27,39 @@ LIB_DIR="$(dirname "$SCRIPT_DIR")/lib"
 # Source helper functions
 # shellcheck disable=SC1091
 source "${LIB_DIR}/helpers.sh"
+
+# =============================================================================
+# USAGE / HELP
+# =============================================================================
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Installs Neovim on the host (Ubuntu/Debian) with lazy.nvim plugin manager,
+LSP support via nvim-lspconfig, and essential productivity plugins.
+Installed from official GitHub releases; configuration goes to
+~/.config/nvim. Uses sudo internally.
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+  NEOVIM_VERSION    Release tag to install (default: stable)
+EOF
+}
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      error "Unknown option: $1 (see --help)"
+      ;;
+  esac
+done
 
 # =============================================================================
 # Configuration
