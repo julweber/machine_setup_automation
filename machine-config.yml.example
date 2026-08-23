@@ -31,6 +31,14 @@ scripts:
       TRAEFIK_HTTPS_PORT: '443'
       TRAEFIK_DASHBOARD: 'false'
     args: []
+  setup-netbird:
+    enabled: false
+    description: Install self-hosted NetBird (mesh VPN server + dashboard)
+    env:
+      NETBIRD_TRAEFIK: 'true'
+      NETBIRD_DOMAIN: netbird.example.com
+      NETBIRD_HOME: /srv/netbird
+    args: []
   setup-samba:
     enabled: false
     description: Configure Samba file sharing

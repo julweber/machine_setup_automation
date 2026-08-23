@@ -1,0 +1,26 @@
+# NetBird combined server configuration
+# Rendered by tasks/setup-netbird.sh. Re-runs of the script do NOT overwrite this file —
+# manual edits are preserved. Contains secrets; keep chmod 600.
+server:
+  listenAddress: ":80"
+  exposedAddress: "${NETBIRD_MGMT_URL}"
+  stunPorts:
+    - ${STUN_PORT}
+  logLevel: "${NETBIRD_LOG_LEVEL}"
+  logFile: "console"
+  authSecret: "${NETBIRD_AUTH_SECRET}"
+  dataDir: "/var/lib/netbird/"
+  disableAnonymousMetrics: true
+  auth:
+    issuer: "${NETBIRD_ISSUER}"
+    localAuthDisabled: false
+    signKeyRefreshEnabled: true
+    dashboardRedirectURIs:
+      - "${NETBIRD_DASHBOARD_REDIRECT}"
+      - "${NETBIRD_SILENT_REDIRECT}"
+    cliRedirectURIs:
+      - "http://localhost:53000/"
+${NETBIRD_OWNER_BLOCK}
+  store:
+    engine: "sqlite"
+    encryptionKey: "${NETBIRD_STORE_ENCRYPTION_KEY}"

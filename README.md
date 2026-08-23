@@ -378,6 +378,11 @@ Installs the Brave browser from its official apt repository.
 
 **Environment variables:** None
 
+#### `setup-netbird.sh`
+Deploys self-hosted NetBird (a WireGuard-based mesh VPN) as Docker containers: the combined server (management + signal + relay + embedded STUN + embedded IdP) and the dashboard. Supports direct host ports or Traefik reverse-proxy integration, plus an optional routing-peer client for LAN exposure.
+
+**Environment variables:** `NETBIRD_HOME` (default `/srv/netbird`), `NETBIRD_SERVER_TAG` (default `0.77.1`), `NETBIRD_DASHBOARD_TAG` (default `v2.91.1`), `NETBIRD_TRAEFIK` (default `false`), `NETBIRD_DOMAIN` (required when Traefik enabled), `NETBIRD_PORT` (default `8081`), `NETBIRD_DASHBOARD_PORT` (default `8080`), `STUN_PORT` (default `3478`), `PROXY_NETWORK` (default `proxy`)
+
 ---
 
 ### Development Tools

@@ -1,0 +1,104 @@
+# yamllint disable rule:line-length
+# NetBird — combined server + dashboard behind existing Traefik
+# Generated from this template by tasks/setup-netbird.sh; variables resolved from .env
+---
+name: netbird
+
+services:
+  netbird-dashboard:
+    image: ${NETBIRD_DASHBOARD_IMAGE}:${NETBIRD_DASHBOARD_TAG}
+    container_name: netbird-dashboard
+    restart: unless-stopped
+    environment:
+      - NETBIRD_MGMT_API_ENDPOINT=${NETBIRD_MGMT_URL}
+      - NETBIRD_MGMT_GRPC_API_ENDPOINT=${NETBIRD_MGMT_URL}
+      - AUTH_AUDIENCE=netbird-dashboard
+      - AUTH_CLIENT_ID=netbird-dashboard
+      - AUTH_CLIENT_SECRET=
+      - AUTH_AUTHORITY=${NETBIRD_ISSUER}
+      - USE_AUTH0=false
+      - AUTH_SUPPORTED_SCOPES=openid profile email groups
+      - AUTH_REDIRECT_URI=/nb-auth
+      - AUTH_SILENT_REDIRECT_URI=/nb-silent-auth
+      - LETSENCRYPT_DOMAIN=none
+      - NGINX_SSL_PORT=443
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK}"
+      - "traefik.http.routers.netbird-dashboard.rule=Host(`${NETBIRD_DOMAIN}`)"
+      - "traefik.http.routers.netbird-dashboard.entrypoints=websecure"
+      - "traefik.http.routers.netbird-dashboard.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.netbird-dashboard.priority=1"
+      - "traefik.http.services.netbird-dashboard.loadbalancer.server.port=80"
+    networks:
+      - netbird
+      - proxy
+
+  netbird-server:
+    image: ${NETBIRD_SERVER_IMAGE}:${NETBIRD_SERVER_TAG}
+    container_name: netbird-server
+    restart: unless-stopped
+    command: ["--config", "/etc/netbird/config.yaml"]
+    environment:
+      - NB_DISABLE_ANONYMOUS_METRICS=true
+    ports:
+      - "${STUN_PORT}:${STUN_PORT}/udp"
+    volumes:
+      - netbird-data:/var/lib/netbird
+      - ./config.yaml:/etc/netbird/config.yaml:ro
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK}"
+      # gRPC router — h2c backend (HTTP/2 cleartext) is mandatory for gRPC paths
+      - "traefik.http.routers.netbird-grpc.rule=Host(`${NETBIRD_DOMAIN}`) && (PathPrefix(`/signalexchange.SignalExchange/`) || PathPrefix(`/management.ManagementService/`) || PathPrefix(`/management.ProxyService/`))"
+      - "traefik.http.routers.netbird-grpc.entrypoints=websecure"
+      - "traefik.http.routers.netbird-grpc.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.netbird-grpc.service=netbird-server-h2c"
+      - "traefik.http.routers.netbird-grpc.priority=100"
+      # Backend router — relay WebSocket, ws-proxy, REST API, embedded IdP (OAuth2)
+      - "traefik.http.routers.netbird-backend.rule=Host(`${NETBIRD_DOMAIN}`) && (PathPrefix(`/relay`) || PathPrefix(`/ws-proxy/`) || PathPrefix(`/api`) || PathPrefix(`/oauth2`))"
+      - "traefik.http.routers.netbird-backend.entrypoints=websecure"
+      - "traefik.http.routers.netbird-backend.tls.certresolver=letsencrypt"
+      - "traefik.http.routers.netbird-backend.service=netbird-server"
+      - "traefik.http.routers.netbird-backend.priority=100"
+      - "traefik.http.services.netbird-server.loadbalancer.server.port=80"
+      - "traefik.http.services.netbird-server-h2c.loadbalancer.server.port=80"
+      - "traefik.http.services.netbird-server-h2c.loadbalancer.server.scheme=h2c"
+    networks:
+      - netbird
+      - proxy
+
+  # Optional LAN routing peer — only started via `docker compose --profile client up -d`
+  netbird-client:
+    image: ${NETBIRD_CLIENT_IMAGE}:${NETBIRD_CLIENT_TAG}
+    container_name: netbird-client
+    profiles: ["client"]
+    hostname: ${NETBIRD_CLIENT_HOSTNAME:-netbird-peer}
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+      - SYS_RESOURCE
+    devices:
+      - /dev/net/tun
+    environment:
+      - NB_SETUP_KEY=${NETBIRD_SETUP_KEY:-}
+      - NB_MGMT_URL=${NETBIRD_MGMT_URL}
+    volumes:
+      - netbird-client:/var/lib/netbird
+    restart: unless-stopped
+
+volumes:
+  netbird-data:
+    name: netbird-data
+  netbird-client:
+    name: netbird-client
+
+networks:
+  netbird:
+    external: false
+  # Keyed as "proxy" (compose v5 does not substitute vars in mapping keys);
+  # actual network name comes from PROXY_NETWORK (must match setup-traefik.sh).
+  proxy:
+    name: ${PROXY_NETWORK}
+    external: true

@@ -37,3 +37,4 @@
 - **forgejo** — self-hosted Git service (fork of Gitea)
 - **n8n** — workflow automation tool
 - **workflow** — n8n automations
+- **netbird** — self-hosted WireGuard-based mesh VPN (management + signal + relay + embedded STUN + dashboard)

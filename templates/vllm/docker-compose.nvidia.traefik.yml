@@ -1,0 +1,56 @@
+---
+# vLLM — NVIDIA (CUDA) backend, Traefik reverse-proxy exposure.
+# Template rendered by tasks/setup-vllm.sh via envsubst.
+# ${VLLM_MODEL}/${VLLM_GPU_UTIL}/${VLLM_EXTRA_ARGS} in the command block are
+# resolved by docker compose at runtime from the .env file.
+# Generated: ${GENERATED_DATE}
+name: vllm
+
+services:
+  vllm:
+    image: ${VLLM_IMAGE}
+    container_name: vllm
+    restart: unless-stopped
+    env_file:
+      - .env
+      - extra-vars.env
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - VLLM_NO_USAGE_STATS=1
+    volumes:
+      - "${HF_CACHE_DIR}:/root/.cache/huggingface"
+      - "${PROJECT_DIR}/.vllm-cache:/root/.cache/vllm"
+      - "${LMSTUDIO_MODELS_DIR}:/lmstudio-models"
+    shm_size: '${VLLM_SHM_SIZE}'
+    # ipc: host is recommended for all GPU backends and required for TP > 1
+    ipc: "host"
+    labels:
+      - 'traefik.enable=true'
+      - 'traefik.docker.network=${PROXY_NETWORK}'
+      - 'traefik.http.routers.vllm.rule=Host(`${VLLM_DOMAIN}`)'
+      - 'traefik.http.routers.vllm.entrypoints=websecure'
+      - 'traefik.http.routers.vllm.tls.certresolver=letsencrypt'
+      - 'traefik.http.services.vllm.loadbalancer.server.port=8000'
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - vllm
+      - ${PROXY_NETWORK}
+    command: >
+      --model ${VLLM_MODEL}
+      --host 0.0.0.0
+      --port 8000
+      --gpu-memory-utilization ${VLLM_GPU_UTIL}
+      ${VLLM_COMMAND_FLAGS}
+      ${VLLM_EXTRA_ARGS}
+
+networks:
+  vllm:
+    external: false
+  ${PROXY_NETWORK}:
+    external: true
