@@ -344,7 +344,7 @@ Checks that the `proxy` Docker network exists. If it does not, prints a red erro
 
 Checks that the `traefik` Docker container is running. If it is not, prints a red error message telling the user to start Traefik first and exits 1.
 
-Both functions use the same colour helpers (`info`, `success`, `warn`, `error`) and are designed to be sourced by other `setup_*.sh` scripts:
+Both functions use the same colour helpers (`info`, `success`, `warn`, `error`) and are designed to be sourced by other `setup-*.sh` scripts:
 
 ```bash
 source lib/helpers.sh
