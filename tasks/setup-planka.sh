@@ -7,23 +7,12 @@
 # Description:
 #   Deploys Planka, a self-hosted Kanban board, using Docker Compose.
 #
-# Environment Variables (optional):
-#   PLANKA_HOME        - Data directory (default: /srv/planka)
-#   HTTP_PORT          - Host port (default: 1337, ignored when PLANKA_TRAEFIK=true)
-#   BASE_URL           - Full base URL (default: http://localhost:HTTPPORT or https://PLANKA_DOMAIN)
-#   POSTGRES_PASSWORD  - Database password (optional)
-#   SECRET_KEY         - App secret (auto-generated if empty)
-#   ADMIN_EMAIL        - Create admin user non-interactively
-#   ADMIN_PASSWORD     - Admin password
-#
-#   Traefik reverse-proxy integration (opt-in):
-#   PLANKA_TRAEFIK     - Set to "true" to enable Traefik routing (default: false)
-#   PLANKA_DOMAIN      - Domain for Traefik access (required when PLANKA_TRAEFIK=true)
-#   PROXY_NETWORK      - Traefik's external Docker network name (default: proxy)
-#
 # Usage:
-#   ./setup-planka.sh
-#   HTTP_PORT=8080 ./setup-planka.sh
+#   ./setup-planka.sh                 # install with defaults
+#   ./setup-planka.sh --help          # show help and all configuration options
+#
+# All configuration is done via environment variables — run with --help for
+# the full list (PLANKA_HOME, BASE_URL, PLANKA_HOST_IP, PLANKA_EXTRA_ORIGINS, ...).
 # =============================================================================
 
 set -euo pipefail
@@ -38,6 +27,82 @@ source "${LIB_PATH}" || {
   exit 1
 }
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# USAGE / HELP
+# ─────────────────────────────────────────────────────────────────────────────
+
+usage() {
+  cat <<EOF
+${BOLD}Usage:${RESET} $0 [OPTIONS]
+
+Deploys Planka (self-hosted Kanban board) using Docker Compose.
+Data is stored under PLANKA_HOME (default: /srv/planka).
+
+${BOLD}Options:${RESET}
+  -h, --help    Show this help and exit
+
+${BOLD}Environment variables${RESET} (all optional):
+
+  Application:
+    PLANKA_HOME             Data directory (default: /srv/planka)
+    PLANKA_IMAGE            Container image (default: ghcr.io/plankanban/planka:latest)
+    CONTAINER_NAME          Container name (default: planka)
+    BASE_URL                Base URL for Planka, and the allowlist of origins Planka
+                            accepts socket.io (WebSocket) connections from.
+                            Comma-separated list of URLs — every host:port a browser
+                            may use to reach Planka must be listed, otherwise
+                            realtime features break (Planka's sails config
+                            onlyAllowOrigins). Default: http://localhost:HTTP_PORT
+                            plus the detected LAN IP (direct mode), or
+                            https://PLANKA_DOMAIN (Traefik mode).
+    PLANKA_HOST_IP          Host IP used to build the default LAN origin
+                            (default: auto-detected, first non-loopback IPv4)
+    PLANKA_EXTRA_ORIGINS    Extra comma-separated origins to allow, e.g.
+                            http://evobox:1337,http://100.64.0.2:1337
+    HTTP_PORT               Host port (default: 1337, ignored when PLANKA_TRAEFIK=true)
+    SECRET_KEY              App secret (auto-generated if empty)
+
+  Traefik reverse-proxy integration (opt-in):
+    PLANKA_TRAEFIK          Set to "true" to enable Traefik routing (default: false)
+    PLANKA_DOMAIN           Domain for Traefik access (required when PLANKA_TRAEFIK=true)
+    PROXY_NETWORK           Traefik's external Docker network name (default: proxy)
+
+  PostgreSQL:
+    POSTGRES_DB             Database name (default: planka)
+    POSTGRES_USER           Database user (default: postgres)
+    POSTGRES_PASSWORD       Database password (default: empty = trust auth, dev only)
+
+  Admin user:
+    ADMIN_EMAIL             Create admin user non-interactively
+                            (default: empty = prompt interactively after startup)
+    ADMIN_PASSWORD          Admin password
+    ADMIN_NAME              Admin display name (default: Admin)
+    ADMIN_USERNAME          Admin username (optional, forwarded to Planka)
+
+${BOLD}Examples:${RESET}
+  $0
+  HTTP_PORT=8080 $0
+  PLANKA_TRAEFIK=true PLANKA_DOMAIN=planka.example.com $0
+  ADMIN_EMAIL=admin@example.com ADMIN_PASSWORD=secret $0
+EOF
+  exit 0
+}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# ARGUMENT PARSING
+# ─────────────────────────────────────────────────────────────────────────────
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    -h|--help) usage ;;
+    *) error "Unknown option: $1 (use --help for usage)" ;;
+  esac
+  shift
+done
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CONFIGURATION — edit these variables before running (or export them)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,7 +112,11 @@ PLANKA_IMAGE="${PLANKA_IMAGE:-ghcr.io/plankanban/planka:latest}"
 CONTAINER_NAME="${CONTAINER_NAME:-planka}"
 
 HTTP_PORT="${HTTP_PORT:-1337}"
-BASE_URL="${BASE_URL:-http://localhost:${HTTP_PORT}}"
+# BASE_URL may stay empty — it is resolved below (localhost + LAN IP by default).
+# It doubles as Planka's socket.io origin allowlist (comma-separated URLs).
+BASE_URL="${BASE_URL:-}"
+PLANKA_HOST_IP="${PLANKA_HOST_IP:-}"
+PLANKA_EXTRA_ORIGINS="${PLANKA_EXTRA_ORIGINS:-}"
 
 # Traefik reverse-proxy integration (opt-in)
 PLANKA_TRAEFIK="${PLANKA_TRAEFIK:-false}"
@@ -67,6 +136,31 @@ ADMIN_EMAIL="${ADMIN_EMAIL:-}"
 ADMIN_PASSWORD="${ADMIN_PASSWORD:-}"
 ADMIN_NAME="${ADMIN_NAME:-Admin}"
 ADMIN_USERNAME="${ADMIN_USERNAME:-}"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LOCAL HELPERS
+# ─────────────────────────────────────────────────────────────────────────────
+
+# First non-loopback IPv4 address of this host (empty output if none found).
+detect_lan_ip() {
+  local ip
+  for ip in $(hostname -I 2>/dev/null); do
+    if [[ "$ip" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ && "$ip" != 127.* && "$ip" != 169.254.* ]]; then
+      echo "$ip"
+      return 0
+    fi
+  done
+  return 1
+}
+
+# Collapse a comma-separated list: trim whitespace, drop empties, dedupe (order kept).
+dedupe_csv() {
+  printf '%s\n' "$1" | tr ',' '\n' \
+    | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' \
+    | awk 'NF && !seen[$0]++' \
+    | paste -sd',' -
+}
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -108,6 +202,57 @@ if [[ -n "$ADMIN_EMAIL" && -n "$ADMIN_PASSWORD" && ${#ADMIN_PASSWORD} -lt 8 ]]; 
   read -rp "    Continue anyway? [y/N] " _ans
   [[ "${_ans,,}" == "y" ]] || exit 0
 fi
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# RESOLVE BASE_URL (also Planka's socket.io origin allowlist)
+# ─────────────────────────────────────────────────────────────────────────────
+#
+# Planka whitelists WebSocket origins from BASE_URL: it accepts a comma-separated
+# list of URLs and only accepts socket.io connections from those origins
+# (server/config/env/production.js: onlyAllowOrigins). Every host:port a browser
+# may use to reach Planka must be listed, otherwise the WebSocket handshake is
+# rejected and realtime features break.
+
+step "Resolving BASE_URL (socket origin allowlist)"
+
+LAN_IP="${PLANKA_HOST_IP:-}"
+
+if [[ "$PLANKA_TRAEFIK" != "true" && -z "$BASE_URL" ]]; then
+  BASE_URL="http://localhost:${HTTP_PORT}"
+  if [[ -z "$LAN_IP" ]]; then
+    LAN_IP="$(detect_lan_ip || true)"
+  fi
+  if [[ -n "$LAN_IP" ]]; then
+    BASE_URL="${BASE_URL},http://${LAN_IP}:${HTTP_PORT}"
+    info "Included LAN origin http://${LAN_IP}:${HTTP_PORT} (override with PLANKA_HOST_IP)."
+  else
+    warn "Could not detect a LAN IP — allowlist is localhost only. Set PLANKA_HOST_IP for LAN access."
+  fi
+fi
+
+if [[ -n "$PLANKA_EXTRA_ORIGINS" ]]; then
+  BASE_URL="${BASE_URL},${PLANKA_EXTRA_ORIGINS}"
+fi
+BASE_URL="$(dedupe_csv "$BASE_URL")"
+
+# Warn if the allowlist only covers loopback — LAN browsers would be rejected.
+IFS=',' read -ra _allowlist <<< "$BASE_URL"
+_loopback_only=true
+for _entry in "${_allowlist[@]}"; do
+  _host="${_entry#*://}"; _host="${_host%%/*}"; _host="${_host%%:*}"
+  if [[ "$_host" != "localhost" && "$_host" != "127.0.0.1" ]]; then
+    _loopback_only=false
+    break
+  fi
+done
+if [[ "$_loopback_only" == "true" ]]; then
+  warn "BASE_URL only contains loopback origins — browsers on other machines will"
+  warn "fail the WebSocket handshake (realtime features break). Add e.g."
+  warn "PLANKA_HOST_IP=<your host IP> or PLANKA_EXTRA_ORIGINS=http://<host>:${HTTP_PORT}"
+fi
+
+success "BASE_URL: ${BASE_URL}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,7 +338,7 @@ services:
     image: ${PLANKA_IMAGE}
     container_name: ${CONTAINER_NAME}
     restart: unless-stopped
-$(if [[ "$PLANKA_TRAEFIK" != "true" ]]; then echo '    ports:'; echo "      - \"${HTTP_PORT}:1337\"  # Local access via http://localhost:${HTTP_PORT}"; fi)
+$(if [[ "$PLANKA_TRAEFIK" != "true" ]]; then echo '    ports:'; echo "      - \"${HTTP_PORT}:1337\"  # Access via http://localhost:${HTTP_PORT}${LAN_IP:+, http://${LAN_IP}:${HTTP_PORT}}"; fi)
     volumes:
       - ${PLANKA_HOME}/data:/app/data
     environment:
@@ -310,14 +455,17 @@ step "Creating admin user"
 
 if [[ -n "$ADMIN_EMAIL" && -n "$ADMIN_PASSWORD" ]]; then
   info "Creating admin user non-interactively (${ADMIN_EMAIL})..."
-  docker compose -f "$COMPOSE_FILE" run --rm planka \
+  if docker compose -f "$COMPOSE_FILE" run --rm planka \
     npm run db:create-admin-user -- \
       --email "${ADMIN_EMAIL}" \
       --password "${ADMIN_PASSWORD}" \
       --name "${ADMIN_NAME}" \
-      ${ADMIN_USERNAME:+--username "${ADMIN_USERNAME}"} \
-    && success "Admin user '${ADMIN_EMAIL}' created." \
-    || warn "Admin user creation failed — the user may already exist, or Planka is still initialising."
+      ${ADMIN_USERNAME:+--username "${ADMIN_USERNAME}"}
+  then
+    success "Admin user '${ADMIN_EMAIL}' created."
+  else
+    warn "Admin user creation failed — the user may already exist, or Planka is still initialising."
+  fi
 else
   info "No ADMIN_EMAIL/ADMIN_PASSWORD provided — run interactively now:"
   echo ""
@@ -325,9 +473,12 @@ else
   echo ""
   read -rp "    Create admin user interactively now? [Y/n] " _create
   if [[ "${_create,,}" != "n" ]]; then
-    docker compose -f "$COMPOSE_FILE" run --rm planka npm run db:create-admin-user \
-      && success "Admin user created." \
-      || warn "Interactive admin creation exited with an error. You can re-run the command above later."
+    if docker compose -f "$COMPOSE_FILE" run --rm planka npm run db:create-admin-user
+    then
+      success "Admin user created."
+    else
+      warn "Interactive admin creation exited with an error. You can re-run the command above later."
+    fi
   else
     info "Skipping admin user creation. Remember to create one before first use."
   fi
@@ -346,7 +497,11 @@ echo ""
 echo -e "  ${BOLD}Web UI${RESET}           ${BASE_URL}"
 if [[ "$PLANKA_TRAEFIK" != "true" ]]; then
   echo -e "  ${BOLD}Local port${RESET}       http://localhost:${HTTP_PORT}"
+  if [[ -n "$LAN_IP" ]]; then
+    echo -e "  ${BOLD}LAN access${RESET}       http://${LAN_IP}:${HTTP_PORT}"
+  fi
 fi
+echo -e "  ${BOLD}Socket origins${RESET}   ${BASE_URL}"
 echo -e "  ${BOLD}Data directory${RESET}   ${PLANKA_HOME}/data"
 echo -e "  ${BOLD}DB directory${RESET}     ${PLANKA_HOME}/postgres"
 echo -e "  ${BOLD}Compose file${RESET}     ${COMPOSE_FILE}"
