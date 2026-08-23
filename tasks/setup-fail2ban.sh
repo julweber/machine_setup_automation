@@ -138,6 +138,7 @@ else
   sudo wget -O /etc/apt/keyrings/fail2ban.asc https://repo.fail2ban.org/etc/gpg/fail2ban.gpg 2>/dev/null || true
 
   # Get the codename from /etc/os-release (replaces deprecated lsb_release)
+  # shellcheck disable=SC1091  # /etc/os-release is a runtime system file
   DISTRO=$(. /etc/os-release && echo "${VERSION_CODENAME}")
   if [[ -z "${DISTRO}" ]]; then
     DISTRO="noble"
@@ -190,8 +191,8 @@ fi
 
 # Render template and write configuration
 info "Rendering configuration from template"
-sudo envsubst '${FAIL2BAN_SSHD_PORT} ${FAIL2BAN_MAXRETRY} ${FAIL2BAN_BANTIME} ${FAIL2BAN_FINDTIME} ${GENERATED_DATE}' \
-  < "${TEMPLATE_DIR}/jail.local" \
+sudo cat "${TEMPLATE_DIR}/jail.local" \
+  | sudo envsubst '${FAIL2BAN_SSHD_PORT} ${FAIL2BAN_MAXRETRY} ${FAIL2BAN_BANTIME} ${FAIL2BAN_FINDTIME} ${GENERATED_DATE}' \
   | sudo tee "${JAIL_LOCAL}" > /dev/null
 
 # Configuration written to /etc/fail2ban/jail.local above

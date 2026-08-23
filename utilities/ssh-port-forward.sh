@@ -7,6 +7,8 @@
 # ./ssh-port-forward.sh 3333 192.168.0.3 3333 myuser 2224
 # ./ssh-port-forward.sh --help
 
+set -euo pipefail
+
 usage() {
     cat <<EOF
 Usage: $0 <local_port> <remote_host> <remote_port> <ssh_user> [ssh_port]
@@ -38,11 +40,11 @@ case "${1:-}" in
 esac
 
 # Parameters
-LOCAL_PORT=$1
-REMOTE_HOST=$2
-REMOTE_PORT=$3
-SSH_USER=$4
-SSH_PORT=$5
+LOCAL_PORT="${1:-}"
+REMOTE_HOST="${2:-}"
+REMOTE_PORT="${3:-}"
+SSH_USER="${4:-}"
+SSH_PORT="${5:-}"
 
 # Colored status messages
 GREEN='\033[0;32m'
@@ -68,9 +70,7 @@ fi
 
 echo -e "${GREEN}[STATUS]${NC} Forwarding local port ${LOCAL_PORT} to ${REMOTE_HOST}:${REMOTE_PORT} via SSH user ${SSH_USER}"
 echo -e "${YELLOW}[INFO]${NC} Establishing SSH connection..."
-ssh -p "${SSH_PORT}" -N -L "${LOCAL_PORT}:localhost:${REMOTE_PORT}" "${SSH_USER}@${REMOTE_HOST}"
-
-if [ $? -eq 0 ]; then
+if ssh -p "${SSH_PORT}" -N -L "${LOCAL_PORT}:localhost:${REMOTE_PORT}" "${SSH_USER}@${REMOTE_HOST}"; then
     echo -e "${GREEN}[SUCCESS]${NC} SSH port forwarding established successfully!"
 else
     echo -e "${RED}[ERROR]${NC} Failed to establish SSH port forwarding!"

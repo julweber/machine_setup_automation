@@ -4,7 +4,7 @@
 # Usage: ./run-llama-server.sh [OPTIONS] [llama-server args...]
 #        ./run-llama-server.sh --help
 
-set -e
+set -euo pipefail
 
 # Default configuration (can be overridden via arguments)
 MODELS_BASE_DIR="$HOME/.lmstudio/models"
@@ -222,7 +222,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Default behavior: if no model specified, show available models
-if [[ -z "${arg_map[--model]}" ]]; then
+if [[ -z "${arg_map[--model]:-}" ]]; then
     list_models "${arg_map[--model-base-dir]:-}"
 fi
 
@@ -278,7 +278,7 @@ final_args+=("--cache-type-k-draft" "${arg_map[--cache-type-k-draft]:-$KV_CACHE_
 final_args+=("--cache-type-v-draft" "${arg_map[--cache-type-v-draft]:-$KV_CACHE_TYPE}")
 
 # Add kv-unified (default: true)
-if [[ "${arg_map[--kv-unified]}" == "true" ]] || [[ "$KV_UNIFIED" == "true" ]]; then
+if [[ "${arg_map[--kv-unified]:-}" == "true" ]] || [[ "$KV_UNIFIED" == "true" ]]; then
     final_args+=("--kv-unified")
 fi
 
