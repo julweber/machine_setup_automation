@@ -109,7 +109,8 @@ Supports SQLite for lightweight setups or PostgreSQL for production use,
 with optional Traefik reverse-proxy integration.
 
 Options:
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 Environment variables (all optional):
   FORGEJO_HOME        Host directory for persistent data (default: /srv/forgejo)
@@ -131,8 +132,13 @@ EOF
 }
 
 # Parse arguments
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -141,6 +147,7 @@ while [[ $# -gt 0 ]]; do
       error "Unknown option: $1 (see --help)"
       ;;
   esac
+  shift
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -176,8 +183,12 @@ if [[ "$DB_TYPE" != "sqlite" ]]; then
   if [[ "$POSTGRES_PASSWORD" == "changeme" ]]; then
     warn "You are using the default database password 'changeme'."
     warn "Set POSTGRES_PASSWORD before running in production!"
-    read -rp "    Continue anyway? [y/N] " _ans
-    [[ "${_ans,,}" == "y" ]] || exit 0
+    if [[ "$INTERACTIVE" == "true" ]]; then
+      read -rp "    Continue anyway? [y/N] " _ans
+      [[ "${_ans,,}" == "y" ]] || exit 0
+    else
+      error "POSTGRES_PASSWORD is set to the default 'changeme'. Set a strong POSTGRES_PASSWORD and re-run, or re-run with --interactive to confirm manually."
+    fi
   fi
 fi
 
@@ -191,14 +202,18 @@ COMPOSE_FILE="${FORGEJO_HOME}/docker-compose.yml"
 
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
-  read -rp "    Tear down existing stack and re-create? Data in ${FORGEJO_HOME}/data will be preserved. [y/N] " answer
-  if [[ "${answer,,}" == "y" ]]; then
-    info "Stopping and removing existing stack..."
-    sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-    success "Old stack removed."
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Tear down existing stack and re-create? Data in ${FORGEJO_HOME}/data will be preserved. [y/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      info "Stopping and removing existing stack..."
+      sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+      success "Old stack removed."
+    else
+      info "Keeping existing stack. Exiting."
+      exit 0
+    fi
   else
-    info "Keeping existing stack. Exiting."
-    exit 0
+    error "Existing Forgejo stack detected at ${FORGEJO_HOME}. Re-run with --interactive to tear down and re-create, or remove ${COMPOSE_FILE} manually."
   fi
 fi
 

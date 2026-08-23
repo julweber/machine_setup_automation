@@ -101,7 +101,8 @@ Deploys Excalidraw (virtual whiteboard) using Docker. Supports direct host
 port access or Traefik reverse-proxy integration with TLS termination.
 
 Options:
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 Environment variables (all optional):
   HOST_PORT           Host port for direct access (default: 5005)
@@ -117,8 +118,13 @@ EOF
 }
 
 # Parse arguments
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -127,6 +133,7 @@ while [[ $# -gt 0 ]]; do
       error "Unknown option: $1 (see --help)"
       ;;
   esac
+  shift
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -164,20 +171,29 @@ step "Checking for existing Excalidraw container"
 
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
   warn "Excalidraw container is already running."
-  read -rp "    Stop and re-create the container? [y/N] " answer
-  if [[ "${answer,,}" == "y" ]]; then
-    info "Stopping and removing existing container..."
-    docker stop "$CONTAINER_NAME" 2>/dev/null || true
-    docker rm "$CONTAINER_NAME" 2>/dev/null || true
-    success "Existing container removed."
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Stop and re-create the container? [y/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      info "Stopping and removing existing container..."
+      docker stop "$CONTAINER_NAME" 2>/dev/null || true
+      docker rm "$CONTAINER_NAME" 2>/dev/null || true
+      success "Existing container removed."
+    else
+      info "Keeping existing container. Exiting."
+      exit 0
+    fi
   else
-    info "Keeping existing container. Exiting."
-    exit 0
+    error "Excalidraw container '${CONTAINER_NAME}' is already running. Stop it manually (docker stop ${CONTAINER_NAME}) or re-run with --interactive to stop and re-create."
   fi
 elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
   # Container exists but is not running
   warn "Excalidraw container exists but is not running."
-  read -rp "    Start existing container? [Y/n] " answer
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Start existing container? [Y/n] " answer
+  else
+    info "Non-interactive mode: starting existing container automatically (default [Y/n])."
+    answer="y"
+  fi
   if [[ "${answer,,}" != "n" ]]; then
     info "Starting existing container..."
     docker start "$CONTAINER_NAME"
@@ -277,20 +293,28 @@ if [[ "$EXCALIDRAW_TRAEFIK" != "true" ]]; then
     if ss -tuln 2>/dev/null | grep -q ":${HOST_PORT} "; then
       warn "Port ${HOST_PORT} appears to be in use."
       warn "Check what's using it with: sudo lsof -i :${HOST_PORT}"
-      read -rp "    Continue anyway? [y/N] " answer
-      if [[ "${answer,,}" != "y" ]]; then
-        info "Aborted. Change HOST_PORT or free up the port and try again."
-        exit 0
+      if [[ "$INTERACTIVE" == "true" ]]; then
+        read -rp "    Continue anyway? [y/N] " answer
+        if [[ "${answer,,}" != "y" ]]; then
+          info "Aborted. Change HOST_PORT or free up the port and try again."
+          exit 0
+        fi
+      else
+        error "Port ${HOST_PORT} is already in use. Free the port or set a different HOST_PORT, or re-run with --interactive to confirm manually."
       fi
     fi
   elif command -v netstat &>/dev/null; then
     if netstat -tuln 2>/dev/null | grep -q ":${HOST_PORT} "; then
       warn "Port ${HOST_PORT} appears to be in use."
       warn "Check what's using it with: sudo lsof -i :${HOST_PORT}"
-      read -rp "    Continue anyway? [y/N] " answer
-      if [[ "${answer,,}" != "y" ]]; then
-        info "Aborted. Change HOST_PORT or free up the port and try again."
-        exit 0
+      if [[ "$INTERACTIVE" == "true" ]]; then
+        read -rp "    Continue anyway? [y/N] " answer
+        if [[ "${answer,,}" != "y" ]]; then
+          info "Aborted. Change HOST_PORT or free up the port and try again."
+          exit 0
+        fi
+      else
+        error "Port ${HOST_PORT} is already in use. Free the port or set a different HOST_PORT, or re-run with --interactive to confirm manually."
       fi
     fi
   fi

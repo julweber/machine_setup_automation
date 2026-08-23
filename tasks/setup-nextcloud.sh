@@ -167,7 +167,8 @@ backends, optional Redis caching, and Traefik reverse-proxy integration.
 Secrets are written to ${NEXTCLOUD_HOME:-/srv/nextcloud}/.env (mode 600), never in compose.
 
 Options:
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 Environment variables (all optional):
   NEXTCLOUD_HOME            Host directory for persistent data (default: /srv/nextcloud)
@@ -192,8 +193,13 @@ EOF
 }
 
 # Parse arguments
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -202,6 +208,7 @@ while [[ $# -gt 0 ]]; do
       error "Unknown option: $1 (see --help)"
       ;;
   esac
+  shift
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -258,14 +265,20 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   echo ""
   info "${BOLD}IMPORTANT:${RESET} Your Nextcloud data in ${NEXTCLOUD_HOME}/html and ${NEXTCLOUD_HOME}/data"
   info "will be PRESERVED. Only the running stack will be replaced."
-  read -rp "    Tear down existing stack and re-create? [y/N] " answer
-  if [[ "${answer,,}" == "y" ]]; then
-    info "Stopping and removing existing stack..."
-    sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-    success "Old stack removed."
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Tear down existing stack and re-create? [y/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      info "Stopping and removing existing stack..."
+      sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+      success "Old stack removed."
+    else
+      info "Keeping existing stack. Exiting."
+      exit 0
+    fi
   else
-    info "Keeping existing stack. Exiting."
-    exit 0
+    # Do not let the failure-cleanup trap tear down a pre-existing stack.
+    trap - EXIT
+    error "Existing Nextcloud stack detected at ${NEXTCLOUD_HOME}. Re-run with --interactive to tear down and re-create, or remove ${COMPOSE_FILE} manually."
   fi
 fi
 

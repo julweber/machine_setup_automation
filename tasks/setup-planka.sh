@@ -40,7 +40,8 @@ Deploys Planka (self-hosted Kanban board) using Docker Compose.
 Data is stored under PLANKA_HOME (default: /srv/planka).
 
 ${BOLD}Options:${RESET}
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 ${BOLD}Environment variables${RESET} (all optional):
 
@@ -75,7 +76,9 @@ ${BOLD}Environment variables${RESET} (all optional):
 
   Admin user:
     ADMIN_EMAIL             Create admin user non-interactively
-                            (default: empty = prompt interactively after startup)
+                            (default: empty = print the admin-user creation
+                            command after startup; with --interactive, prompt
+                            to run it now)
     ADMIN_PASSWORD          Admin password
     ADMIN_NAME              Admin display name (default: Admin)
     ADMIN_USERNAME          Admin username (optional, forwarded to Planka)
@@ -94,8 +97,11 @@ EOF
 # ARGUMENT PARSING
 # ─────────────────────────────────────────────────────────────────────────────
 
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive) INTERACTIVE=true ;;
     -h|--help) usage ;;
     *) error "Unknown option: $1 (use --help for usage)" ;;
   esac
@@ -199,8 +205,12 @@ fi
 # Warn if admin password looks weak
 if [[ -n "$ADMIN_EMAIL" && -n "$ADMIN_PASSWORD" && ${#ADMIN_PASSWORD} -lt 8 ]]; then
   warn "ADMIN_PASSWORD is shorter than 8 characters — consider a stronger password."
-  read -rp "    Continue anyway? [y/N] " _ans
-  [[ "${_ans,,}" == "y" ]] || exit 0
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Continue anyway? [y/N] " _ans
+    [[ "${_ans,,}" == "y" ]] || exit 0
+  else
+    error "ADMIN_PASSWORD is shorter than 8 characters. Set a stronger ADMIN_PASSWORD (at least 8 characters) and re-run, or re-run with --interactive to confirm manually."
+  fi
 fi
 
 
@@ -279,14 +289,18 @@ COMPOSE_FILE="${PLANKA_HOME}/docker-compose.yml"
 
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
-  read -rp "    Tear down existing stack and re-create? Data in ${PLANKA_HOME}/data will be preserved. [y/N] " answer
-  if [[ "${answer,,}" == "y" ]]; then
-    info "Stopping and removing existing stack..."
-    docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-    success "Old stack removed."
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Tear down existing stack and re-create? Data in ${PLANKA_HOME}/data will be preserved. [y/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      info "Stopping and removing existing stack..."
+      docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+      success "Old stack removed."
+    else
+      info "Keeping existing stack. Exiting."
+      exit 0
+    fi
   else
-    info "Keeping existing stack. Exiting."
-    exit 0
+    error "Existing stack detected at ${PLANKA_HOME}. Re-run with --interactive to tear down and re-create, or remove ${PLANKA_HOME}/docker-compose.yml manually."
   fi
 fi
 
@@ -467,20 +481,30 @@ if [[ -n "$ADMIN_EMAIL" && -n "$ADMIN_PASSWORD" ]]; then
     warn "Admin user creation failed — the user may already exist, or Planka is still initialising."
   fi
 else
-  info "No ADMIN_EMAIL/ADMIN_PASSWORD provided — run interactively now:"
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    info "No ADMIN_EMAIL/ADMIN_PASSWORD provided — run interactively now:"
+  else
+    info "No ADMIN_EMAIL/ADMIN_PASSWORD provided — create the admin user later:"
+  fi
   echo ""
   echo -e "  ${BOLD}docker compose -f ${COMPOSE_FILE} run --rm planka npm run db:create-admin-user${RESET}"
   echo ""
-  read -rp "    Create admin user interactively now? [Y/n] " _create
-  if [[ "${_create,,}" != "n" ]]; then
-    if docker compose -f "$COMPOSE_FILE" run --rm planka npm run db:create-admin-user
-    then
-      success "Admin user created."
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Create admin user interactively now? [Y/n] " _create
+    if [[ "${_create,,}" != "n" ]]; then
+      if docker compose -f "$COMPOSE_FILE" run --rm planka npm run db:create-admin-user
+      then
+        success "Admin user created."
+      else
+        warn "Interactive admin creation exited with an error. You can re-run the command above later."
+      fi
     else
-      warn "Interactive admin creation exited with an error. You can re-run the command above later."
+      info "Skipping admin user creation. Remember to create one before first use."
     fi
   else
-    info "Skipping admin user creation. Remember to create one before first use."
+    info "Non-interactive mode: skipping interactive admin user creation (optional post-setup step)."
+    info "Run the command above to create the admin user, or set ADMIN_EMAIL/ADMIN_PASSWORD and re-run."
+    exit 0
   fi
 fi
 

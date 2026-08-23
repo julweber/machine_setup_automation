@@ -123,7 +123,8 @@ external LM Studio instance for AI model inference. Supports direct host
 port access or Traefik reverse-proxy integration.
 
 Options:
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 Environment variables (all optional):
   OPENWEBUI_PORT     Host port for direct web UI access (default: 3333)
@@ -139,8 +140,13 @@ EOF
 }
 
 # Parse arguments
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -149,6 +155,7 @@ while [[ $# -gt 0 ]]; do
       error "Unknown option: $1 (see --help)"
       ;;
   esac
+  shift
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,15 +220,21 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   echo ""
   info "${BOLD}IMPORTANT:${RESET} Your data in 'openwebui_data' volume will be PRESERVED."
   info "However, resetting the stack may break references to old configurations."
-  read -rp "    Are you sure you want to re-create the stack? [y/N] " answer
-  if [[ "${answer,,}" == "y" ]]; then
-    info "Stopping and removing existing stack..."
-    cd "$PROJECT_DIR"
-    docker compose down 2>/dev/null || true
-    success "Old stack removed. Data volume preserved."
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Are you sure you want to re-create the stack? [y/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      info "Stopping and removing existing stack..."
+      cd "$PROJECT_DIR"
+      docker compose down 2>/dev/null || true
+      success "Old stack removed. Data volume preserved."
+    else
+      info "Keeping existing stack. Exiting."
+      exit 0
+    fi
   else
-    info "Keeping existing stack. Exiting."
-    exit 0
+    # Do not let the failure-cleanup trap tear down a pre-existing stack.
+    trap - EXIT
+    error "Existing Open WebUI stack detected at ${PROJECT_DIR}. Re-run with --interactive to re-create the stack, or remove ${COMPOSE_FILE} manually."
   fi
 fi
 

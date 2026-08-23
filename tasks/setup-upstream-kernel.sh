@@ -38,7 +38,8 @@ Prepares the Zabbly mainline kernel apt repository on Ubuntu
 adds the sources file, and updates the package lists. Uses sudo internally.
 
 ${BOLD}Options:${RESET}
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 ${BOLD}Notes:${RESET}
   - Ubuntu only (tested with noble/jammy).
@@ -49,8 +50,13 @@ EOF
 }
 
 # Parse arguments
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -59,6 +65,7 @@ while [[ $# -gt 0 ]]; do
       error "Unknown option: $1 (see --help)"
       ;;
   esac
+  shift
 done
 
 # Configuration
@@ -93,8 +100,12 @@ check_secure_boot() {
       warn "Secure Boot is ENABLED."
       warn "Zabbly kernels are unsigned and will NOT boot with Secure Boot on."
       echo ""
-      read -rp "Continue anyway? [y/N] " confirm
-      [[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+      if [[ "$INTERACTIVE" == "true" ]]; then
+        read -rp "Continue anyway? [y/N] " confirm
+        [[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+      else
+        error "Secure Boot is enabled and Zabbly kernels are unsigned. Disable Secure Boot in UEFI/BIOS, or re-run with --interactive to confirm manually."
+      fi
     else
       success "Secure Boot is disabled."
     fi
@@ -108,8 +119,12 @@ check_nvidia() {
     warn "NVIDIA kernel module detected."
     warn "Mainline kernels may break NVIDIA drivers."
     echo ""
-    read -rp "Continue anyway? [y/N] " confirm
-    [[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+    if [[ "$INTERACTIVE" == "true" ]]; then
+      read -rp "Continue anyway? [y/N] " confirm
+      [[ "$confirm" =~ ^[Yy]$ ]] || { info "Aborted."; exit 0; }
+    else
+      error "NVIDIA kernel module is loaded and mainline kernels may break NVIDIA drivers. Verify driver compatibility with the mainline kernel, or re-run with --interactive to confirm manually."
+    fi
   fi
 }
 

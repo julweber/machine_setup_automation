@@ -81,7 +81,8 @@ Usage: $(basename "$0") [OPTIONS]
 Automated setup script for deploying Omnigent.
 
 Options:
-  -h, --help    Show this help message and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help message and exit
 
 Environment Variables:
   OMNIGENT_HOME                    Data directory (default: /srv/omnigent)
@@ -122,14 +123,19 @@ source "${SCRIPT_DIR}/../lib/helpers.sh"
 # ARGUMENT PARSING
 # ─────────────────────────────────────────────────────────────────────────────
 
+INTERACTIVE=false
+
 for arg in "$@"; do
   case "$arg" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
       ;;
     *)
-      error "Unknown argument: $arg. Usage: $(basename "$0") [--help]"
+      error "Unknown argument: $arg. Usage: $(basename "$0") [--help] [--interactive]"
       ;;
   esac
 done
@@ -209,14 +215,20 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
   echo ""
   info "${BOLD}IMPORTANT:${RESET} Your data in Docker named volumes will be PRESERVED."
-  read -rp "    Tear down existing stack and re-create? [y/N] " answer
-  if [[ "${answer,,}" == "y" ]]; then
-    info "Stopping and removing existing stack..."
-    (cd "$OMNIGENT_HOME" && docker compose down 2>/dev/null) || true
-    success "Old stack removed. Data volumes preserved."
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Tear down existing stack and re-create? [y/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      info "Stopping and removing existing stack..."
+      (cd "$OMNIGENT_HOME" && docker compose down 2>/dev/null) || true
+      success "Old stack removed. Data volumes preserved."
+    else
+      info "Keeping existing stack. Exiting."
+      exit 0
+    fi
   else
-    info "Keeping existing stack. Exiting."
-    exit 0
+    # Do not let the failure-cleanup trap tear down a pre-existing stack.
+    trap - EXIT
+    error "Existing Omnigent stack detected at ${OMNIGENT_HOME}. Re-run with --interactive to tear down and re-create, or remove ${COMPOSE_FILE} manually."
   fi
 fi
 

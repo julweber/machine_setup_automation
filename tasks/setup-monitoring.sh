@@ -154,7 +154,8 @@ labeled prometheus.scrape=true. Grafana is pre-provisioned with Node Exporter
 and cAdvisor dashboards. Re-runs are idempotent (data is never wiped).
 
 ${BOLD}Options:${RESET}
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 ${BOLD}Environment variables${RESET} (all optional):
   MONITORING_HOME            Base data directory (default: /srv)
@@ -177,8 +178,13 @@ EOF
 }
 
 # Parse arguments
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -187,6 +193,7 @@ while [[ $# -gt 0 ]]; do
       error "Unknown option: $1 (see --help)"
       ;;
   esac
+  shift
 done
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -287,9 +294,13 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   if [[ "${MONITORING_FORCE}" == "true" ]]; then
     info "MONITORING_FORCE=true — re-creating the stack (data preserved)."
     recreate=true
-  elif [[ -t 0 ]]; then
+  elif [[ "$INTERACTIVE" == "true" ]]; then
     read -rp "    Re-create the stack? Data in ${PROMETHEUS_HOME} and ${GRAFANA_HOME} will be preserved. [y/N] " _answer
     [[ "${_answer,,}" == "y" ]] && recreate=true
+  else
+    # Do not let the failure-cleanup trap tear down a pre-existing stack.
+    trap - EXIT
+    error "Existing monitoring stack detected at ${COMPOSE_FILE}. Set MONITORING_FORCE=true to re-create it, re-run with --interactive to confirm, or remove ${COMPOSE_FILE} manually."
   fi
 
   if [[ "$recreate" == "false" ]]; then

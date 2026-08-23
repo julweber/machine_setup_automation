@@ -103,7 +103,8 @@ generates TSA/worker RSA keys, writes ${CONCOURSE_HOME}/.env with credentials,
 and installs/configures the fly CLI.
 
 ${BOLD}Options:${RESET}
-  -h, --help    Show this help and exit
+  --interactive   Prompt for confirmation on risky conditions
+  -h, --help      Show this help and exit
 
 ${BOLD}Environment variables${RESET} (all optional):
   CONCOURSE_HOME            Base installation directory (default: /srv/concourse)
@@ -122,8 +123,13 @@ EOF
 }
 
 # Parse arguments
+INTERACTIVE=false
+
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --interactive)
+      INTERACTIVE=true
+      ;;
     -h|--help)
       usage
       exit 0
@@ -132,6 +138,7 @@ while [[ $# -gt 0 ]]; do
       error "Unknown option: $1 (see --help)"
       ;;
   esac
+  shift
 done
 
 
@@ -160,8 +167,12 @@ if [[ "$CONCOURSE_TRAEFIK" == "false" ]]; then
   if ss -tln 2>/dev/null | grep -qE ":${CONCOURSE_WEB_PORT}[[:space:]]"; then
     warn "Port ${CONCOURSE_WEB_PORT} is already in use."
     warn "Either stop the existing service or choose a different CONCOURSE_WEB_PORT."
-    read -rp "    Continue anyway? [y/N] " answer
-    [[ "${answer,,}" == "y" ]] || exit 0
+    if [[ "$INTERACTIVE" == "true" ]]; then
+      read -rp "    Continue anyway? [y/N] " answer
+      [[ "${answer,,}" == "y" ]] || exit 0
+    else
+      error "Port ${CONCOURSE_WEB_PORT} is already in use. Stop the conflicting service or set CONCOURSE_WEB_PORT to a free port, or re-run with --interactive to confirm manually."
+    fi
   else
     info "Port ${CONCOURSE_WEB_PORT} is available."
   fi
@@ -171,8 +182,12 @@ fi
 if ss -tln 2>/dev/null | grep -qE ":2225[[:space:]]"; then
   warn "Port 2225 (TSA) is already in use."
   warn "The worker will fail to register until port 2225 is free."
-  read -rp "    Continue anyway? [y/N] " answer
-  [[ "${answer,,}" == "y" ]] || exit 0
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Continue anyway? [y/N] " answer
+    [[ "${answer,,}" == "y" ]] || exit 0
+  else
+    error "Port 2225 (TSA) is already in use. Free the port, or re-run with --interactive to confirm manually."
+  fi
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -193,12 +208,16 @@ if [[ -f "$COMPOSE_FILE" ]]; then
     info "RSA keys in ${CONCOURSE_HOME}/keys/ will be preserved for session continuity."
   fi
 
-  read -rp "    Re-create stack? [y/N] " answer
-  [[ "${answer,,}" == "y" ]] || { info "Keeping existing stack. Exiting."; exit 0; }
+  if [[ "$INTERACTIVE" == "true" ]]; then
+    read -rp "    Re-create stack? [y/N] " answer
+    [[ "${answer,,}" == "y" ]] || { info "Keeping existing stack. Exiting."; exit 0; }
 
-  read -rp "    Also wipe the PostgreSQL data volume? Credentials will be regenerated. [y/N] " wipe_answer
-  WIPE_VOLUMES=false
-  [[ "${wipe_answer,,}" == "y" ]] && WIPE_VOLUMES=true
+    read -rp "    Also wipe the PostgreSQL data volume? Credentials will be regenerated. [y/N] " wipe_answer
+    WIPE_VOLUMES=false
+    [[ "${wipe_answer,,}" == "y" ]] && WIPE_VOLUMES=true
+  else
+    error "Existing Concourse stack detected at ${CONCOURSE_HOME}. Re-run with --interactive to re-create the stack (optionally wiping the PostgreSQL data volume), or remove ${COMPOSE_FILE} manually."
+  fi
 
   info "Stopping and removing existing stack..."
   if [[ "$WIPE_VOLUMES" == "true" ]]; then

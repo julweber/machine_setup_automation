@@ -164,6 +164,8 @@ Prepares the Zabbly mainline kernel apt repository on Ubuntu 22.04/24.04 LTS, pr
 
 **Environment variables:** None (uses defaults from Zabbly repository)
 
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
+
 **Notes:**
 - Requires Secure Boot to be disabled in BIOS/UEFI
 - May require DKMS rebuild for NVIDIA proprietary drivers
@@ -197,6 +199,8 @@ Builds and installs llama.cpp from source with auto or manual GPU backend select
 Deploys Open WebUI using Docker Compose, connecting to an external LM Studio instance for AI model inference. Supports both direct access mode and Traefik reverse-proxy integration.
 
 **Environment variables:** `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `$HOME/open-webui`), `WEBUI_SECRET_KEY` (auto-generated if not set), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
+
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
 
 **Features:**
 - Direct mode: Accessible at `http://localhost:3333`
@@ -263,6 +267,8 @@ Deploys Omnigent — an open-source meta-harness providing a common orchestratio
 
 **Environment variables:** `OMNIGENT_HOME` (default `/srv/omnigent`), `OMNIGENT_IMAGE` (default `ghcr.io/omnigent-ai/omnigent-server`), `OMNIGENT_IMAGE_TAG` (default `latest`), `OMNIGENT_PORT` (default `8008`), `OMNIGENT_TRAEFIK` (default `false`), `OMNIGENT_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`), `OMNIGENT_AUTH_ENABLED` (default `1`), `OMNIGENT_AUTH_PROVIDER` (`accounts`, `oidc`, or `header`), `OMNIGENT_ACCOUNTS_BASE_URL`, `OMNIGENT_ACCOUNTS_AUTO_OPEN` (default `0`), `OMNIGENT_ACCOUNTS_INIT_ADMIN_USERNAME` (default `admin`), `OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD`, `POSTGRES_USER` (default `omnigent`), `POSTGRES_DB` (default `omnigent`)
 
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
+
 **Features:**
 - Docker Compose deployment with Postgres backend
 - Runner CLI installed on host for local agent execution
@@ -324,10 +330,14 @@ Installs Forgejo (a Gitea fork) as a Docker container. Supports optional Traefik
 
 **Environment variables:** `FORGEJO_TRAEFIK_ENABLED` (default `false`), `FORGEJO_DOMAIN`, `FORGEJO_HTTP_PORT` (default `3000`), `FORGEJO_SSH_PORT` (default `222`), `PROXY_NETWORK` (default `proxy`)
 
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
+
 #### `setup-planka.sh`
 Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL. Auto-generates a secret key and supports interactive or headless admin user creation.
 
 **Environment variables:** `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD`, `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME`
+
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting; without `ADMIN_EMAIL`/`ADMIN_PASSWORD` the admin-user creation command is printed instead of prompting)
 
 ---
 
@@ -337,6 +347,8 @@ Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL.
 Deploys NextCloud cloud storage platform via Docker Compose with MariaDB backend. Provides file syncing, sharing, and collaboration features.
 
 **Environment variables:** `NEXTCLOUD_HOME` (default `/srv/nextcloud`), `HTTP_PORT` (default `4600`), `BASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `NEXTCLOUD_VERSION`
+
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
 
 #### `setup-n8n.sh`
 Deploys n8n, a workflow automation platform, via Docker Compose with PostgreSQL backend. Supports optional Traefik reverse-proxy integration for secure HTTPS access.
@@ -363,6 +375,8 @@ Installs and configures Samba file sharing.
 Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `always` restart policy.
 
 **Environment variables:** `HOST_PORT` (default `5005`)
+
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting; a stopped existing container is started automatically)
 
 ---
 
@@ -471,6 +485,8 @@ Deploys a containerized observability stack (Prometheus, Grafana, Node Exporter,
 | `NODE_EXPORTER_IMAGE_VERSION` | `quay.io/prometheus/node-exporter:v1.12.1` | Node Exporter image tag |
 | `CADVISOR_IMAGE_VERSION` | `ghcr.io/google/cadvisor:v0.60.5` | cAdvisor image tag |
 | `MONITORING_FORCE` | `false` | Set to `true` to re-create an existing stack (data preserved) |
+
+**Flags:** `--interactive` — prompt before re-creating an existing stack (default: non-interactive; errors out instead of prompting; `MONITORING_FORCE=true` re-creates without prompting)
 
 **Usage examples:**
 ```bash
