@@ -25,6 +25,7 @@ set -euo pipefail
 
 # Determine script directory and source shared library
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/opencode-server"
 LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
 
 # shellcheck disable=SC1090
@@ -118,6 +119,10 @@ preflight_docker() {
         error "openssl is not installed. Required for generating secure password. Install it or set OPENCODE_SERVER_PASSWORD manually."
     fi
 
+    if ! command -v envsubst &>/dev/null; then
+        error "envsubst is not installed. Required for template rendering. Install with: sudo apt-get install gettext-base"
+    fi
+
     if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
         _preflight_traefik
     fi
@@ -146,6 +151,10 @@ preflight_systemd() {
 
     if [[ -z "$OPENCODE_SERVER_PASSWORD" ]] && ! command -v openssl &>/dev/null; then
         warn "openssl not found. Generating password may fail, or set OPENCODE_SERVER_PASSWORD manually."
+    fi
+
+    if ! command -v envsubst &>/dev/null; then
+        error "envsubst is not installed. Required for template rendering. Install with: sudo apt-get install gettext-base"
     fi
 }
 
@@ -183,73 +192,19 @@ install_opencode_npm() {
 
 _generate_compose_file() {
     local compose_file="$1"
-
-    sudo tee "$compose_file" > /dev/null << EOF
-# Opencode Server Docker Compose Configuration
-# Generated: $(date -Iseconds)
-
-networks:
-  opencode:
-    external: false
-EOF
+    local compose_template
 
     if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
-        sudo tee -a "$compose_file" > /dev/null << EOF
-  ${PROXY_NETWORK}:
-    external: true
-EOF
+        compose_template="${TEMPLATE_DIR}/docker-compose.traefik.yml"
+    else
+        compose_template="${TEMPLATE_DIR}/docker-compose.direct.yml"
     fi
 
-    sudo tee -a "$compose_file" > /dev/null << EOF
-
-services:
-  opencode:
-    image: ghcr.io/anomalyco/opencode:latest
-    container_name: opencode-agent
-    restart: unless-stopped
-    env_file:
-      - .env
-    command: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
-EOF
-
-    if [[ "$OPENCODE_TRAEFIK" != "true" ]]; then
-        sudo tee -a "$compose_file" > /dev/null << EOF
-    ports:
-      - "${OPENCODE_PORT}:4096"
-EOF
-    fi
-
-    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
-        sudo tee -a "$compose_file" > /dev/null << EOF
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=${PROXY_NETWORK}"
-      - "traefik.http.routers.opencode.rule=Host(\`${OPENCODE_DOMAIN}\`)"
-      - "traefik.http.routers.opencode.entrypoints=websecure"
-      - "traefik.http.routers.opencode.tls=true"
-      - "traefik.http.routers.opencode.tls.certresolver=letsencrypt"
-      - "traefik.http.services.opencode.loadbalancer.server.port=4096"
-EOF
-    fi
-
-    sudo tee -a "$compose_file" > /dev/null << EOF
-    networks:
-      - opencode
-EOF
-
-    if [[ "$OPENCODE_TRAEFIK" == "true" ]]; then
-        sudo tee -a "$compose_file" > /dev/null << EOF
-      - ${PROXY_NETWORK}
-EOF
-    fi
-
-    sudo tee -a "$compose_file" > /dev/null << EOF
-    volumes:
-      - opencode_data:/data
-
-volumes:
-  opencode_data:
-EOF
+    GENERATED_DATE="$(date -Iseconds)"
+    export GENERATED_DATE OPENCODE_PORT PROXY_NETWORK OPENCODE_DOMAIN
+    # shellcheck disable=SC2016  # envsubst expects the literal variable list
+    envsubst '${GENERATED_DATE} ${OPENCODE_PORT} ${PROXY_NETWORK} ${OPENCODE_DOMAIN}' \
+        < "$compose_template" | sudo tee "$compose_file" > /dev/null
 }
 
 _generate_env_file() {
@@ -260,23 +215,17 @@ _generate_env_file() {
         sudo cp "$env_file" "${env_file}.bak"
     fi
 
-    sudo tee "$env_file" > /dev/null << EOF
-# Opencode Server Environment Variables
-# This file contains sensitive credentials - keep it secure!
-OPENCODE_SERVER_USERNAME=${OPENCODE_SERVER_USERNAME}
-OPENCODE_SERVER_PASSWORD=${OPENCODE_SERVER_PASSWORD}
-EOF
+    export OPENCODE_SERVER_USERNAME OPENCODE_SERVER_PASSWORD
+    # shellcheck disable=SC2016  # envsubst expects the literal variable list
+    envsubst '${OPENCODE_SERVER_USERNAME} ${OPENCODE_SERVER_PASSWORD}' \
+        < "${TEMPLATE_DIR}/env.template" | sudo tee "$env_file" > /dev/null
 
     sudo chmod 600 "$env_file"
     success "Secrets stored securely in .env file (mode: 600)."
 }
 
 _generate_start_script() {
-    sudo tee "${DATA_DIR}/start_opencode.sh" > /dev/null << 'EOF'
-#!/bin/bash
-cd "$(dirname "$0")"
-sudo docker compose up -d
-EOF
+    sudo cp "${TEMPLATE_DIR}/start_opencode.sh" "${DATA_DIR}/start_opencode.sh"
     sudo chmod +x "${DATA_DIR}/start_opencode.sh"
     success "start_opencode.sh created."
 }
@@ -415,24 +364,11 @@ _write_service_file() {
         return
     fi
 
-    sudo tee "$service_file" > /dev/null << EOF
-[Unit]
-Description=Opencode AI Coding Agent Server
-After=network.target
-
-[Service]
-Type=simple
-User=$USER
-Environment="OPENCODE_SERVER_USERNAME=$OPENCODE_SERVER_USERNAME"
-Environment="OPENCODE_SERVER_PASSWORD=$OPENCODE_SERVER_PASSWORD"
-ExecStart=/usr/local/bin/opencode serve --hostname ${OPENCODE_HOSTNAME} --port ${OPENCODE_PORT}
-Restart=always
-RestartSec=5
-WorkingDirectory=$HOME
-
-[Install]
-WantedBy=multi-user.target
-EOF
+    export USER HOME OPENCODE_SERVER_USERNAME OPENCODE_SERVER_PASSWORD \
+        OPENCODE_HOSTNAME OPENCODE_PORT
+    # shellcheck disable=SC2016  # envsubst expects the literal variable list
+    envsubst '${USER} ${HOME} ${OPENCODE_SERVER_USERNAME} ${OPENCODE_SERVER_PASSWORD} ${OPENCODE_HOSTNAME} ${OPENCODE_PORT}' \
+        < "${TEMPLATE_DIR}/opencode-agent.service" | sudo tee "$service_file" > /dev/null
     success "Service file written to $service_file"
 }
 

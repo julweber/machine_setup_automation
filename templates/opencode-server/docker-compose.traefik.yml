@@ -1,0 +1,33 @@
+# Opencode Server Docker Compose Configuration
+# Generated: ${GENERATED_DATE}
+
+networks:
+  opencode:
+    external: false
+  ${PROXY_NETWORK}:
+    external: true
+
+services:
+  opencode:
+    image: ghcr.io/anomalyco/opencode:latest
+    container_name: opencode-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK}"
+      - "traefik.http.routers.opencode.rule=Host(`${OPENCODE_DOMAIN}`)"
+      - "traefik.http.routers.opencode.entrypoints=websecure"
+      - "traefik.http.routers.opencode.tls=true"
+      - "traefik.http.routers.opencode.tls.certresolver=letsencrypt"
+      - "traefik.http.services.opencode.loadbalancer.server.port=4096"
+    networks:
+      - opencode
+      - ${PROXY_NETWORK}
+    volumes:
+      - opencode_data:/data
+
+volumes:
+  opencode_data:

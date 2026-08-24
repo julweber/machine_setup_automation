@@ -1,0 +1,24 @@
+# Opencode Server Docker Compose Configuration
+# Generated: ${GENERATED_DATE}
+
+networks:
+  opencode:
+    external: false
+
+services:
+  opencode:
+    image: ghcr.io/anomalyco/opencode:latest
+    container_name: opencode-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    command: ["serve", "--hostname", "0.0.0.0", "--port", "4096"]
+    ports:
+      - "${OPENCODE_PORT}:4096"
+    networks:
+      - opencode
+    volumes:
+      - opencode_data:/data
+
+volumes:
+  opencode_data:
