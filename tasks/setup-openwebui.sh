@@ -22,7 +22,7 @@
 # IMPORTANT VARIABLES:
 #   OPENWEBUI_PORT     - Host port for direct web UI access (default: 3333)
 #   LM_STUDIO_PORT     - Port where LM Studio API is listening (default: 1234)
-#   PROJECT_DIR        - Installation directory (default: $HOME/open-webui)
+#   PROJECT_DIR        - Installation directory (default: /srv/openwebui)
 #   WEBUI_SECRET_KEY   - Custom secret key (auto-generated if not set, stored in .env)
 #   
 #   Traefik reverse-proxy integration (opt-in):
@@ -87,7 +87,7 @@ trap cleanup_on_failure EXIT
 
 OPENWEBUI_PORT="${OPENWEBUI_PORT:-3333}"          # Host port for web UI (direct mode)
 LM_STUDIO_PORT="${LM_STUDIO_PORT:-1234}"          # LM Studio API port
-PROJECT_DIR="${PROJECT_DIR:-$HOME/open-webui}"    # Installation directory
+PROJECT_DIR="${PROJECT_DIR:-/srv/openwebui}"       # Installation directory
 
 # Secret key for Open WebUI authentication (auto-generated if not set)
 WEBUI_SECRET_KEY="${WEBUI_SECRET_KEY:-}"
@@ -124,12 +124,14 @@ port access or Traefik reverse-proxy integration.
 
 Options:
   --interactive   Prompt for confirmation on risky conditions
+  --migrate       Migrate a legacy installation from $HOME/open-webui to
+                  the new default /srv/openwebui
   -h, --help      Show this help and exit
 
 Environment variables (all optional):
   OPENWEBUI_PORT     Host port for direct web UI access (default: 3333)
   LM_STUDIO_PORT     Port where LM Studio API is listening (default: 1234)
-  PROJECT_DIR        Installation directory (default: $HOME/open-webui)
+  PROJECT_DIR        Installation directory (default: /srv/openwebui)
   WEBUI_SECRET_KEY   Custom secret key (auto-generated if not set, stored in .env)
   OPENWEBUI_TRAEFIK  Set to "true" to enable Traefik routing (default: false)
   OPENWEBUI_DOMAIN   Domain for Traefik access (required when OPENWEBUI_TRAEFIK=true)
@@ -141,11 +143,15 @@ EOF
 
 # Parse arguments
 INTERACTIVE=false
+MIGRATE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --interactive)
       INTERACTIVE=true
+      ;;
+    --migrate)
+      MIGRATE=true
       ;;
     -h|--help)
       usage
@@ -157,6 +163,33 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# ─────────────────────────────────────────────────────────────────────────────
+# LEGACY INSTALLATION DETECTION (previous default: $HOME/open-webui)
+# ─────────────────────────────────────────────────────────────────────────────
+
+LEGACY_DIR="$HOME/open-webui"
+if [[ "$PROJECT_DIR" == "/srv/openwebui" && ! -d "$PROJECT_DIR" \
+   && -f "${LEGACY_DIR}/docker-compose.yml" ]]; then
+  warn "The default installation directory is now /srv/openwebui (previously: ${LEGACY_DIR})."
+  warn "Found an existing Open WebUI installation at ${LEGACY_DIR}."
+  if [[ "$MIGRATE" == "true" ]]; then
+    step "Migrating ${LEGACY_DIR} to ${PROJECT_DIR}"
+    sudo mkdir -p "$(dirname "$PROJECT_DIR")"
+    sudo cp -a "$LEGACY_DIR" "$PROJECT_DIR"
+    # Rewrite bind-mount paths in the copied compose file; named volumes are unaffected.
+    sed -i "s|${LEGACY_DIR}|${PROJECT_DIR}|g" "${PROJECT_DIR}/docker-compose.yml"
+    success "Copied ${LEGACY_DIR} to ${PROJECT_DIR}. The legacy directory was left in place."
+    echo ""
+    info "Next steps:"
+    info "  1. Stop the old stack:      docker compose -f ${LEGACY_DIR}/docker-compose.yml down"
+    info "  2. Start the new stack:     docker compose -f ${PROJECT_DIR}/docker-compose.yml up -d"
+    info "  3. Once the new stack is verified working, remove the legacy directory manually."
+    exit 0
+  else
+    error "An existing Open WebUI installation was found at ${LEGACY_DIR}. Set PROJECT_DIR=${LEGACY_DIR} to keep using the legacy location, or re-run with --migrate to move it to ${PROJECT_DIR}."
+  fi
+fi
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS
@@ -285,7 +318,10 @@ success "Secret key stored securely in .env file (mode: 600)."
 
 step "Creating project directory at ${PROJECT_DIR}"
 
-mkdir -p "$PROJECT_DIR"
+if [[ ! -d "$PROJECT_DIR" ]]; then
+  sudo mkdir -p "$PROJECT_DIR"
+  sudo chown "${USER}:${USER}" "$PROJECT_DIR"
+fi
 cd "$PROJECT_DIR"
 
 success "Directory ready."

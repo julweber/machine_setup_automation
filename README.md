@@ -198,9 +198,9 @@ Builds and installs llama.cpp from source with auto or manual GPU backend select
 #### `setup-openwebui.sh`
 Deploys Open WebUI using Docker Compose, connecting to an external LM Studio instance for AI model inference. Supports both direct access mode and Traefik reverse-proxy integration.
 
-**Environment variables:** `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `$HOME/open-webui`), `WEBUI_SECRET_KEY` (auto-generated if not set), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
+**Environment variables:** `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `/srv/openwebui`), `WEBUI_SECRET_KEY` (auto-generated if not set), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
 
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
+**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting), `--migrate` — copy a legacy installation from `$HOME/open-webui` to `/srv/openwebui`
 
 **Features:**
 - Direct mode: Accessible at `http://localhost:3333`
@@ -292,8 +292,9 @@ Installs the Agent Docker Runner (ADR) CLI, a tool that runs coding agents insid
 #### `setup-nanobot.sh`
 Clones the Nanobot agent repository, builds the Docker image, and runs the onboarding flow.
 
-**Environment variables:** `NANOBOT_TARGET_REPO_DIRECTORY` (default `$HOME/nanobot`)
+**Environment variables:** `NANOBOT_TARGET_REPO_DIRECTORY` (default `/srv/nanobot`)
 
+**Flags:** `--migrate` — copy a legacy nanobot repo from `$HOME/nanobot` to `/srv/nanobot`
 
 #### `setup-hermes.sh`
 Sets up the Hermes Agent environment using the official prebuilt Docker image. Creates configuration files and provides convenience scripts for management.
