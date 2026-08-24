@@ -63,6 +63,10 @@
 
 set -euo pipefail
 
+# Determine script directory and template location
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)"
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/openwebui"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CLEANUP TRAP — handles partial failures
 # ─────────────────────────────────────────────────────────────────────────────
@@ -219,6 +223,11 @@ if [[ -z "$WEBUI_SECRET_KEY" ]] && ! command -v openssl &>/dev/null; then
   error "openssl is not installed. Required for generating secure secret key. Install it or set WEBUI_SECRET_KEY manually."
 fi
 
+# Check for envsubst (required for template rendering)
+if ! command -v envsubst &>/dev/null; then
+  error "envsubst is not installed. Required for template rendering. Install with: sudo apt-get install gettext-base"
+fi
+
 # Check if port is already in use (direct mode only)
 if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
   if ss -tln 2>/dev/null | grep -q ":${OPENWEBUI_PORT} " || \
@@ -228,7 +237,6 @@ if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
 fi
 
 # Traefik pre-flight (only when opt-in)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
   # shellcheck disable=SC1091
   source "${SCRIPT_DIR}/../lib/helpers.sh"
@@ -283,6 +291,57 @@ else
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TEMPLATE RENDERERS — generated artifacts live in templates/openwebui/
+# (AGENTS.md: no inline templates in scripts). The conditional compose
+# structure is split into docker-compose.direct.yml / docker-compose.traefik.yml
+# variant files, mirroring templates/opencode-server/.
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Render .env from templates/openwebui/env.template.
+# Existing .env files are backed up to .env.bak first (user-edit preservation).
+_generate_env_file() {
+  local env_file="$1"
+
+  if [[ -f "$env_file" ]]; then
+    warn "Existing .env file found. Backing up to ${env_file}.bak"
+    cp "$env_file" "${env_file}.bak"
+  fi
+
+  export WEBUI_SECRET_KEY
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${WEBUI_SECRET_KEY}' \
+    < "${TEMPLATE_DIR}/env.template" > "$env_file"
+  chmod 600 "$env_file"
+}
+
+# Render docker-compose.yml from the matching template variant
+_generate_compose_file() {
+  local compose_file="$1"
+  local compose_template
+
+  if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
+    compose_template="${TEMPLATE_DIR}/docker-compose.traefik.yml"
+  else
+    compose_template="${TEMPLATE_DIR}/docker-compose.direct.yml"
+  fi
+
+  GENERATED_DATE="$(date -Iseconds)"
+  export GENERATED_DATE OPENWEBUI_PORT LM_STUDIO_PORT WEBUI_SECRET_KEY \
+    PROXY_NETWORK OPENWEBUI_DOMAIN
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${GENERATED_DATE} ${OPENWEBUI_PORT} ${LM_STUDIO_PORT} ${WEBUI_SECRET_KEY} ${PROXY_NETWORK} ${OPENWEBUI_DOMAIN}' \
+    < "$compose_template" > "$compose_file"
+}
+
+# Install the static start script (no dynamic values — plain copy)
+_generate_start_script() {
+  local start_script="$1"
+
+  cp "${TEMPLATE_DIR}/start_openwebui.sh" "$start_script"
+  chmod +x "$start_script"
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GENERATE SECRET KEY
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -297,19 +356,7 @@ fi
 
 # Store secret in .env file for security (not in docker-compose.yml)
 ENV_FILE="${PROJECT_DIR}/.env"
-if [[ -f "$ENV_FILE" ]]; then
-  warn "Existing .env file found. Backing up to ${ENV_FILE}.bak"
-  cp "$ENV_FILE" "${ENV_FILE}.bak"
-fi
-
-# Write secret key to .env file (excluded from compose config output)
-cat > "$ENV_FILE" << EOF
-# Open WebUI Environment Variables
-# This file contains sensitive credentials - keep it secure!
-WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
-EOF
-
-chmod 600 "$ENV_FILE"
+_generate_env_file "$ENV_FILE"
 success "Secret key stored securely in .env file (mode: 600)."
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -331,86 +378,7 @@ success "Directory ready."
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Generating ${COMPOSE_FILE}"
-
-# Build compose file using single template approach
-cat > docker-compose.yml << EOF
-# Open WebUI Docker Compose Configuration
-# Generated: $(date -Iseconds)
-# Note: Sensitive variables are loaded from .env file (see WEBUI_SECRET_KEY)
-
-networks:
-  openwebui:
-    external: false
-EOF
-
-# Add Traefik proxy network if enabled
-if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
-  cat >> docker-compose.yml << EOF
-  ${PROXY_NETWORK}:
-    external: true
-EOF
-fi
-
-cat >> docker-compose.yml << 'EOF'
-
-services:
-  openwebui:
-    image: ghcr.io/open-webui/open-webui:main
-    container_name: openwebui
-    restart: unless-stopped
-EOF
-
-# Add ports section for direct mode (not Traefik)
-if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
-  cat >> docker-compose.yml << EOF
-    ports:
-      - "${OPENWEBUI_PORT}:8080"
-EOF
-fi
-
-cat >> docker-compose.yml << EOF
-    environment:
-      # Connect to your LM Studio API
-      - OLLAMA_BASE_URL=http://localhost:${LM_STUDIO_PORT}/v1
-      - WEBUI_HOST=0.0.0.0
-      - WEBUI_PORT=8080
-      # Secret key loaded from .env file (not exposed in compose config)
-      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
-EOF
-
-# Add Traefik labels if enabled
-if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
-  cat >> docker-compose.yml << EOF
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=${PROXY_NETWORK}"
-      - "traefik.http.routers.openwebui.rule=Host(\`${OPENWEBUI_DOMAIN}\`)"
-      - "traefik.http.routers.openwebui.entrypoints=websecure"
-      - "traefik.http.routers.openwebui.tls.certresolver=letsencrypt"
-      - "traefik.http.services.openwebui.loadbalancer.server.port=8080"
-EOF
-fi
-
-cat >> docker-compose.yml << 'EOF'
-    networks:
-      - openwebui
-EOF
-
-# Add Traefik proxy network to container if enabled
-if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
-  cat >> docker-compose.yml << EOF
-      - ${PROXY_NETWORK}
-EOF
-fi
-
-cat >> docker-compose.yml << 'EOF'
-    volumes:
-      - openwebui_data:/app/backend/data
-
-volumes:
-  openwebui_data:
-EOF
-
+_generate_compose_file "$COMPOSE_FILE"
 success "docker-compose.yml created."
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -418,21 +386,7 @@ success "docker-compose.yml created."
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Creating start script"
-
-cat > start_openwebui.sh << EOF
-#!/bin/bash
-cd "\$PROJECT_DIR"
-
-# Load environment variables from .env file if it exists
-if [[ -f ".env" ]]; then
-  export \$(grep -v '^#' .env | xargs)
-fi
-
-docker compose up -d
-EOF
-
-chmod +x start_openwebui.sh
-
+_generate_start_script "${PROJECT_DIR}/start_openwebui.sh"
 success "start_openwebui.sh created."
 
 # ─────────────────────────────────────────────────────────────────────────────

@@ -1,0 +1,29 @@
+# Open WebUI Docker Compose Configuration
+# Generated: ${GENERATED_DATE}
+# Note: Sensitive variables are loaded from .env file (see WEBUI_SECRET_KEY)
+
+networks:
+  openwebui:
+    external: false
+
+services:
+  openwebui:
+    image: ghcr.io/open-webui/open-webui:main
+    container_name: openwebui
+    restart: unless-stopped
+    ports:
+      - "${OPENWEBUI_PORT}:8080"
+    environment:
+      # Connect to your LM Studio API
+      - OLLAMA_BASE_URL=http://localhost:${LM_STUDIO_PORT}/v1
+      - WEBUI_HOST=0.0.0.0
+      - WEBUI_PORT=8080
+      # Secret key loaded from .env file (not exposed in compose config)
+      - WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}
+    networks:
+      - openwebui
+    volumes:
+      - openwebui_data:/app/backend/data
+
+volumes:
+  openwebui_data:
