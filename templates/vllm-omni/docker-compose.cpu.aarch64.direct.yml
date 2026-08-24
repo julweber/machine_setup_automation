@@ -1,0 +1,32 @@
+# vLLM-Omni Docker Compose
+# Generated: ${GENERATED_DATE}
+# Backend: ${BACKEND_UPPER} | Arch: ${ARCH} | Image: ${VLLM_OMNI_IMAGE}
+
+networks:
+  vllm-omni:
+    external: false
+
+services:
+  vllm-omni:
+    image: ${VLLM_OMNI_IMAGE}
+    container_name: vllm-omni
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - VLLM_NO_USAGE_STATS=1
+      - VLLM_CPU_DISABLE_AVX512=1
+    volumes:
+      - ${HF_CACHE_DIR}:/root/.cache/huggingface
+    shm_size: '${VLLM_OMNI_SHM_SIZE}'
+    ports:
+      - "${VLLM_OMNI_PORT}:8000"
+    networks:
+      - vllm-omni
+    command: >
+      vllm serve ${VLLM_OMNI_MODEL}
+      --omni
+      --host 0.0.0.0
+      --port 8000
+      ${VLLM_OMNI_COMMAND_FLAGS}

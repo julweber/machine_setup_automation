@@ -26,6 +26,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/vllm-omni"
 
 # shellcheck source=../lib/helpers.sh
 source "${SCRIPT_DIR}/../lib/helpers.sh"
@@ -373,30 +374,15 @@ if [[ -f "$ENV_FILE" ]]; then
   cp "$ENV_FILE" "${ENV_FILE}.bak"
 fi
 
-cat > "$ENV_FILE" << EOF
-# vLLM-Omni configuration
-# Edit this file then restart the stack:  cd ${PROJECT_DIR} && docker compose up -d
+# envsubst preflight
+if ! command -v envsubst &>/dev/null; then
+  error "envsubst not installed — install with: sudo apt-get install gettext-base"
+fi
 
-# ── Model ────────────────────────────────────────────────────────────────────
-# HuggingFace model ID (fetched into the mounted HF cache), examples:
-#   VLLM_OMNI_MODEL=Tongyi-MAI/Z-Image-Turbo          # text-to-image (quickstart)
-#   VLLM_OMNI_MODEL=<HF TTS / diffusion / any-to-any Omni model id>
-# Or a path to an HF snapshot inside the container:
-#   VLLM_OMNI_MODEL=/root/.cache/huggingface/hub/models--.../snapshots/latest
-VLLM_OMNI_MODEL=${VLLM_OMNI_MODEL}
-
-# ── HuggingFace token (leave empty if not needed) ────────────────────────────
-HF_TOKEN=${HF_TOKEN}
-
-# ── GPU memory utilization fraction (0.0-1.0) - ignored for CPU backend ──────
-VLLM_OMNI_GPU_UTIL=${VLLM_OMNI_GPU_UTIL}
-
-# ── Max context length (tokens) - leave empty to use the model's default ─────
-VLLM_OMNI_MAX_MODEL_LEN=${VLLM_OMNI_MAX_MODEL_LEN}
-
-# ── Extra \`vllm serve\` arguments (space-separated, appended to the command) ──
-VLLM_OMNI_EXTRA_ARGS=${VLLM_OMNI_EXTRA_ARGS}
-EOF
+export PROJECT_DIR VLLM_OMNI_MODEL HF_TOKEN VLLM_OMNI_GPU_UTIL VLLM_OMNI_MAX_MODEL_LEN VLLM_OMNI_EXTRA_ARGS
+# shellcheck disable=SC2016  # envsubst expects the literal variable list
+envsubst '${PROJECT_DIR} ${VLLM_OMNI_MODEL} ${HF_TOKEN} ${VLLM_OMNI_GPU_UTIL} ${VLLM_OMNI_MAX_MODEL_LEN} ${VLLM_OMNI_EXTRA_ARGS}' \
+  < "${TEMPLATE_DIR}/env.template" > "$ENV_FILE"
 
 chmod 600 "$ENV_FILE"
 success ".env written (mode 600): ${ENV_FILE}"
@@ -404,133 +390,43 @@ success ".env written (mode 600): ${ENV_FILE}"
 # ── Generate docker-compose.yml ────────────────────────────────────────────────
 step "Generating docker-compose.yml"
 
-# Header + networks
-cat > "$COMPOSE_FILE" << EOF
-# vLLM-Omni Docker Compose
-# Generated: $(date -Iseconds)
-# Backend: ${BACKEND^^} | Arch: ${ARCH} | Image: ${VLLM_OMNI_IMAGE}
-
-networks:
-  vllm-omni:
-    external: false
-EOF
-
-if [[ "$VLLM_OMNI_TRAEFIK" == "true" ]]; then
-  cat >> "$COMPOSE_FILE" << EOF
-  ${PROXY_NETWORK}:
-    external: true
-EOF
-fi
-
-# Service header + static environment
-cat >> "$COMPOSE_FILE" << EOF
-
-services:
-  vllm-omni:
-    image: ${VLLM_OMNI_IMAGE}
-    container_name: vllm-omni
-    restart: unless-stopped
-    env_file:
-      - .env
-    environment:
-      - HF_HOME=/root/.cache/huggingface
-      - VLLM_NO_USAGE_STATS=1
-EOF
-
-# arm64 CPU: disable AVX-512 (not available on most arm64 hosts)
-if [[ "$BACKEND" == "cpu" && "$ARCH" == "aarch64" ]]; then
-  echo "      - VLLM_CPU_DISABLE_AVX512=1" >> "$COMPOSE_FILE"
-fi
-
-# Volumes + shared memory
-cat >> "$COMPOSE_FILE" << EOF
-    volumes:
-      - ${HF_CACHE_DIR}:/root/.cache/huggingface
-    shm_size: '${VLLM_OMNI_SHM_SIZE}'
-EOF
-
-# ipc: host recommended for all GPU backends (required for tensor-parallel > 1)
-if [[ "$BACKEND" != "cpu" ]]; then
-  echo "    ipc: \"host\"" >> "$COMPOSE_FILE"
-fi
-
-# Ports (direct mode)
-if [[ "$VLLM_OMNI_TRAEFIK" != "true" ]]; then
-  cat >> "$COMPOSE_FILE" << EOF
-    ports:
-      - "${VLLM_OMNI_PORT}:8000"
-EOF
-fi
-
-# Backend GPU configuration
+# Build command flags (Docker Compose variables stay as ${VAR}, static values are literal)
+VLLM_OMNI_COMMAND_FLAGS=""
 case "$BACKEND" in
-  nvidia)
-    cat >> "$COMPOSE_FILE" << 'EOF'
-    deploy:
-      resources:
-        reservations:
-          devices:
-            - driver: nvidia
-              count: all
-              capabilities: [gpu]
-EOF
-    ;;
-  amd)
-    cat >> "$COMPOSE_FILE" << 'EOF'
-    devices:
-      - /dev/kfd
-      - /dev/dri
-    group_add:
-      - video
-    cap_add:
-      - SYS_PTRACE
-    security_opt:
-      - seccomp=unconfined
-EOF
-    ;;
+  nvidia|amd) VLLM_OMNI_COMMAND_FLAGS="--gpu-memory-utilization \${VLLM_OMNI_GPU_UTIL}" ;;
+  cpu)        VLLM_OMNI_COMMAND_FLAGS="--device cpu" ;;
 esac
+if [[ "${VLLM_OMNI_TENSOR_PARALLEL}" -gt 1 ]]; then
+  VLLM_OMNI_COMMAND_FLAGS="${VLLM_OMNI_COMMAND_FLAGS}
+      --tensor-parallel-size ${VLLM_OMNI_TENSOR_PARALLEL}"
+fi
+if [[ -n "${VLLM_OMNI_MAX_MODEL_LEN}" ]]; then
+  VLLM_OMNI_COMMAND_FLAGS="${VLLM_OMNI_COMMAND_FLAGS}
+      --max-model-len \${VLLM_OMNI_MAX_MODEL_LEN}"
+fi
+VLLM_OMNI_COMMAND_FLAGS="${VLLM_OMNI_COMMAND_FLAGS}
+      \${VLLM_OMNI_EXTRA_ARGS}"
 
-# Traefik labels
+GENERATED_DATE="$(date -Iseconds)"
+BACKEND_UPPER="${BACKEND^^}"
+
+# Select compose template based on backend × arch (cpu only) × exposure mode
+if [[ "$BACKEND" == "cpu" ]]; then
+  if [[ "$ARCH" == "aarch64" ]]; then CPU_VARIANT="cpu.aarch64"; else CPU_VARIANT="cpu.x86_64"; fi
+else
+  CPU_VARIANT="$BACKEND"
+fi
 if [[ "$VLLM_OMNI_TRAEFIK" == "true" ]]; then
-  cat >> "$COMPOSE_FILE" << EOF
-    labels:
-      - "traefik.enable=true"
-      - "traefik.docker.network=${PROXY_NETWORK}"
-      - "traefik.http.routers.vllm-omni.rule=Host(\`${VLLM_OMNI_DOMAIN}\`)"
-      - "traefik.http.routers.vllm-omni.entrypoints=websecure"
-      - "traefik.http.routers.vllm-omni.tls.certresolver=letsencrypt"
-      - "traefik.http.services.vllm-omni.loadbalancer.server.port=8000"
-EOF
+  COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.${CPU_VARIANT}.traefik.yml"
+else
+  COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.${CPU_VARIANT}.direct.yml"
 fi
 
-# Network references
-cat >> "$COMPOSE_FILE" << 'EOF'
-    networks:
-      - vllm-omni
-EOF
-if [[ "$VLLM_OMNI_TRAEFIK" == "true" ]]; then
-  echo "      - ${PROXY_NETWORK}" >> "$COMPOSE_FILE"
-fi
-
-# Command — docker compose substitutes ${VLLM_OMNI_*} from .env at compose time
-{
-  echo "    command: >"
-  echo "      vllm serve \${VLLM_OMNI_MODEL}"
-  echo "      --omni"
-  echo "      --host 0.0.0.0"
-  echo "      --port 8000"
-  case "$BACKEND" in
-    nvidia|amd) echo "      --gpu-memory-utilization \${VLLM_OMNI_GPU_UTIL}" ;;
-    cpu)        echo "      --device cpu" ;;
-  esac
-  if [[ "${VLLM_OMNI_TENSOR_PARALLEL}" -gt 1 ]]; then
-    echo "      --tensor-parallel-size ${VLLM_OMNI_TENSOR_PARALLEL}"
-  fi
-  if [[ -n "${VLLM_OMNI_MAX_MODEL_LEN}" ]]; then
-    echo "      --max-model-len \${VLLM_OMNI_MAX_MODEL_LEN}"
-  fi
-  echo "      \${VLLM_OMNI_EXTRA_ARGS}"
-} >> "$COMPOSE_FILE"
+export GENERATED_DATE BACKEND_UPPER ARCH VLLM_OMNI_IMAGE PROXY_NETWORK \
+  VLLM_OMNI_PORT VLLM_OMNI_DOMAIN VLLM_OMNI_SHM_SIZE HF_CACHE_DIR VLLM_OMNI_COMMAND_FLAGS
+# shellcheck disable=SC2016  # envsubst expects the literal variable list
+envsubst '${GENERATED_DATE} ${BACKEND_UPPER} ${ARCH} ${VLLM_OMNI_IMAGE} ${PROXY_NETWORK} ${VLLM_OMNI_PORT} ${VLLM_OMNI_DOMAIN} ${VLLM_OMNI_SHM_SIZE} ${HF_CACHE_DIR} ${VLLM_OMNI_COMMAND_FLAGS}' \
+  < "$COMPOSE_TEMPLATE" > "$COMPOSE_FILE"
 
 success "docker-compose.yml created: ${COMPOSE_FILE}"
 
