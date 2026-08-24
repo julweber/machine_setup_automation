@@ -42,7 +42,6 @@ building Docker images, and initializing the nanobot container.
 
 ${BOLD}Options:${RESET}
   -h, --help     Show this help and exit
-  --migrate      Migrate a legacy nanobot repo from $HOME/nanobot to /srv/nanobot
 
 ${BOLD}Environment variables${RESET} (all optional):
   NANOBOT_TARGET_REPO_DIRECTORY  Clone destination (default: /srv/nanobot)
@@ -53,16 +52,11 @@ EOF
 }
 
 # Parse arguments
-MIGRATE=false
-
 while [[ $# -gt 0 ]]; do
   case "$1" in
     -h|--help)
       usage
       exit 0
-      ;;
-    --migrate)
-      MIGRATE=true
       ;;
     *)
       error "Unknown option: $1 (see --help)"
@@ -74,35 +68,6 @@ done
 : "${NANOBOT_TARGET_REPO_DIRECTORY:=/srv/nanobot}"
 NANOBOT_SHARED_DIRECTORY="$HOME/.nanobot"
 DOCKERFILE_EXTEND_SRC="${SCRIPT_REPO_DIR}/../templates/nanobot/Dockerfile.extend"
-
-# =============================================================================
-# Legacy location detection (previous default: $HOME/nanobot)
-# =============================================================================
-
-LEGACY_DIR="$HOME/nanobot"
-if [[ "$NANOBOT_TARGET_REPO_DIRECTORY" == "/srv/nanobot" \
-   && ! -d "${NANOBOT_TARGET_REPO_DIRECTORY}" \
-   && -d "$LEGACY_DIR" \
-   && ( -d "${LEGACY_DIR}/.git" || -f "${LEGACY_DIR}/docker-compose.yml" ) ]]; then
-  warn "The default clone destination is now /srv/nanobot (previously: ${LEGACY_DIR})."
-  warn "Found an existing nanobot repository at ${LEGACY_DIR}."
-  if [[ "$MIGRATE" == "true" ]]; then
-    step "Migrating ${LEGACY_DIR} to ${NANOBOT_TARGET_REPO_DIRECTORY}"
-    sudo mkdir -p "$(dirname "${NANOBOT_TARGET_REPO_DIRECTORY}")"
-    # cp -a preserves .git so tag/revision checkout keeps working; legacy dir is left in place.
-    sudo cp -a "$LEGACY_DIR" "${NANOBOT_TARGET_REPO_DIRECTORY}"
-    success "Copied ${LEGACY_DIR} to ${NANOBOT_TARGET_REPO_DIRECTORY} (git history preserved). The legacy directory was left in place."
-    echo ""
-    info "Next steps:"
-    info "  1. Stop the container running from the old location:"
-    info "       docker compose -f ${LEGACY_DIR}/docker-compose.yml down"
-    info "  2. Re-run this script to start nanobot from ${NANOBOT_TARGET_REPO_DIRECTORY}."
-    info "  3. Once the new location is verified working, remove the legacy directory manually."
-    exit 0
-  else
-    warn "A fresh clone will proceed in ${NANOBOT_TARGET_REPO_DIRECTORY}. Set NANOBOT_TARGET_REPO_DIRECTORY=${LEGACY_DIR} to keep using the legacy location, or re-run with --migrate to copy it to ${NANOBOT_TARGET_REPO_DIRECTORY}."
-  fi
-fi
 
 # =============================================================================
 # Main
