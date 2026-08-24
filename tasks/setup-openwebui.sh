@@ -24,7 +24,7 @@
 #   LM_STUDIO_PORT     - Port where LM Studio API is listening (default: 1234)
 #   PROJECT_DIR        - Installation directory (default: /srv/openwebui)
 #   WEBUI_SECRET_KEY   - Custom secret key (auto-generated if not set, stored in .env)
-#   
+#
 #   Traefik reverse-proxy integration (opt-in):
 #   OPENWEBUI_TRAEFIK  - Set to "true" to enable Traefik routing (default: false)
 #   OPENWEBUI_DOMAIN   - Domain for Traefik access (required when Traefik=true)
@@ -46,10 +46,10 @@
 #
 # USAGE:
 #   ./setup-openwebui.sh
-#   
+#
 #   # Or with custom ports:
 #   OPENWEBUI_PORT=8080 LM_STUDIO_PORT=5000 ./setup-openwebui.sh
-#   
+#
 #   # With Traefik integration:
 #   OPENWEBUI_TRAEFIK=true OPENWEBUI_DOMAIN=openwebui.example.com ./setup-openwebui.sh
 #
@@ -271,7 +271,7 @@ _generate_env_file() {
 
   if [[ -f "$env_file" ]]; then
     warn "Existing .env file found. Backing up to ${env_file}.bak"
-    cp "$env_file" "${env_file}.bak"
+    sudo cp "$env_file" "${env_file}.bak"
   fi
 
   export WEBUI_SECRET_KEY
@@ -395,7 +395,7 @@ if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
 else
   # Direct mode: check localhost:port
   ACCESS_URL="http://localhost:${OPENWEBUI_PORT}"
-  
+
   while [[ $ELAPSED -lt $MAX_WAIT ]]; do
     if curl -s -o /dev/null -w "%{http_code}" "$ACCESS_URL" | grep -qE "^(200|302|303)"; then
       READY=true
@@ -405,7 +405,7 @@ else
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
   done
-  
+
   echo ""
 fi
 
