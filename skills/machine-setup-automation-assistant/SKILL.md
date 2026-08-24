@@ -134,10 +134,10 @@ When recommending services, group them logically:
 |----------|----------------|
 | **System & Infra** | setup-basics, setup-docker, setup-sshd, configure-firewall, setup-traefik, setup-fail2ban, setup-upstream-kernel, setup-ssh-tunnel-user |
 | **AI / LLM** | setup-llama-cpp, setup-llama-swap, setup-vllm, setup-vllm-omni, setup-lm-studio, setup-openwebui |
-| **AI Agents** | setup-omnigent, setup-opencode-server, setup-nanobot, setup-hermes, setup-pi, setup-agent-docker-runner |
+| **AI Agents** | setup-omnigent, setup-opencode-server, setup-nanobot, setup-hermes, setup-pi, setup-agent-docker-runner, setup-deepseek-harness |
 | **Dev Tools** | setup-neovim, setup-zed |
 | **Project Mgmt** | setup-forgejo, setup-planka |
-| **Storage / Files** | setup-nextcloud, setup-samba, setup-obsidian-livesync |
+| **Storage / Files** | setup-nextcloud, setup-samba |
 | **Automation** | setup-n8n |
 | **CI/CD** | setup-concourse |
 | **Remote Access** | setup-anydesk, setup-virtualization |

@@ -181,6 +181,11 @@ Sets up **UFW** rules for the ports used by other services.
 
 **Environment variables:** `SSHD_PORT`, `LM_STUDIO_PORT` (default 1234), `OPENWEBUI_PORT` (default 3333), `KUBERNETES_API_PORT` (default 6443), `GNOME_REMOTE_PORT` (default 3389), `OPENCODE_PORT` (default 4096)
 
+#### `setup-fail2ban.sh`
+Installs **fail2ban** (including the Python 3.12 `pyasynchat` compatibility fix) and configures the jail to monitor the custom SSH port, protecting SSH from brute-force attacks.
+
+**Environment variables:** `FAIL2BAN_SSHD_PORT` (default: `$SSHD_PORT` or `2224`), `FAIL2BAN_MAXRETRY` (default `5`), `FAIL2BAN_BANTIME` (default `3600` seconds), `FAIL2BAN_FINDTIME` (default `600` seconds)
+
 ---
 
 ### AI & LLM Services
@@ -313,6 +318,11 @@ Installs the latest Node.js via nvm and the **Pi coding agent** npm package glob
 
 **Environment variables:** None
 
+#### `setup-deepseek-harness.sh`
+Installs **DeepSeek Harness** (`dsh`) — an open-source agent harness from DeepSeek AI with a plugin-first architecture. Ensures NVM + Node.js 22.19+ are available, then installs `dsh` globally. Run `dsh web` afterwards for the Web UI at `http://127.0.0.1:3080`.
+
+**Environment variables:** `NVM_DIR` (default `$HOME/.nvm`), `DSH_NODE_VERSION` (default `22`)
+
 ---
 
 ### Speech & Dictation
@@ -339,6 +349,17 @@ Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL.
 **Environment variables:** `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD`, `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME`
 
 **Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting; without `ADMIN_EMAIL`/`ADMIN_PASSWORD` the admin-user creation command is printed instead of prompting)
+
+---
+
+### CI/CD
+
+#### `setup-concourse.sh`
+Deploys **Concourse CI** (web, TSA, worker, PostgreSQL) with Docker Compose, generates TSA/session/worker keys, and configures a `fly` CLI target. Supports direct port exposure or Traefik reverse-proxy integration.
+
+**Environment variables:** `CONCOURSE_HOME` (default `/srv/concourse`), `CONCOURSE_WEB_PORT` (default `8089`), `CONCOURSE_ADMIN_USER` (default `admin`), `CONCOURSE_ADMIN_PASSWORD` (auto-generated), `CONCOURSE_DB_PASSWORD` (auto-generated), `CONCOURSE_CLUSTER_NAME` (default `denkfabrik`), `CONCOURSE_DNS_SERVER` (default `8.8.8.8`), `CONCOURSE_EXTERNAL_URL` (auto-detected), `CONCOURSE_FLY_TARGET` (default `concourse`), `CONCOURSE_TRAEFIK` (default `false`), `CONCOURSE_DOMAIN` (required when `CONCOURSE_TRAEFIK=true`), `PROXY_NETWORK` (default `proxy`)
+
+**Flags:** `--interactive` — prompt for confirmation on risky conditions (default: non-interactive; errors out instead of prompting)
 
 ---
 
