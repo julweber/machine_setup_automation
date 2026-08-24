@@ -1,0 +1,9 @@
+# Template override for yamllint.
+#
+# Rendered config files must stay byte-for-byte identical to the historical
+# inline output of the setup scripts, which contains long label/comment
+# lines (Traefik router rules, cipher-suite comments) that cannot be
+# re-wrapped without changing the deployed files.
+extends: default
+rules:
+  line-length: disable

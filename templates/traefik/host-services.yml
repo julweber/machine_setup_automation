@@ -1,0 +1,30 @@
+# host-services.yml.example — Example for proxying host-local services
+# ─────────────────────────────────────────────────────────────────────────────
+# Copy this file to host-services.yml \(remove .example\) to activate.
+# Traefik ignores .example files — this is safe to keep as a reference.
+#
+# Use this pattern to proxy services running directly on the Docker host
+# \(not in containers\) via host.docker.internal \(resolves to Docker bridge\).
+#
+# NOTE: The host service must bind to 0.0.0.0 \(not 127.0.0.1\) so that
+# Docker containers can reach it through the bridge interface.
+#
+# Example: Expose a host-local service on port 8096 at media.example.com
+
+# http:
+#   routers:
+#     media:
+#       rule: "Host\(`media.example.com`\)"
+#       entrypoints:
+#         - websecure
+#       service: media
+#       tls:
+#         certResolver: letsencrypt
+#       middlewares:
+#         - security-headers@file
+#
+#   services:
+#     media:
+#       loadBalancer:
+#         servers:
+#           - url: "http://host.docker.internal:8096"
