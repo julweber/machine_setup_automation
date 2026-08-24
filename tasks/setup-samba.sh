@@ -147,22 +147,14 @@ sudo systemctl start smbd
 step "Backing up Samba configuration"
 sudo cp "${SMB_CONF}" "${SMB_CONF}.backup"
 
-# Add share definition (with idempotency check already done at top)
+# Add share definition from template (quoted heredoc → sed substitution)
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/samba"
 step "Adding share definition to ${SMB_CONF}"
-# Use quoted heredoc to prevent any expansion; values are validated above
-sudo tee -a "${SMB_CONF}" > /dev/null <<'SAMBA_SHARE'
-
-[${SAMBA_SHARE_NAME}]
-   path = ${SHARE_PATH}
-   read only = no
-   browsable = yes
-SAMBA_SHARE
-
-# Replace the placeholder variables with actual validated values
-sudo sed -i \
+# Render template with sed (same as original quoted heredoc + sed pipeline)
+sed \
   -e "s/\${SAMBA_SHARE_NAME}/${SAMBA_SHARE_NAME}/g" \
   -e "s|\${SHARE_PATH}|${SHARE_PATH}|g" \
-  "${SMB_CONF}"
+  "${TEMPLATE_DIR}/share.conf.template" | sudo tee -a "${SMB_CONF}" > /dev/null
 
 # Restart Samba
 sudo systemctl restart smbd

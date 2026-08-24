@@ -1,9 +1,23 @@
-# Template override for yamllint.
+# Template overrides for yamllint (see AGENTS.md linting rules).
 #
 # Rendered config files must stay byte-for-byte identical to the historical
-# inline output of the setup scripts, which contains long label/comment
-# lines (Traefik router rules, cipher-suite comments) that cannot be
-# re-wrapped without changing the deployed files.
+# inline output of the setup scripts. That historical output legitimately
+# contains:
+#   - lines longer than 80 chars (Traefik router rules, cipher comments)
+#   - trailing blank lines / >2 consecutive blank lines left behind by
+#     empty command-substitution lines in the old unquoted heredocs
+# Neither can be "fixed" without changing the deployed files.
+#
+# Some templates are not YAML at all (.env files, smb.conf fragments,
+# Dockerfiles) — limit directory linting to *.yml/*.yaml via yaml-files.
+#
+# Usage: yamllint -c templates/.yamllint templates/
 extends: default
 rules:
   line-length: disable
+  empty-lines:
+    max: 3
+    max-end: 1
+yaml-files:
+  - '*.yml'
+  - '*.yaml'

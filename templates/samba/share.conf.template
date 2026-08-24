@@ -1,0 +1,5 @@
+
+[${SAMBA_SHARE_NAME}]
+   path = ${SHARE_PATH}
+   read only = no
+   browsable = yes

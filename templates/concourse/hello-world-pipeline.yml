@@ -22,4 +22,4 @@ jobs:
           # echo "Hello world!"
           run:
             path: echo
-            args: [ "Hello world!" ]
+            args: ["Hello world!"]

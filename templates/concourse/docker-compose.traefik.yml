@@ -1,0 +1,93 @@
+version: "3.9"
+
+networks:
+  concourse-net:
+    driver: bridge
+  ${PROXY_NETWORK}:
+    external: true
+
+services:
+  concourse-db:
+    image: postgres:15
+    container_name: concourse-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=${CONCOURSE_DB_USER}
+      - POSTGRES_PASSWORD=${CONCOURSE_DB_PASSWORD}
+      - POSTGRES_DB=concourse
+    networks:
+      - concourse-net
+    volumes:
+      - concourse-db-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${CONCOURSE_DB_USER} -d concourse"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "5"
+
+  concourse-web:
+    image: concourse/concourse:latest
+    command: web
+    container_name: concourse-web
+    restart: unless-stopped
+    depends_on:
+      concourse-db:
+        condition: service_healthy
+    environment:
+      - CONCOURSE_POSTGRES_HOST=concourse-db
+      - CONCOURSE_POSTGRES_USER=${CONCOURSE_DB_USER}
+      - CONCOURSE_POSTGRES_PASSWORD=${CONCOURSE_DB_PASSWORD}
+      - CONCOURSE_POSTGRES_DATABASE=concourse
+      - CONCOURSE_EXTERNAL_URL=${CONCOURSE_EXTERNAL_URL}
+      - CONCOURSE_ADD_LOCAL_USER=${CONCOURSE_ADMIN_USER}:${CONCOURSE_ADMIN_PASSWORD}
+      - CONCOURSE_MAIN_TEAM_LOCAL_USER=${CONCOURSE_ADMIN_USER}
+      - CONCOURSE_TSA_HOST_KEY=/concourse-keys/web/tsa_host_key
+      - CONCOURSE_SESSION_SIGNING_KEY=/concourse-keys/web/session_signing_key
+      - CONCOURSE_TSA_AUTHORIZED_KEYS=/concourse-keys/web/authorized_worker_keys
+      - CONCOURSE_CLUSTER_NAME=${CONCOURSE_CLUSTER_NAME}
+    volumes:
+      - ./keys:/concourse-keys
+    networks:
+      - concourse-net
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=${PROXY_NETWORK}"
+      - "traefik.http.routers.concourse.rule=Host:${CONCOURSE_DOMAIN}"
+      - "traefik.http.routers.concourse.entrypoints=websecure"
+      - "traefik.http.routers.concourse.tls.certresolver=letsencrypt"
+      - "traefik.http.services.concourse.loadbalancer.server.port=8080"
+
+
+
+  concourse-worker:
+    image: concourse/concourse:latest
+    command: worker
+    container_name: concourse-worker
+    restart: unless-stopped
+    privileged: true
+    stop_signal: SIGUSR2
+    stop_grace_period: 60s
+    environment:
+      - CONCOURSE_TSA_HOST=concourse-web:2222
+      - CONCOURSE_TSA_PUBLIC_KEY=/concourse-keys/web/tsa_host_key.pub
+      - CONCOURSE_TSA_WORKER_PRIVATE_KEY=/concourse-keys/worker/worker_key
+      - CONCOURSE_BAGGAGECLAIM_DRIVER=overlay
+      - CONCOURSE_RUNTIME=containerd
+      - CONCOURSE_CONTAINERD_DNS_SERVER=${CONCOURSE_DNS_SERVER}
+    networks:
+      - concourse-net
+    volumes:
+      - ./keys:/concourse-keys
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "10"
+
+volumes:
+  concourse-db-data:

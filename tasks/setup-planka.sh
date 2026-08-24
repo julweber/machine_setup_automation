@@ -345,60 +345,41 @@ fi
 
 step "Generating ${COMPOSE_FILE}"
 
-# Write docker-compose.yml with sudo since /srv directory is owned by root
-cat > "$COMPOSE_FILE" <<EOF
-services:
-  planka:
-    image: ${PLANKA_IMAGE}
-    container_name: ${CONTAINER_NAME}
-    restart: unless-stopped
-$(if [[ "$PLANKA_TRAEFIK" != "true" ]]; then echo '    ports:'; echo "      - \"${HTTP_PORT}:1337\"  # Access via http://localhost:${HTTP_PORT}${LAN_IP:+, http://${LAN_IP}:${HTTP_PORT}}"; fi)
-    volumes:
-      - ${PLANKA_HOME}/data:/app/data
-    environment:
-      - BASE_URL=${BASE_URL}
-      - DATABASE_URL=${DATABASE_URL}
-      - SECRET_KEY=${SECRET_KEY}
-      # Uncomment and set to lock down the default admin (prevents edit/delete via UI):
-      # - DEFAULT_ADMIN_EMAIL=${ADMIN_EMAIL}
-      # Timezone / localisation
-      # - DEFAULT_LANGUAGE=en-US
-      # Upload / token settings
-      # - MAX_UPLOAD_FILE_SIZE=
-      # - TOKEN_EXPIRES_IN=365
-      # Outgoing proxy / blocked IPs (internal Squid proxy used by default)
-      # - OUTGOING_BLOCKED_HOSTS=localhost,postgres
-    networks:
-      - planka
-$(if [[ "$PLANKA_TRAEFIK" == "true" ]]; then echo '      - proxy'; echo '    labels:'; echo '      - "traefik.enable=true"'; echo "      - \"traefik.docker.network=$PROXY_NETWORK\""; echo "      - \"traefik.http.routers.planka.rule=Host(\`$PLANKA_DOMAIN\`)\""; echo '      - "traefik.http.routers.planka.entrypoints=websecure"'; echo '      - "traefik.http.routers.planka.tls.certresolver=letsencrypt"'; echo '      - "traefik.http.services.planka.loadbalancer.server.port=1337"'; fi)
-    depends_on:
-      postgres:
-        condition: service_healthy
+# Render docker-compose.yml from template
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/planka"
+command -v envsubst || error "envsubst not installed — install with: sudo apt-get install gettext-base"
 
-  postgres:
-    image: postgres:16-alpine
-    container_name: ${CONTAINER_NAME}-postgres
-    restart: unless-stopped
-    networks:
-      - planka
-    volumes:
-      - ${PLANKA_HOME}/postgres:/var/lib/postgresql/data
-    environment:
-      - POSTGRES_DB=${POSTGRES_DB}
-      - POSTGRES_USER=${POSTGRES_USER}
-      - POSTGRES_HOST_AUTH_METHOD=${PG_AUTH_METHOD}
-$(if [[ -n "$POSTGRES_PASSWORD" ]]; then echo "      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}"; fi)
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
+# Select compose variant: deployment mode x postgres password presence
+# (the .password variants add the POSTGRES_PASSWORD line for md5 auth)
+if [[ "$PLANKA_TRAEFIK" == "true" ]]; then
+  _planka_mode="traefik"
+else
+  _planka_mode="direct"
+fi
+if [[ -n "$POSTGRES_PASSWORD" ]]; then
+  _planka_pw=".password"
+else
+  _planka_pw=""
+fi
+TEMPLATE_FILE="${TEMPLATE_DIR}/docker-compose.${_planka_mode}${_planka_pw}.yml"
 
-networks:
-  planka:
-    external: false
-$(if [[ "$PLANKA_TRAEFIK" == "true" ]]; then echo '  proxy:'; echo '    external: true'; fi)
-EOF
+# LAN hint suffix for the ports comment (empty when no LAN IP is set)
+_planka_lan_suffix="${LAN_IP:+, http://${LAN_IP}:${HTTP_PORT}}"
+
+# Export variables for envsubst (explicit list, never bare envsubst)
+export PLANKA_IMAGE CONTAINER_NAME PLANKA_HOME BASE_URL DATABASE_URL SECRET_KEY \
+  POSTGRES_DB POSTGRES_USER PG_AUTH_METHOD POSTGRES_PASSWORD ADMIN_EMAIL
+if [[ "$PLANKA_TRAEFIK" == "true" ]]; then
+  export PROXY_NETWORK PLANKA_DOMAIN
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${PLANKA_HOME} ${BASE_URL} ${DATABASE_URL} ${SECRET_KEY} ${PROXY_NETWORK} ${PLANKA_DOMAIN} ${POSTGRES_DB} ${POSTGRES_USER} ${PG_AUTH_METHOD} ${POSTGRES_PASSWORD} ${ADMIN_EMAIL}' \
+    < "${TEMPLATE_FILE}" > "$COMPOSE_FILE"
+else
+  export HTTP_PORT _planka_lan_suffix
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${HTTP_PORT} ${_planka_lan_suffix} ${PLANKA_HOME} ${BASE_URL} ${DATABASE_URL} ${SECRET_KEY} ${ADMIN_EMAIL} ${POSTGRES_DB} ${POSTGRES_USER} ${PG_AUTH_METHOD} ${POSTGRES_PASSWORD}' \
+    < "${TEMPLATE_FILE}" > "$COMPOSE_FILE"
+fi
 
 success "docker-compose.yml written to ${COMPOSE_FILE}"
 

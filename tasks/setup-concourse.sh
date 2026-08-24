@@ -320,27 +320,18 @@ if [[ -z "$CONCOURSE_EXTERNAL_URL" ]]; then
   CONCOURSE_EXTERNAL_URL="http://${LAN_IP}:${CONCOURSE_WEB_PORT}"
 fi
 
-# Write .env file
-sudo tee "${ENV_FILE}" > /dev/null <<EOF
-# Concourse CI Configuration
-# Generated: $(date -Iseconds)
+# Write .env file from template (unquoted heredoc → envsubst)
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/concourse"
+command -v envsubst || error "envsubst not installed — install with: sudo apt-get install gettext-base"
 
-# Database
-CONCOURSE_DB_USER=concourse
-CONCOURSE_DB_PASSWORD=${CONCOURSE_DB_PASSWORD}
-
-# Web Node
-CONCOURSE_EXTERNAL_URL=${CONCOURSE_EXTERNAL_URL}
-CONCOURSE_WEB_PORT=${CONCOURSE_WEB_PORT}
-CONCOURSE_CLUSTER_NAME=${CONCOURSE_CLUSTER_NAME}
-
-# Authentication
-CONCOURSE_ADMIN_USER=${CONCOURSE_ADMIN_USER}
-CONCOURSE_ADMIN_PASSWORD=${CONCOURSE_ADMIN_PASSWORD}
-
-# Worker Configuration
-CONCOURSE_DNS_SERVER=${CONCOURSE_DNS_SERVER}
-EOF
+# Export variables for envsubst (explicit list, never bare envsubst)
+_concourse_generated_date="$(date -Iseconds)"
+export CONCOURSE_DB_PASSWORD CONCOURSE_EXTERNAL_URL CONCOURSE_WEB_PORT \
+  CONCOURSE_CLUSTER_NAME CONCOURSE_ADMIN_USER CONCOURSE_ADMIN_PASSWORD \
+  CONCOURSE_DNS_SERVER _concourse_generated_date
+# shellcheck disable=SC2016  # envsubst expects the literal variable list
+envsubst '${CONCOURSE_DB_PASSWORD} ${CONCOURSE_EXTERNAL_URL} ${CONCOURSE_WEB_PORT} ${CONCOURSE_CLUSTER_NAME} ${CONCOURSE_ADMIN_USER} ${CONCOURSE_ADMIN_PASSWORD} ${CONCOURSE_DNS_SERVER} ${_concourse_generated_date}' \
+  < "${TEMPLATE_DIR}/env.template" | sudo tee "${ENV_FILE}" > /dev/null
 
 sudo chmod 600 "${ENV_FILE}"
 
@@ -355,175 +346,30 @@ STORED_ADMIN_PASSWORD="$CONCOURSE_ADMIN_PASSWORD"
 
 step "Generating ${COMPOSE_FILE}"
 
-# Build networks section
-SECTION_NETWORKS="networks:
-  concourse-net:
-    driver: bridge"
+# Render docker-compose.yml from template (static quoted heredoc with awk/sed → envsubst)
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/concourse"
+command -v envsubst || error "envsubst not installed — install with: sudo apt-get install gettext-base"
 
+# Select compose variant based on deployment mode
 if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
-  SECTION_NETWORKS+="
-  ${PROXY_NETWORK}:
-    external: true"
-fi
-
-# Build web service ports section
-SECTION_WEB_PORTS="    ports:"
-if [[ "$CONCOURSE_TRAEFIK" == "false" ]]; then
-  SECTION_WEB_PORTS+="
-      - \"${CONCOURSE_WEB_PORT}:8080\"  # Web UI (HTTP)
-      - \"2225:2222\"                   # TSA (internal worker registration)"
+  TEMPLATE_FILE="${TEMPLATE_DIR}/docker-compose.traefik.yml"
 else
-  # When using Traefik, ports are exposed via labels
-  SECTION_WEB_PORTS+="
-      - \"2225:2222\"                   # TSA (internal worker registration)"
+  TEMPLATE_FILE="${TEMPLATE_DIR}/docker-compose.yml"
 fi
 
-# Build web service labels section (Traefik only)
-SECTION_WEB_LABELS=""
+# The original script's quoted heredoc left the service-section ${...} tokens
+# literal in the rendered file (compose resolves them at runtime via
+# --env-file), so only the inserted networks/ports/labels sections are
+# substituted here — never the literal service-section variables.
 if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
-  SECTION_WEB_LABELS="    labels:
-      - \"traefik.enable=true\"
-      - \"traefik.docker.network=${PROXY_NETWORK}\"
-      - \"traefik.http.routers.concourse.rule=Host:${CONCOURSE_DOMAIN}\"
-      - \"traefik.http.routers.concourse.entrypoints=websecure\"
-      - \"traefik.http.routers.concourse.tls.certresolver=letsencrypt\"
-      - \"traefik.http.services.concourse.loadbalancer.server.port=8080\""
-fi
-
-# Build compose file - use temp script approach to avoid heredoc nesting issues
-# Write directly to a temp file, then move it into place
-COMPOSE_TEMP=$(mktemp -t "concourse-compose.XXXXXX")
-
-cat > "$COMPOSE_TEMP" <<'EOF'
-version: "3.9"
-
-NETWORKS_PLACEHOLDER
-
-services:
-  concourse-db:
-    image: postgres:15
-    container_name: concourse-db
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=${CONCOURSE_DB_USER}
-      - POSTGRES_PASSWORD=${CONCOURSE_DB_PASSWORD}
-      - POSTGRES_DB=concourse
-    networks:
-      - concourse-net
-    volumes:
-      - concourse-db-data:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${CONCOURSE_DB_USER} -d concourse"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    logging:
-      driver: json-file
-      options:
-        max-size: "10m"
-        max-file: "5"
-
-  concourse-web:
-    image: concourse/concourse:latest
-    command: web
-    container_name: concourse-web
-    restart: unless-stopped
-    depends_on:
-      concourse-db:
-        condition: service_healthy
-    environment:
-      - CONCOURSE_POSTGRES_HOST=concourse-db
-      - CONCOURSE_POSTGRES_USER=${CONCOURSE_DB_USER}
-      - CONCOURSE_POSTGRES_PASSWORD=${CONCOURSE_DB_PASSWORD}
-      - CONCOURSE_POSTGRES_DATABASE=concourse
-      - CONCOURSE_EXTERNAL_URL=${CONCOURSE_EXTERNAL_URL}
-      - CONCOURSE_ADD_LOCAL_USER=${CONCOURSE_ADMIN_USER}:${CONCOURSE_ADMIN_PASSWORD}
-      - CONCOURSE_MAIN_TEAM_LOCAL_USER=${CONCOURSE_ADMIN_USER}
-      - CONCOURSE_TSA_HOST_KEY=/concourse-keys/web/tsa_host_key
-      - CONCOURSE_SESSION_SIGNING_KEY=/concourse-keys/web/session_signing_key
-      - CONCOURSE_TSA_AUTHORIZED_KEYS=/concourse-keys/web/authorized_worker_keys
-      - CONCOURSE_CLUSTER_NAME=${CONCOURSE_CLUSTER_NAME}
-    volumes:
-      - ./keys:/concourse-keys
-    networks:
-      - concourse-net
-
-PORTS_PLACEHOLDER
-LABELS_PLACEHOLDER
-
-  concourse-worker:
-    image: concourse/concourse:latest
-    command: worker
-    container_name: concourse-worker
-    restart: unless-stopped
-    privileged: true
-    stop_signal: SIGUSR2
-    stop_grace_period: 60s
-    environment:
-      - CONCOURSE_TSA_HOST=concourse-web:2222
-      - CONCOURSE_TSA_PUBLIC_KEY=/concourse-keys/web/tsa_host_key.pub
-      - CONCOURSE_TSA_WORKER_PRIVATE_KEY=/concourse-keys/worker/worker_key
-      - CONCOURSE_BAGGAGECLAIM_DRIVER=overlay
-      - CONCOURSE_RUNTIME=containerd
-      - CONCOURSE_CONTAINERD_DNS_SERVER=${CONCOURSE_DNS_SERVER}
-    networks:
-      - concourse-net
-    volumes:
-      - ./keys:/concourse-keys
-    logging:
-      driver: json-file
-      options:
-        max-size: "50m"
-        max-file: "10"
-
-volumes:
-  concourse-db-data:
-EOF
-
-# Replace placeholders with actual values
-# Use awk for multiline replacements (sed doesn't handle newlines well)
-awk -v net="$SECTION_NETWORKS" "/NETWORKS_PLACEHOLDER/ { print net; next } { print }" "$COMPOSE_TEMP" > "${COMPOSE_TEMP}.tmp" && mv "${COMPOSE_TEMP}.tmp" "$COMPOSE_TEMP"
-
-# Remove LABELS_PLACEHOLDER placeholder line
-sed -i "/^LABELS_PLACEHOLDER$/d" "$COMPOSE_TEMP"
-
-# Handle ports section (remove placeholder if Traefik, otherwise replace)
-if [[ "$CONCOURSE_TRAEFIK" == "true" ]]; then
-  sed -i 's|PORTS_PLACEHOLDER||' "$COMPOSE_TEMP"
+  export PROXY_NETWORK CONCOURSE_DOMAIN
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${PROXY_NETWORK} ${CONCOURSE_DOMAIN}' < "${TEMPLATE_FILE}" | sudo tee "${COMPOSE_FILE}" > /dev/null
 else
-  # Replace PORTS_PLACEHOLDER with actual ports
-  # Use awk to handle multiline replacement properly
-  awk -v ports="$SECTION_WEB_PORTS" '
-    /PORTS_PLACEHOLDER/ {
-      print ports
-      next
-    }
-    { print }
-  ' "$COMPOSE_TEMP" > "${COMPOSE_TEMP}.tmp" && mv "${COMPOSE_TEMP}.tmp" "$COMPOSE_TEMP"
+  export CONCOURSE_WEB_PORT
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${CONCOURSE_WEB_PORT}' < "${TEMPLATE_FILE}" | sudo tee "${COMPOSE_FILE}" > /dev/null
 fi
-
-# Add labels after concourse-web network section (only when Traefik enabled)
-if [[ -n "$SECTION_WEB_LABELS" ]]; then
-  # Match the networks line under concourse-web service (after concourse-db section)
-  # Print networks: line, then the - concourse-net line, then the labels
-  awk -v labels="$SECTION_WEB_LABELS" '
-    /^  concourse-web:/ { in_web = 1 }
-    in_web && /^    networks:$/ {
-      print
-      next
-    }
-    in_web && /^      - concourse-net$/ {
-      print
-      print labels
-      next
-    }
-    /^  concourse-worker:/ { in_web = 0 }
-    { print }
-  ' "$COMPOSE_TEMP" > "${COMPOSE_TEMP}.tmp" && mv "${COMPOSE_TEMP}.tmp" "$COMPOSE_TEMP"
-fi
-
-# Move to final location
-sudo mv "$COMPOSE_TEMP" "$COMPOSE_FILE"
 
 success "Docker Compose file written to ${COMPOSE_FILE}"
 

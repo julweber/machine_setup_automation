@@ -87,122 +87,20 @@ sudo mkdir -p "${N8N_DIR}"
 sudo mkdir -p "${N8N_DIR}/local-files"
 success "Directories ready."
 
-# Write .env
+# Render .env from template (static quoted heredoc → plain cp)
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/n8n"
 step "Creating .env file"
-sudo tee "${N8N_DIR}/.env" <<'ENV_EOF' > /dev/null
-# n8n environment – edit before first launch!
-
-DOMAIN_NAME=example.com
-SUBDOMAIN=n8n
-N8N_PORT=5678
-N8N_PROTOCOL=https
-WEBHOOK_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
-GENERIC_TIMEZONE=Europe/Berlin
-SSL_EMAIL=user@example.com
-N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
-ENV_EOF
+sudo cp "${TEMPLATE_DIR}/env.template" "${N8N_DIR}/.env"
 
 info ".env written – review values before starting n8n"
 
-# Build n8n service definition
-if [[ "${TRAEFIK_ENABLED}" == "true" ]]; then
-  info "Traefik enabled – will inject labels"
-  N8N_SERVICE=$(cat <<'N8N_TRAEFIK'
-  n8n:
-    image: docker.n8n.io/n8nio/n8n
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:5678:5678"
-    labels:
-      - traefik.enable=true
-      - traefik.docker.network=proxy
-      - traefik.http.routers.n8n.rule=Host(`${SUBDOMAIN}.${DOMAIN_NAME}`)
-      - traefik.http.routers.n8n.tls=true
-      - traefik.http.routers.n8n.entrypoints=web,websecure
-      - traefik.http.routers.n8n.middlewares=n8n@docker
-    environment:
-      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
-      - N8N_HOST=${SUBDOMAIN}.${DOMAIN_NAME}
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=https
-      - NODE_ENV=production
-      - WEBHOOK_URL=https://${SUBDOMAIN}.${DOMAIN_NAME}/
-      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Berlin}
-      - TZ=${GENERIC_TIMEZONE:-Europe/Berlin}
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./local-files:/files
-
-  traefik:
-    image: "traefik"
-    restart: always
-    command:
-      - "--api.insecure=true"
-      - "--providers.docker=true"
-      - "--providers.docker.exposedbydefault=false"
-      - "--entrypoints.web.address=:80"
-      - "--entrypoints.websecure.address=:443"
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - traefik_data:/letsencrypt
-      - /var/run/docker.sock:/var/run/docker.sock:ro
-N8N_TRAEFIK
-)
-else
-  warn "Traefik disabled – n8n exposed only on localhost:5678"
-  N8N_SERVICE=$(cat <<'N8N_LOCAL'
-  n8n:
-    image: docker.n8n.io/n8nio/n8n
-    restart: unless-stopped
-    ports:
-      - "127.0.0.1:5678:5678"
-    environment:
-      - N8N_ENFORCE_SETTINGS_FILE_PERMISSIONS=true
-      - N8N_HOST=localhost
-      - N8N_PORT=5678
-      - N8N_PROTOCOL=http
-      - NODE_ENV=production
-      - WEBHOOK_URL=http://localhost:5678/
-      - GENERIC_TIMEZONE=${GENERIC_TIMEZONE:-Europe/Berlin}
-      - TZ=${GENERIC_TIMEZONE:-Europe/Berlin}
-    volumes:
-      - n8n_data:/home/node/.n8n
-      - ./local-files:/files
-N8N_LOCAL
-)
-fi
-
-# Write compose file
+# Render docker-compose.yml from template (static quoted heredocs → plain cp)
 step "Creating docker-compose.yml"
-{
-  echo "services:"
-  echo "$N8N_SERVICE"
-  cat <<'POSTGRES'
-  postgres:
-    image: postgres:15-alpine
-    container_name: n8n-postgres
-    restart: unless-stopped
-    environment:
-      - POSTGRES_USER=n8n
-      - POSTGRES_PASSWORD=changeme
-      - POSTGRES_DB=n8n
-    volumes:
-      - pg_data:/var/lib/postgresql/data
-
-volumes:
-  n8n_data:
-  pg_data:
-POSTGRES
-
-  [[ "${TRAEFIK_ENABLED}" == "true" ]] && echo "  traefik_data:"
-
-  echo ""
-  echo "networks:"
-  echo "  proxy:"
-  echo "    external: true"
-} | sudo tee "${COMPOSE_FILE}" > /dev/null
+if [[ "${TRAEFIK_ENABLED}" == "true" ]]; then
+  sudo cp "${TEMPLATE_DIR}/docker-compose.traefik.yml" "${COMPOSE_FILE}"
+else
+  sudo cp "${TEMPLATE_DIR}/docker-compose.local.yml" "${COMPOSE_FILE}"
+fi
 
 success "docker-compose.yml written"
 
