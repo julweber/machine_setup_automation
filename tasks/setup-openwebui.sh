@@ -309,6 +309,20 @@ _generate_start_script() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CREATE PROJECT DIRECTORY
+# ─────────────────────────────────────────────────────────────────────────────
+
+step "Creating project directory at ${PROJECT_DIR}"
+
+if [[ ! -d "$PROJECT_DIR" ]]; then
+  sudo mkdir -p "$PROJECT_DIR"
+  sudo chown "${USER}:${USER}" "$PROJECT_DIR"
+fi
+cd "$PROJECT_DIR"
+
+success "Directory ready."
+
+# ─────────────────────────────────────────────────────────────────────────────
 # GENERATE SECRET KEY
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -325,20 +339,6 @@ fi
 ENV_FILE="${PROJECT_DIR}/.env"
 _generate_env_file "$ENV_FILE"
 success "Secret key stored securely in .env file (mode: 600)."
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CREATE PROJECT DIRECTORY
-# ─────────────────────────────────────────────────────────────────────────────
-
-step "Creating project directory at ${PROJECT_DIR}"
-
-if [[ ! -d "$PROJECT_DIR" ]]; then
-  sudo mkdir -p "$PROJECT_DIR"
-  sudo chown "${USER}:${USER}" "$PROJECT_DIR"
-fi
-cd "$PROJECT_DIR"
-
-success "Directory ready."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GENERATE DOCKER COMPOSE FILE
