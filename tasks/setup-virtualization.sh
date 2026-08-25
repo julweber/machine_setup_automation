@@ -82,14 +82,14 @@ declare -a VIRT_MANAGER_PACKAGES=(
 # Helper Functions
 # =============================================================================
 
-# Check if a package is installed
+# Check if a package is installed (delegates to lib/helpers.sh)
 is_package_installed() {
-  dpkg -l "$1" &>/dev/null
+  is_apt_package_installed "$1"
 }
 
 # Get installed version of a package
 get_package_version() {
-  dpkg -l "$1" 2>/dev/null | awk 'NR==5 {print $3}' || echo "unknown"
+  dpkg-query -W -f='${Version}' "$1" 2>/dev/null || echo "unknown"
 }
 
 # Check if user is in libvirt group

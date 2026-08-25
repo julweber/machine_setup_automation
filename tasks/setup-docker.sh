@@ -88,7 +88,7 @@ sudo apt install -y ca-certificates curl
 # Remove old Docker packages
 step "Removing existing Docker packages"
 for pkg in docker.io docker-doc docker-compose docker-compose-v2 podman-docker containerd runc; do
-  if dpkg -l "$pkg" &>/dev/null; then
+  if is_apt_package_installed "$pkg"; then
     info "Removing $pkg"
     sudo apt-get remove -y "$pkg" 2>/dev/null || true
   fi

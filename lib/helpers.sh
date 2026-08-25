@@ -155,6 +155,22 @@ if ! declare -F mktempfile > /dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# is_apt_package_installed
+#   Returns 0 if the given dpkg package is actually installed (status DB
+#   reports 'installed'), 1 otherwise.
+#
+#   NOTE: Do NOT use `dpkg -l <pkg>` for this — it exits 0 for packages that
+#   are merely known to apt (e.g. status 'un', available but not installed),
+#   causing false positives.
+# ---------------------------------------------------------------------------
+if ! declare -F is_apt_package_installed > /dev/null 2>&1; then
+  is_apt_package_installed() {
+    local pkg="$1"
+    dpkg-query -W -f='${db:Status-Status}' "$pkg" 2>/dev/null | grep -qx 'installed'
+  }
+fi
+
+# ---------------------------------------------------------------------------
 # UFW Firewall Helpers
 #   Provides common functions for managing UFW firewall rules.
 # ---------------------------------------------------------------------------

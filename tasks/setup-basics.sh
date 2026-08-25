@@ -71,8 +71,8 @@ declare -a APT_PACKAGES=(
   gettext-base
   bat
   git
-  python3-full
   python3-pip
+  python3-full
   jq
   yq
   net-tools
@@ -103,7 +103,7 @@ sudo apt update
 # Install apt packages
 step "Installing packages"
 for pkg in "${APT_PACKAGES[@]}"; do
-  if dpkg -l "$pkg" &>/dev/null; then
+  if is_apt_package_installed "$pkg"; then
     info "$pkg already installed"
   else
     info "Installing $pkg"

@@ -72,7 +72,7 @@ BRAVE_SOURCES_PATH="/etc/apt/sources.list.d/brave-browser-release.sources"
 step "Setting up Brave Browser"
 
 # Check if Brave is already installed
-if dpkg -l brave-browser &>/dev/null; then
+if is_apt_package_installed brave-browser; then
   success "Brave Browser is already installed"
   exit 0
 fi
