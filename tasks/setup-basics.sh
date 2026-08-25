@@ -69,7 +69,6 @@ NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
 declare -a APT_PACKAGES=(
   curl
   gettext-base
-  tldr
   bat
   git
   python3-full
@@ -80,10 +79,7 @@ declare -a APT_PACKAGES=(
   wget
   gpg
   netcat-openbsd
-  terminator
   libfuse2
-  gnome-control-center
-  gnome-online-accounts
   nvtop
   radeontop
   btop
