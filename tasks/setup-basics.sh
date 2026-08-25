@@ -85,8 +85,6 @@ declare -a APT_PACKAGES=(
   btop
   htop
   tmux
-  nodejs
-  npm
   spirv-headers
 )
 
@@ -153,6 +151,11 @@ if [[ -s "${NVM_DIR}/nvm.sh" ]]; then
   \. "${NVM_DIR}/nvm.sh"
   info "NVM loaded into current session"
 fi
+
+# Configure stable nvm
+info "Configuring stable node version for nvm"
+nvm install stable
+nvm use stable
 
 # Install huggingface-cli
 step "Installing huggingface-cli"
