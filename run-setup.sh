@@ -53,11 +53,51 @@ log_step()    { printf '\n%b %b %s\n' "${BOLD}${LOG_PREFIX} ▶" "" "$*${RESET}"
 # Dependency Checks
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─────────────────────────────────────────────────────────────────────────────
+# ensure_basic_tools
+#   Ensures yq and jq are available. If any are missing, automatically
+#   runs tasks/setup-basics.sh to install them, then re-checks.
+# ─────────────────────────────────────────────────────────────────────────────
+
+ensure_basic_tools() {
+  local missing_tools=()
+
+  command -v yq &>/dev/null || missing_tools+=("yq")
+  command -v jq &>/dev/null || missing_tools+=("jq")
+
+  if (( ${#missing_tools[@]} == 0 )); then
+    return 0
+  fi
+
+  log_warn "Missing required tool(s): ${missing_tools[*]}. Running setup-basics.sh to install them..."
+
+  local basics_script="${TASKS_DIR}/setup-basics.sh"
+  if [[ ! -f "$basics_script" ]]; then
+    log_error "setup-basics.sh not found: $basics_script"
+    return 1
+  fi
+
+  if ! bash "$basics_script"; then
+    log_error "setup-basics.sh failed; cannot continue without: ${missing_tools[*]}"
+    return 1
+  fi
+
+  # Re-check after setup-basics.sh ran
+  local tool
+  for tool in yq jq; do
+    if ! command -v "$tool" &>/dev/null; then
+      log_error "$tool is still not available after running setup-basics.sh"
+      return 1
+    fi
+  done
+
+  log_success "Required tool(s) installed: ${missing_tools[*]}"
+}
+
 check_dependencies() {
   local missing=0
   
-  if ! command -v yq &>/dev/null; then
-    log_error "yq is not installed. Run setup-basics.sh first."
+  if ! ensure_basic_tools; then
     missing=1
   fi
   
@@ -66,12 +106,12 @@ check_dependencies() {
     log_error "Hint: copy machine-config.yml.example to machine-config.yml"
     missing=1
   fi
-  
+
   if [[ ! -d "$TASKS_DIR" ]]; then
     log_error "Tasks directory not found: $TASKS_DIR"
     missing=1
   fi
-  
+
   if (( missing )); then
     exit 1
   fi
@@ -178,14 +218,14 @@ get_script_description() {
 
 cmd_status() {
   check_dependencies
-  
+
   log_step "Checking configuration"
   echo
-  
+
   printf '%bConfiguration: %s%b\n' "${BOLD}" "$CONFIG_FILE" "${RESET}"
   printf '%bTasks Directory: %s%b\n' "${BOLD}" "$TASKS_DIR" "${RESET}"
   echo
-  
+
   # Validate config can be read
   local script_count
   script_count=$(yq '(.scripts | length) // 0' "$CONFIG_FILE")
@@ -193,10 +233,10 @@ cmd_status() {
     log_error "No scripts found in configuration"
     exit 1
   fi
-  
+
   printf 'Scripts in config: %b%s%b\n' "${BOLD}" "$script_count" "${RESET}"
   echo
-  
+
   local enabled_count=0
   enabled_count=$(yq '.scripts | to_entries | map(select(.value.enabled == true)) | length' "$CONFIG_FILE")
   if [[ "$enabled_count" =~ ^[0-9]+$ ]] && (( enabled_count > 0 )); then
@@ -204,20 +244,20 @@ cmd_status() {
   else
     printf 'Enabled: %b%s%b\n' "${YELLOW}" "0" "${RESET}"
   fi
-  
+
   local disabled_count=$((script_count - enabled_count))
   if [[ "$disabled_count" =~ ^[0-9]+$ ]] && (( disabled_count > 0 )); then
     printf 'Disabled: %b%s%b\n' "${CYAN}" "$disabled_count" "${RESET}"
   else
     printf 'Disabled: %b%s%b\n' "${CYAN}" "0" "${RESET}"
   fi
-  
+
   echo
-  
+
   # Show all scripts with their status
   printf '%bScript Status:%b\n' "${BOLD}" "${RESET}"
   echo
-  
+
   # List scripts in the order defined in the config file, then append
   # scripts found on disk that are not in the config (sorted alphabetically)
   local -a scripts_array=()
@@ -321,12 +361,12 @@ cmd_status() {
 run_script() {
   local script_name="$1"
   local script_path="${TASKS_DIR}/${script_name}"
-  
+
   if [[ ! -f "$script_path" ]]; then
     log_error "Script not found: $script_path"
     return 1
   fi
-  
+
   if [[ ! -x "$script_path" ]]; then
     log_warn "Script not executable: $script_path"
     if ! chmod +x "$script_path"; then
@@ -334,21 +374,21 @@ run_script() {
       return 1
     fi
   fi
-  
+
   log_step "Running ${script_name}"
-  
+
   # Collect environment variables as KEY=VALUE strings
   local env_args=()
   while IFS= read -r env_pair; do
     [[ -n "$env_pair" ]] && env_args+=("$env_pair")
   done < <(get_script_env "$script_name")
-  
+
   # Collect arguments
   local args=()
   while IFS= read -r arg; do
     [[ -n "$arg" ]] && args+=("$arg")
   done < <(get_script_args "$script_name")
-  
+
   # Run the script with environment variables
   if [[ ${#env_args[@]} -gt 0 ]]; then
     env "${env_args[@]}" "$script_path" "${args[@]}"
@@ -364,25 +404,25 @@ run_script() {
 
 cmd_apply() {
   log_step "Applying configuration"
-  
+
   check_dependencies
-  
+
   echo
   log_info "Reading configuration from: $CONFIG_FILE"
   log_info "Scripts directory: $TASKS_DIR"
   echo
-  
+
   # Check if any scripts are enabled
   local enabled_count=0
   enabled_count=$(yq '.scripts | to_entries | map(select(.value.enabled == true)) | length' "$CONFIG_FILE")
-  
+
   if [[ ! "$enabled_count" =~ ^[0-9]+$ ]] || (( enabled_count == 0 )); then
     exit 0
   fi
-  
+
   log_info "Found ${enabled_count} enabled script(s)"
   echo
-  
+
   # Run scripts in the order they are defined in the config file
   local -a scripts_array=()
   local line
@@ -418,26 +458,26 @@ cmd_apply() {
       fi
     fi
   done
-  
+
   # Report results
   echo
   echo
   log_step "Run Summary"
-  
+
   local total_enabled=$enabled_count
   local success_count=$((total_enabled - failed_count - skipped_count))
-  
+
   if (( success_count == total_enabled )) && (( success_count > 0 )); then
     log_success "All $success_count script(s) completed successfully"
   else
     if (( success_count > 0 )); then
       log_info "Succeeded: $success_count/$total_enabled"
     fi
-    
+
     if (( skipped_count > 0 )); then
       log_warn "Skipped: $skipped_count/$total_enabled (scripts missing from disk)"
     fi
-    
+
     if (( failed_count > 0 )); then
       log_error "Failed: $failed_count/$total_enabled"
       echo
@@ -466,6 +506,10 @@ cmd_help() {
   Options:
     -c, --config <file>  Path to configuration file (default: machine-config.yml)
     -h, --help           Show this help message
+
+  Note:
+    If yq or jq are not installed, run-setup.sh automatically runs
+    tasks/setup-basics.sh first to install them.
 
   Examples:
     ./run-setup.sh status
