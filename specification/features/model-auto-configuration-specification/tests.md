@@ -43,6 +43,7 @@ on `tasks/sync-models.sh` and all `lib/agent-*.sh` files.
 | T2.8 | `${MODEL_DIR}` placeholder in `download:` and in `serve.cmd` | Expanded to the top-level `env` value; `${HOME}` in an env value itself expands to the real home |
 | T2.9 | `serve.cmd` contains `${PORT}` and `${llama-server-bin}` | These are **not** expanded by the script; they survive verbatim into `config.yaml` |
 | T2.10 | Per-model `env` overrides a top-level env name | Per-model value wins in that model's expansion; other models use the top-level value |
+| T2.11 | Dry-run output is malformed/unparseable | The script runs the real download (conservative; never skips on ambiguity) |
 
 ## Behavior 3: llama-swap Sync
 
@@ -51,18 +52,19 @@ on `tasks/sync-models.sh` and all `lib/agent-*.sh` files.
 | T3.1 | Add 1 new local model | `models:` gains the key with the expanded `cmd` and `env:` containing the catalog per-model env (e.g. `CUDA_VISIBLE_DEVICES=0`); service restarted once; llama-swap `/v1/models` lists it after load |
 | T3.2 | Re-run immediately | Config file **byte-identical** (no reformatting); service **not** restarted |
 | T3.3 | Pre-existing hand-tuned model entry (different `cmd` than catalog) with the same key | Entry untouched; `already present, unchanged` logged |
-| T3.4 | `macros`, `matrix`, `hooks`, `apiKeys` sections | Present and byte-identical in the modified file after adding models |
+| T3.4 | `macros`, `matrix`, `hooks`, `apiKeys` sections | Present and **parse-equal** (structurally preserved) after adding models; comments/reformatting may differ (yq round-trips the whole document) |
 | T3.5 | `--no-restart` with a new model added | Config written; no restart; manual `systemctl restart` command printed |
 | T3.6 | llama-swap service stopped, run with a new model | Config written; restart **starts** the service; service active after run |
 | T3.7 | Corrupted-partial-write simulation (e.g. read-only target or forced `yq` failure) | Original `config.yaml` restored intact; exit 2 |
 | T3.8 | Catalog with only remote models | `config.yaml` byte-identical; no restart |
+| T3.10 | After adding a model, validate YAML + non-model sections preserved | `config.yaml` parses as valid YAML; `macros`, `matrix`, `hooks`, `apiKeys` present and parse-equal; only the new model entry was added |
 | T3.9 | Pre-existing entry with same key and a different/absent `env` | Entry untouched, including its `env`; `already present, unchanged` logged |
 
 ## Behavior 4: Agent Sync (pi)
 
 | Test ID | Description | Expected Result |
 |---------|-------------|-----------------|
-| T4.1 | Fresh `models.json` (only `{"providers":{}}`), catalog with 2 providers / 3 models | Both providers created with `baseUrl`/`apiKey`; all 3 models present with defaults applied (`contextWindow: 200000`, `maxTokens: 16000`, `reasoning: true`, `input: ["text"]`) |
+| T4.1 | Fresh `models.json` (only `{"providers":{}}`), catalog with 2 providers / 3 models | Both providers created with `baseUrl`, `api: "openai-completions"`, `apiKey`; new model entries have **no** `cost` field; all 3 models present with defaults applied (`contextWindow: 200000`, `maxTokens: 16000`, `reasoning: true`, `input: ["text"]`) |
 | T4.2 | Existing provider `evo` with extra manual model `my-manual-model` | Manual model **preserved**; catalog models added |
 | T4.3 | Existing catalog-managed model with a manually changed `contextWindow` | Field corrected to catalog value; `updated contextWindow` logged; other manual fields (e.g. `cost`) preserved |
 | T4.4 | Provider exists under same name with a **different** `baseUrl` | `baseUrl` updated to catalog value with a warning |
@@ -78,6 +80,9 @@ on `tasks/sync-models.sh` and all `lib/agent-*.sh` files.
 | T4.9 | Fresh/empty opencode config, catalog with providers | Provider(s) + models written in opencode's structure; `jq empty` passes |
 | T4.10 | Existing opencode config with unrelated manual entries | Untouched; only catalog providers/models added or fixed |
 | T4.11 | Re-run | Config stable (parse-equal), exit 0 |
+| T4.12 | Fresh/empty opencode config, catalog with providers | Provider block has `name`, `npm: "@ai-sdk/openai-compatible"`, `options.baseURL`, `options.apiKey`; model entry has `limit.context`, `limit.output`, `reasoning`, `modalities.input`, derived `attachment` (true when `input` contains `image`), creation-time `tool_call: true`, `modalities.output: ["text"]`; `jq empty` passes |
+| T4.13 | Manually set `tool_call: false` on an opencode model entry, re-run | `tool_call` stays `false` (unmanaged); managed fields still synced to catalog values |
+| T4.14 | Run with unmodified `models.yml.default` (placeholder keys) | Warning logged for each placeholder `apiKey`; agent configs still contain the placeholder (user responsibility to replace in `models.yml`) |
 
 ## Behavior 5: Verification & Summary
 
@@ -87,6 +92,7 @@ on `tasks/sync-models.sh` and all `lib/agent-*.sh` files.
 | T5.2 | No-op re-run | All entries "already present"; exit 0 |
 | T5.3 | Run with one failing download + successful config sync | Summary shows the failure; exit 2; verification lists the missing model |
 | T5.4 | `--help` | Usage text with flags and `MODELS_YML`; exit 0; no side effects |
+| T5.5 | `--agents pi,foo` (foo not supported) | Exit 1; message lists supported agents and names `foo` |
 
 ## Repo Hygiene
 

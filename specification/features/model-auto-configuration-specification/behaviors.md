@@ -210,8 +210,12 @@ Remote-only catalogs run fine on a machine without llama-swap.
 For each command in the model's `download` list:
 
 1. Run the command with `--dry-run` appended (after placeholder expansion).
-2. If the dry-run reports **0 files** to download → log `already present, skipping` for that command.
-3. Otherwise log `downloading <N> files (<size>)` and run the real command, streaming its output.
+2. Parse the line `[dry-run] Will download N files (out of M) totalling SIZE.` to obtain the
+   file count `N`. If the line is present and `N == 0`, log `already present, skipping` and
+   do not run the real download (dry-run exits 0 in that case).
+3. Otherwise (N > 0, the line cannot be parsed, or the dry-run exits nonzero) → log
+   `downloading <N> files (<size>)` and run the real command, streaming its output.
+   (Conservative: never skip a download on ambiguity.)
 4. A failing command aborts the model's download with an error (exit 2 at the end — see
    "Failure Handling"); remaining models are still attempted.
 
@@ -240,8 +244,12 @@ Guarantees:
      (Decision 19: the user hand-tunes serving commands; the script never modifies them.)
 3. Never touch: `macros`, `matrix`, `hooks`, `apiKeys`, `peers`, and all top-level global
    settings.
-4. After any addition, validate the result parses as YAML (`yq e . file`); if invalid, restore
-   the previous file from a temp backup and fail (exit 2).
+4. After any addition, validate the result parses as YAML (`yq . file`; exits nonzero on
+   invalid YAML); if invalid, restore the previous file from a temp backup and fail (exit 2).
+
+   **Important note:** kislyuk-style `yq` round-trips the *entire* YAML document, so comments
+   and manual reformatting are **not preserved** when the file is rewritten. The script MUST
+   log a warning the first time it modifies `config.yaml`.
 5. **Restart:** if the config file changed → `sudo systemctl restart llama-swap`
    (this also starts the service if it was stopped). Log the restart. If unchanged → no
    restart. `--no-restart` suppresses the restart (and prints the manual command).
@@ -256,13 +264,18 @@ Each agent is an adapter (`lib/agent-<name>.sh`) providing:
 - the "provider exists?" lookup (by provider **name**, Decision 20),
 - the merge/write logic for its specific JSON structure.
 
-For each catalog provider, per agent:
+For each agent named in `--agents` (after validating it is a supported agent; unsupported names cause an immediate exit 1 with a message listing the supported agents and the offending names):
 
 1. **Provider block:**
    - If a provider with the same **name** exists → keep it. If its `baseUrl` differs from the
      catalog → update it and warn. `apiKey` is updated only if the catalog provides one.
    - If no such provider exists → create it with `name`/`baseUrl`/`apiKey` and an empty
      model list.
+
+   **WARNING:** If any catalog `apiKey` value looks like a placeholder (contains the
+   substring `PLACEHOLDER`, e.g. `sk-PLACEHOLDER`), log a warning before writing it to any
+   agent config; the placeholder is still written (user responsibility to replace it in
+   `models.yml`).
 2. **Models** (for the provider's catalog models), using the `agent:` metadata with defaults
    (Decision 11):
    - Model id (= catalog `name`) **missing** in the provider → add the full entry with
@@ -277,11 +290,35 @@ For each catalog provider, per agent:
    the pre-run backup and fail (exit 2).
 
 **Adapters delivered:**
-- `lib/agent-pi.sh` — `~/.pi/agent/models.json`, structure
-  `providers.<name>.models[]` with `id`, `name`, `reasoning`, `input`, `contextWindow`,
-  `maxTokens`, `cost` (cost untouched), optional `thinkingLevelMap`.
-- `lib/agent-opencode.sh` — `~/.config/opencode/opencode.json`, opencode's provider/model
-  structure (adapter maps the catalog fields onto it).
+- `lib/agent-pi.sh` — `~/.pi/agent/models.json`.
+  - Provider block: `providers.<name>` with `baseUrl`, `api: "openai-completions"`
+    (written when the provider is created), `apiKey` (only if the catalog provides one),
+    `models: []`. Existing provider blocks: only `baseUrl`/`apiKey` managed (Behavior 4).
+  - Model entry (list item): `id` = catalog `name`, `name`, `reasoning`, `input`,
+    `contextWindow`, `maxTokens`, optional `thinkingLevelMap` (written as-is, nulls
+    preserved). `cost` is unmanaged: omitted on new entries, never modified on existing.
+- `lib/agent-opencode.sh` — `~/.config/opencode/opencode.json`. Reference: opencode
+  custom-provider config (opencode.ai/docs/providers, "Custom provider"; schema:
+  opencode.ai/config.json → `ProviderConfig`).
+  - Provider block: `provider.<name>` with `name`, `npm: "@ai-sdk/openai-compatible"`
+    (written when the provider is created), `options.baseURL` = catalog `baseUrl`,
+    `options.apiKey` (only if the catalog provides one), `models: {}`.
+  - Model entry: object keyed by catalog `name` under `provider.<name>.models`.
+    Managed field mapping:
+
+  | Catalog | opencode | Notes |
+  |---------|----------|-------|
+  | `name` | `name` | |
+  | `contextWindow` | `limit.context` | `limit` requires both fields, both always written |
+  | `maxTokens` | `limit.output` | |
+  | `reasoning` | `reasoning` | |
+  | `input` | `modalities.input` | plus `attachment` = `true` iff `input` contains `image` |
+  | `thinkingLevelMap` | — | no opencode equivalent; **not written** (model objects reject unknown fields) |
+
+    Creation-time defaults for new entries (written once, never managed afterwards):
+    `tool_call: true`, `modalities.output: ["text"]`. Existing entries: managed fields
+    updated if different; all other fields (`tool_call`, `modalities.output`, `cost`,
+    …) never touched.
 
 ### Behavior 5: Verification & Summary
 
