@@ -55,6 +55,26 @@ if ! declare -F error > /dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Error semantics
+#
+# RULE: `error` and `die` terminate the process — never call them inside a
+#       command substitution that a caller guards with `||` (the exit would
+#       only kill the subshell and the guarded fallback would silently take
+#       effect). Use `err_msg` + `return` in helpers that must be
+#       recoverable, so the caller can decide how to handle the failure.
+# ---------------------------------------------------------------------------
+
+# Report an error, do NOT exit. Use inside functions/helpers whose caller decides.
+if ! declare -F err_msg > /dev/null 2>&1; then
+  err_msg() { echo -e "${RED}[ERROR]${RESET} $*" >&2; return 1; }
+fi
+
+# Terminal error: report and exit. Identical semantics to error().
+if ! declare -F die > /dev/null 2>&1; then
+  die() { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
+fi
+
+# ---------------------------------------------------------------------------
 # run_preflight_checks
 #   Validates all required dependencies are available before setup proceeds.
 #   Checks: Docker installation, Docker daemon running, OpenSSL, curl.
@@ -123,34 +143,125 @@ if ! declare -F ensure_traefik_running > /dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
-# detect_arch
+# detect_arch [fallback]
 #   Detects the host architecture and maps it to the standard Go/OS
-#   architecture name (amd64 or arm64). Exits on unsupported arch.
+#   architecture name (amd64 or arm64).
+#
+#   Prints 'amd64' or 'arm64'. On an unsupported arch: prints an error to
+#   stderr and returns 1 (printing [fallback] first, if one was given).
+#   Never exits, so callers can decide.
+#
+#   Callers under `set -euo pipefail` should use the assignment-with-return
+#   shape so the failure stays loud (err_msg already printed the reason):
+#     ARCH="$(detect_arch)" || exit 1
+#   (A bare `ARCH="$(detect_arch)"` also aborts the script on failure, which
+#   is fine — but never guard it with `|| <fallback>`, that would hide the
+#   error and silently install artifacts for the wrong architecture.)
 #
 # OUTPUT:
 #   Prints 'amd64' or 'arm64' to stdout.
 # ---------------------------------------------------------------------------
 if ! declare -F detect_arch > /dev/null 2>&1; then
   detect_arch() {
-    local arch
-    arch=$(uname -m)
+    local fallback="${1:-}" arch
+    arch="$(uname -m)"
     case "$arch" in
-      x86_64)  echo "amd64" ;;
-      aarch64|arm64) echo "arm64" ;;
-      *)       error "Unsupported architecture: ${arch}. Only amd64 and arm64 are supported." ;;
+      x86_64)            echo "amd64"; return 0 ;;
+      aarch64|arm64)     echo "arm64"; return 0 ;;
+      *)
+        err_msg "Unsupported architecture: ${arch}. Only amd64 and arm64 are supported."
+        [[ -n "$fallback" ]] && echo "$fallback"
+        return 1
+        ;;
     esac
   }
 fi
 
 # ---------------------------------------------------------------------------
-# mktempfile
-#   Creates a temporary file and returns its path. Uses mktemp with a
-#   predictable naming pattern for easier debugging. File is not deleted
-#   automatically - caller is responsible for cleanup.
+# mktempfile <name>
+#   Creates a temporary file and prints its path. Uses mktemp with a
+#   predictable naming pattern (suffix of <name>) for easier debugging,
+#   falling back to an unnamed temp file.
+#
+#   Cleanup: files created via mktempfile are removed automatically when the
+#   sourcing script exits, and the caller's own EXIT trap is preserved. The
+#   cleanup is *chained* onto any EXIT trap the calling script installed, so
+#   task-level cleanup (docker compose down on failure) still runs.
+#
+#   How it works: file names are recorded in a per-process tracking file
+#   ($_MKTEMP_TRACK_FILE) rather than a shell variable, because mktempfile is
+#   normally called inside a command substitution (f="$(mktempfile x.sh)"),
+#   which runs in a subshell — there, neither variable updates nor EXIT
+#   traps reach the parent shell. The cleanup trap is armed in the parent
+#   (at source time, and on any direct non-subshell call) and reads the
+#   tracking file on exit.
+#
+#   Limitations:
+#   - Trap chaining re-reads the existing EXIT trap via `trap -p`, which
+#     loses quoting for traps containing single quotes. None of the existing
+#     task EXIT traps do (they call `cleanup_on_failure`).
+#   - A script that installs its own EXIT trap *after* sourcing this library
+#     (plain `trap ... EXIT`) replaces the chained trap. No current task
+#     script both does that and uses mktempfile; if one appears, it must
+#     include `_mktemp_cleanup` in its own trap.
 # ---------------------------------------------------------------------------
+if [[ -z "${_MKTEMP_TRACK_FILE:-}" ]]; then
+  _MKTEMP_TRACK_FILE="${TMPDIR:-/tmp}/msa-mktempfile-tracker.$$"
+fi
+
+if ! declare -F _mktemp_cleanup > /dev/null 2>&1; then
+  # Remove every temp file recorded via mktempfile, then the tracker itself.
+  _mktemp_cleanup() {
+    local _f
+    if [[ -f "${_MKTEMP_TRACK_FILE:-}" ]]; then
+      while IFS= read -r _f; do
+        [[ -n "$_f" ]] && rm -f -- "$_f"
+      done < "${_MKTEMP_TRACK_FILE}"
+      rm -f -- "${_MKTEMP_TRACK_FILE}"
+    fi
+    return 0
+  }
+fi
+
+if ! declare -F _mktemp_arm_exit_trap > /dev/null 2>&1; then
+  # Chain _mktemp_cleanup onto the current EXIT trap without overwriting it.
+  # No-op when the cleanup is already part of the trap, so repeated
+  # mktempfile calls never re-wrap it.
+  _mktemp_arm_exit_trap() {
+    local _cur _prev
+    _cur="$(trap -p EXIT)"
+    if [[ "$_cur" == *"_mktemp_cleanup"* ]]; then
+      return 0
+    fi
+    _prev="$(trap -p EXIT | sed -n "s/^trap -- '\(.*\)' EXIT$/\1/p")"
+    if [[ -n "$_prev" ]]; then
+      # Expand now on purpose: the handler is composed from the existing
+      # handler string extracted above.
+      # shellcheck disable=SC2064
+      trap "_mktemp_cleanup; ${_prev}" EXIT
+    else
+      trap "_mktemp_cleanup" EXIT
+    fi
+  }
+fi
+
+# Arm the cleanup trap in the sourcing (parent) shell. Task scripts that
+# install their own EXIT trap later take precedence; see limitations above.
+_mktemp_arm_exit_trap
+
 if ! declare -F mktempfile > /dev/null 2>&1; then
   mktempfile() {
-    mktemp -t "$(basename "$1" | sed 's/$/.XXXXXX/')" 2>/dev/null || mktemp -t "tmp.XXXXXX"
+    local f
+    f="$(mktemp -t "$(basename "$1" | sed 's/$/.XXXXXX/')" 2>/dev/null || mktemp -t "tmp.XXXXXX")" || return 1
+    printf '%s\n' "$f" >> "${_MKTEMP_TRACK_FILE}"
+    # Re-arm only in the top-level shell: inside a command substitution this
+    # function runs in a subshell, where an armed EXIT trap would fire at
+    # the end of the substitution — deleting the file before the caller has
+    # used it (its output would be captured into the assignment).
+    if [[ "${BASH_SUBSHELL:-0}" -eq 0 ]]; then
+      _mktemp_arm_exit_trap
+    fi
+    printf '%s\n' "$f"
   }
 fi
 

@@ -185,6 +185,8 @@ if [[ $EUID -ne 0 ]]; then
   warn "Not running as root. Commands requiring root privileges will use sudo."
 fi
 
+# No fallback argument: an unsupported architecture must fail this task loudly.
+# shellcheck disable=SC2119
 LLAMA_SWAP_ARCH="$(detect_arch)"
 info "Detected architecture: ${LLAMA_SWAP_ARCH}"
 

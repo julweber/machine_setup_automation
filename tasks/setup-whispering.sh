@@ -31,7 +31,16 @@ source "${LIB_PATH}" || {
 }
 
 # Configuration
-ARCH="$(detect_arch || echo amd64)"
+# detect_arch reports and returns 1 on an unsupported host. Fall back to amd64
+# only when the operator explicitly opts in; otherwise fail the task loudly.
+if ! ARCH="$(detect_arch)"; then
+  if [[ "${WHISPERING_ARCH_FALLBACK:-}" == "amd64" ]]; then
+    warn "Falling back to amd64 artifacts because WHISPERING_ARCH_FALLBACK=amd64 is set."
+    ARCH="amd64"
+  else
+    error "Unsupported host architecture. Set WHISPERING_ARCH_FALLBACK=amd64 to force x86 artifacts."
+  fi
+fi
 TEMPLATE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" &>/dev/null && pwd)/../templates/whispering"
 
 DESKTOP_LINK_TARGET_PATH="${DESKTOP_LINK_TARGET_PATH:-$HOME/Desktop/Whispering.desktop}"
@@ -53,6 +62,12 @@ Install Whispering desktop application on Linux.
 Options:
   --force    Reinstall even if Whispering is already installed
   --help     Display this help message
+
+Environment variables:
+  WHISPERING_ARCH_FALLBACK   Set to 'amd64' to install x86_64 (amd64) artifacts
+                             on an unsupported host architecture. Unset
+                             (default): the task fails loudly instead of
+                             guessing.
 
 Examples:
   ./setup-whispering.sh              # Install Whispering (latest version)
