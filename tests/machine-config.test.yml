@@ -1,0 +1,72 @@
+# =============================================================================
+# machine-config.test.yml — VM integration test configuration
+# =============================================================================
+#
+# Used by tests/run-vm-tests.sh on a FRESH Ubuntu VM. Only keep fast, safe,
+# non-interactive scripts enabled here. Heavy build/GPU/container-farm
+# scripts (llama-cpp, vllm, monitoring, nextcloud, ...) stay disabled;
+# include them ad hoc with:  tests/run-vm-tests.sh --scripts setup-xxx
+#
+# IMPORTANT (lockout avoidance):
+#   The test harness reaches the VM on port 22. The scripts below use
+#   SSHD_PORT=22 so that setup-sshd/configure-firewall/setup-fail2ban
+#   never move or firewall the harness connection (their default 2224
+#   would cut the harness off mid-run).
+#
+# Order matters: setup-basics first (git/yq/jq/node), setup-docker before
+# setup-traefik.
+# =============================================================================
+---
+version: 1
+
+scripts:
+  setup-basics:
+    enabled: true
+    description: Core utilities (apt packages, uv, nvm/node, hf, herdr, hunk)
+    env: {}
+    args: []
+
+  configure-firewall:
+    enabled: true
+    description: UFW rules (SSH kept on port 22 for harness access)
+    env:
+      SSHD_PORT: "22"
+    args: []
+
+  setup-docker:
+    enabled: true
+    description: Docker Engine
+    env: {}
+    args: []
+
+  setup-sshd:
+    enabled: true
+    description: sshd hardening (kept on port 22 for harness access)
+    env:
+      SSHD_PORT: "22"
+    args: []
+
+  setup-fail2ban:
+    enabled: true
+    description: fail2ban SSH protection
+    env:
+      SSHD_PORT: "22"
+    args: []
+
+  setup-neovim:
+    enabled: true
+    description: Neovim + plugins
+    env: {}
+    args: []
+
+  setup-pi:
+    enabled: true
+    description: Pi coding agent + extensions
+    env: {}
+    args: []
+
+  setup-traefik:
+    enabled: true
+    description: Traefik reverse proxy (docker)
+    env: {}
+    args: []
