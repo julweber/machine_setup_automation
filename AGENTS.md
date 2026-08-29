@@ -44,6 +44,9 @@ ALWAYS lint created or modified files with the following tools:
 - json (`.js`, `.json`) -> use `jq`
 - `Dockerfile` -> use hadolint via executing: docker run --rm -i hadolint/hadolint < Dockerfile
 
+### Testing
+- For running automation tests use the virtual machine based testing approach as described in ./tests/README.md
+
 ### Common logic
 
 Always check the `lib/` directory for existing functionality when implementing setup scripts in the `tasks/` directory. Try reusing existing functionality.
