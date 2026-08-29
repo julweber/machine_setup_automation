@@ -3,13 +3,19 @@
 # =============================================================================
 # SSH port: ${FAIL2BAN_SSHD_PORT}
 # Generated: ${GENERATED_DATE}
+# Backend:   ${FAIL2BAN_BACKEND} (logpath: ${FAIL2BAN_LOGPATH})
 # =============================================================================
 
 [sshd]
 enabled = true
 port = ${FAIL2BAN_SSHD_PORT},ssh
 filter = sshd
-logpath = /var/log/auth.log
+# With `backend = systemd` the documented logpath is /dev/log: fail2ban reads
+# the journal directly. Modern Ubuntu logs auth events to journald, and
+# /var/log/auth.log only exists when rsyslog is installed. For file-based
+# logging use FAIL2BAN_BACKEND=file + FAIL2BAN_LOGPATH=/var/log/auth.log.
+backend = ${FAIL2BAN_BACKEND}
+logpath = ${FAIL2BAN_LOGPATH}
 maxretry = ${FAIL2BAN_MAXRETRY}
 bantime = ${FAIL2BAN_BANTIME}
 findtime = ${FAIL2BAN_FINDTIME}
@@ -18,7 +24,8 @@ findtime = ${FAIL2BAN_FINDTIME}
 enabled = true
 port = ${FAIL2BAN_SSHD_PORT},ssh
 filter = sshd-ddos
-logpath = /var/log/auth.log
+backend = ${FAIL2BAN_BACKEND}
+logpath = ${FAIL2BAN_LOGPATH}
 maxretry = 3
 bantime = 1800
 findtime = 60
@@ -27,7 +34,8 @@ findtime = 60
 enabled = false
 port = ${FAIL2BAN_SSHD_PORT},ssh
 filter = sshd-aggressive
-logpath = /var/log/auth.log
+backend = ${FAIL2BAN_BACKEND}
+logpath = ${FAIL2BAN_LOGPATH}
 maxretry = 2
 bantime = 86400
 findtime = 300

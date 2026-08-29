@@ -13,6 +13,10 @@
 #   FAIL2BAN_MAXRETRY   - Max failed attempts before ban (default: 5)
 #   FAIL2BAN_BANTIME    - Ban duration in seconds (default: 3600)
 #   FAIL2BAN_FINDTIME   - Time window for detecting attempts (default: 600)
+#   FAIL2BAN_BACKEND    - Log backend for the jails: systemd (journald, default)
+#                         or file (requires rsyslog for /var/log/auth.log)
+#   FAIL2BAN_LOGPATH    - Log path for the jails (default: /dev/log with the
+#                         systemd backend)
 #
 # Usage:
 #   ./setup-fail2ban.sh
@@ -57,6 +61,10 @@ ${BOLD}Environment variables${RESET} (all optional):
   FAIL2BAN_MAXRETRY     Max failed attempts before ban (default: 5)
   FAIL2BAN_BANTIME      Ban duration in seconds (default: 3600)
   FAIL2BAN_FINDTIME     Time window for detecting attempts (default: 600)
+  FAIL2BAN_BACKEND      Log backend for the jails: systemd (journald, default)
+                        or file (requires rsyslog for /var/log/auth.log)
+  FAIL2BAN_LOGPATH      Log path for the jails (default: /dev/log with the
+                        systemd backend)
 EOF
 }
 
@@ -80,11 +88,40 @@ done
 : "${FAIL2BAN_MAXRETRY:=5}"
 : "${FAIL2BAN_BANTIME:=3600}"
 : "${FAIL2BAN_FINDTIME:=600}"
+# Log source: the journald backend is the default — modern Ubuntu logs auth
+# events to the journal, and /var/log/auth.log only exists when rsyslog is
+# installed. Use FAIL2BAN_BACKEND=file for classic file-based logging.
+: "${FAIL2BAN_BACKEND:=systemd}"
+: "${FAIL2BAN_LOGPATH:=/dev/log}"
 
 JAIL_LOCAL="/etc/fail2ban/jail.local"
 TEMPLATE_DIR="${SCRIPT_DIR}/../templates/fail2ban"
-# shellcheck disable=SC2034
+
+# Validate the numeric config before rendering — fail fast on typos instead
+# of writing a config fail2ban will reject.
+for _v in FAIL2BAN_MAXRETRY FAIL2BAN_BANTIME FAIL2BAN_FINDTIME; do
+  [[ "${!_v}" =~ ^[0-9]+$ ]] || error "${_v}='${!_v}' is not a non-negative integer"
+done
+if ! [[ "${FAIL2BAN_SSHD_PORT}" =~ ^[0-9]+$ ]] || (( FAIL2BAN_SSHD_PORT < 1 || FAIL2BAN_SSHD_PORT > 65535 )); then
+  error "FAIL2BAN_SSHD_PORT='${FAIL2BAN_SSHD_PORT}' is not a valid port"
+fi
+
+# backend=file needs a real log file — rsyslog provides /var/log/auth.log.
+if [[ "${FAIL2BAN_BACKEND}" == "file" ]]; then
+  if ! command -v rsyslogd &>/dev/null; then
+    info "backend=file requires rsyslog — installing"
+    sudo apt-get install -y rsyslog
+  fi
+  [[ -e "${FAIL2BAN_LOGPATH}" ]] || error "${FAIL2BAN_LOGPATH} does not exist; use FAIL2BAN_BACKEND=systemd or install rsyslog."
+fi
+
+# Config for envsubst — must be exported: envsubst reads its ENVIRONMENT, and
+# sudo's default env_reset would strip them even if they were. Render as the
+# invoking user, then install atomically (same pattern as setup-traefik.sh).
+export FAIL2BAN_SSHD_PORT FAIL2BAN_MAXRETRY FAIL2BAN_BANTIME FAIL2BAN_FINDTIME
+export FAIL2BAN_BACKEND FAIL2BAN_LOGPATH
 GENERATED_DATE="$(date -Iseconds)"
+export GENERATED_DATE
 
 # ---------------------------------------------------------------------------
 # Python 3.12 Compatibility Fix
@@ -132,10 +169,11 @@ step "Installing fail2ban"
 if command -v fail2ban-server &>/dev/null; then
   info "fail2ban is already installed: $(fail2ban-server --version 2>/dev/null || echo 'unknown')"
 else
-  # Add fail2ban repository for latest version
+  # Add the fail2ban upstream repository for the latest version. This is a
+  # best-effort step: if the GPG key or the repo cannot be fetched, fall back
+  # to the Ubuntu archive and never leave a broken apt source behind.
   info "Adding fail2ban repository"
   sudo apt install -y gnupg
-  sudo wget -O /etc/apt/keyrings/fail2ban.asc https://repo.fail2ban.org/etc/gpg/fail2ban.gpg 2>/dev/null || true
 
   # Get the codename from /etc/os-release (replaces deprecated lsb_release)
   # shellcheck disable=SC1091  # /etc/os-release is a runtime system file
@@ -144,10 +182,18 @@ else
     DISTRO="noble"
     warn "Could not determine codename, using 'noble' as default"
   fi
-  echo "deb [signed-by=/etc/apt/keyrings/fail2ban.asc] https://repo.fail2ban.org/debian/ ${DISTRO} main" | \
-    sudo tee /etc/apt/sources.list.d/fail2ban.list > /dev/null
 
-  sudo apt update
+  if sudo wget -q -O /etc/apt/keyrings/fail2ban.asc https://repo.fail2ban.org/etc/gpg/fail2ban.gpg; then
+    echo "deb [signed-by=/etc/apt/keyrings/fail2ban.asc] https://repo.fail2ban.org/debian/ ${DISTRO} main" | \
+      sudo tee /etc/apt/sources.list.d/fail2ban.list > /dev/null
+    if ! sudo apt-get update; then
+      sudo rm -f /etc/apt/sources.list.d/fail2ban.list
+      warn "Using fail2ban from the Ubuntu archive (upstream repo unreachable)."
+    fi
+  else
+    warn "Could not fetch the fail2ban GPG key — using fail2ban from the Ubuntu archive."
+  fi
+
   sudo apt install -y fail2ban
   success "fail2ban installed"
 fi
@@ -189,11 +235,23 @@ if ! command -v envsubst &>/dev/null; then
   error "envsubst is not installed. Required for template rendering. Install with: sudo apt-get install gettext-base"
 fi
 
-# Render template and write configuration
+# Render template as the unprivileged user (envsubst reads the environment;
+# sudo's default env_reset would strip exported variables) and install it
+# atomically — same pattern as setup-traefik.sh.
 info "Rendering configuration from template"
-sudo cat "${TEMPLATE_DIR}/jail.local" \
-  | sudo envsubst '${FAIL2BAN_SSHD_PORT} ${FAIL2BAN_MAXRETRY} ${FAIL2BAN_BANTIME} ${FAIL2BAN_FINDTIME} ${GENERATED_DATE}' \
-  | sudo tee "${JAIL_LOCAL}" > /dev/null
+_jail_tmp="$(mktemp)"
+# shellcheck disable=SC2016  # envsubst expects the literal variable list
+envsubst '${FAIL2BAN_SSHD_PORT} ${FAIL2BAN_MAXRETRY} ${FAIL2BAN_BANTIME} ${FAIL2BAN_FINDTIME} ${FAIL2BAN_BACKEND} ${FAIL2BAN_LOGPATH} ${GENERATED_DATE}' \
+  < "${TEMPLATE_DIR}/jail.local" > "${_jail_tmp}"
+
+# Guard against a blank render before it lands on disk.
+if grep -qE '^(port = ,|maxretry = $|bantime = $|findtime = $)' "${_jail_tmp}"; then
+  rm -f "${_jail_tmp}"
+  error "Rendered jail.local contains empty values — template substitution failed."
+fi
+
+sudo install -m 644 -o root -g root "${_jail_tmp}" "${JAIL_LOCAL}"
+rm -f "${_jail_tmp}"
 
 # Configuration written to /etc/fail2ban/jail.local above
 
@@ -207,14 +265,32 @@ success "fail2ban configured"
 # ---------------------------------------------------------------------------
 step "Verifying configuration"
 
-# Check jail status
-if sudo fail2ban-client status sshd &>/dev/null; then
-  success "SSHD jail is active"
-  info "Jail status:"
-  sudo fail2ban-client status sshd
-else
-  warn "Could not verify jail status"
+# The rendered file must contain the real values — a blank substitution must
+# never be reported as success.
+if ! grep -qE "^port = ${FAIL2BAN_SSHD_PORT},ssh$" "${JAIL_LOCAL}" 2>/dev/null; then
+  error "Rendered ${JAIL_LOCAL} does not contain 'port = ${FAIL2BAN_SSHD_PORT},ssh' — substitution or install failed"
 fi
+if grep -qE '^(port = ,|maxretry = $|bantime = $|findtime = $)' "${JAIL_LOCAL}"; then
+  error "Rendered ${JAIL_LOCAL} contains empty values"
+fi
+
+# Check jail status — give fail2ban a few seconds to bring the jail up, then
+# fail hard if it is not active (an unverifiable jail is no protection).
+_jail_ok=false
+for _ in 1 2 3 4 5 6; do
+  if sudo fail2ban-client status sshd >/dev/null 2>&1; then
+    _jail_ok=true
+    break
+  fi
+  sleep 2
+done
+if [[ "${_jail_ok}" != "true" ]]; then
+  sudo fail2ban-client status || true
+  sudo tail -n 40 /var/log/fail2ban.log || true
+  error "fail2ban sshd jail is not active — check backend (${FAIL2BAN_BACKEND}) and ${JAIL_LOCAL}"
+fi
+success "SSHD jail is active"
+sudo fail2ban-client status sshd
 
 # Display configuration summary
 echo ""
@@ -223,6 +299,7 @@ echo -e "${BOLD}  fail2ban Setup Complete${RESET}"
 echo -e "${BOLD}═══════════════════════════════════════════════════════════${RESET}"
 echo ""
 info "Configuration file: ${JAIL_LOCAL}"
+info "Log backend: ${FAIL2BAN_BACKEND} (logpath: ${FAIL2BAN_LOGPATH})"
 echo ""
 echo -e "${BOLD}Quick Commands:${RESET}"
 echo "  Status:          sudo fail2ban-client status"
