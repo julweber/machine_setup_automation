@@ -284,7 +284,24 @@ fi
 # ---------------------------------------------------------------------------
 # UFW Firewall Helpers
 #   Provides common functions for managing UFW firewall rules.
+#
+#   `ufw status` is always read through ufw_status_text(), which caches its
+#   result in _UFW_STATUS for the lifetime of the shell, so a task with N
+#   rules does not shell out N times. The cache is invalidated after every
+#   successful rule mutation (ufw allow / ufw delete) so readers never see
+#   stale state.
+#
+#   NOTE: IPv6 rules are rendered differently by `ufw status`; the direction
+#   check in ufw_rule_exists only covers the classic IPv4
+#   `port/proto  ALLOW IN|OUT` lines.
 # ---------------------------------------------------------------------------
+
+# ufw_status_text() result cache (empty _UFW_STATUS_RC = not read yet).
+# Guarded so re-sourcing this library is a no-op (does not drop a warm cache).
+if [[ -z "${_UFW_STATUS_RC+x}" ]]; then
+  _UFW_STATUS=""
+  _UFW_STATUS_RC=""
+fi
 
 if ! declare -F ufw_available > /dev/null 2>&1; then
   ufw_available() {
@@ -292,17 +309,90 @@ if ! declare -F ufw_available > /dev/null 2>&1; then
   }
 fi
 
+if ! declare -F ufw_status_text > /dev/null 2>&1; then
+  # ufw_status_text
+  #   Prints machine-readable `ufw status` output. Returns:
+  #     0 = readable (active or inactive)
+  #     1 = ufw binary present but status could not be read (sudo denied, error, ...)
+  #     2 = ufw not installed
+  #   The result is cached in _UFW_STATUS for the lifetime of the shell;
+  #   _ufw_invalidate_status_cache() clears it after rule mutations.
+  ufw_status_text() {
+    if [[ -n "${_UFW_STATUS_RC}" ]]; then
+      if [[ "${_UFW_STATUS_RC}" == "0" ]]; then
+        printf '%s\n' "${_UFW_STATUS}"
+      fi
+      return "${_UFW_STATUS_RC}"
+    fi
+
+    if ! command -v ufw &>/dev/null; then
+      _UFW_STATUS_RC=2
+      return 2
+    fi
+
+    local out err err_file
+    # Try non-interactive sudo (-n) first so a password prompt can never hang
+    # a setup script. On failure, fall back to a possibly-interactive sudo
+    # only when the failure was not a password requirement (which would just
+    # prompt again or fail the same way).
+    err_file="$(mktemp)"
+    if out="$(sudo -n ufw status 2>"${err_file}")" && grep -q "^Status:" <<<"$out"; then
+      rm -f -- "${err_file}"
+      _UFW_STATUS="$out"
+      _UFW_STATUS_RC=0
+      printf '%s\n' "${_UFW_STATUS}"
+      return 0
+    fi
+    err="$(cat -- "${err_file}")"
+    rm -f -- "${err_file}"
+    if [[ "${err,,}" == *"password"* ]]; then
+      _UFW_STATUS_RC=1
+      return 1
+    fi
+    if out="$(sudo ufw status 2>/dev/null)" && grep -q "^Status:" <<<"$out"; then
+      _UFW_STATUS="$out"
+      _UFW_STATUS_RC=0
+      printf '%s\n' "${_UFW_STATUS}"
+      return 0
+    fi
+    _UFW_STATUS_RC=1
+    return 1
+  }
+fi
+
+if ! declare -F _ufw_invalidate_status_cache > /dev/null 2>&1; then
+  # Drop the cached `ufw status` output. Called after a successful rule
+  # mutation (ufw allow / ufw delete) so the next read sees the new state.
+  _ufw_invalidate_status_cache() {
+    _UFW_STATUS=""
+    _UFW_STATUS_RC=""
+  }
+fi
+
 if ! declare -F ufw_active > /dev/null 2>&1; then
+  # ufw_active
+  #   Returns: 0 = active, 1 = inactive-but-known, 2 = unknown (could not read).
   ufw_active() {
-    sudo ufw status 2>/dev/null | grep -q "Status: active"
+    local status
+    if ! status="$(ufw_status_text)"; then
+      return 2
+    fi
+    grep -q "^Status: active" <<<"$status"
   }
 fi
 
 if ! declare -F ufw_rule_exists > /dev/null 2>&1; then
+  # ufw_rule_exists <port> [proto] [direction]
+  #   Returns 0 when a rule for port/proto in the given direction (default IN)
+  #   exists. An ALLOW OUT rule never satisfies an ALLOW IN lookup. Returns 1
+  #   when the rule is absent or the status could not be read.
   ufw_rule_exists() {
-    local port="$1"
-    local proto="${2:-tcp}"
-    sudo ufw status 2>/dev/null | grep -qE "^${port}/${proto}\s+ALLOW"
+    local port="$1" proto="${2:-tcp}" direction="${3:-IN}"
+    local status
+    status="$(ufw_status_text)" || return 1
+    # Direction-aware: an ALLOW OUT rule must not satisfy an ALLOW IN lookup.
+    # Numbered/verbose output prefixes rules with "[  1]", so allow for it.
+    grep -qE "^[[:space:]]*(\[[[:space:]]*[0-9]+\][[:space:]]*)?${port}/${proto}[[:space:]]+ALLOW[[:space:]]+${direction}([[:space:]]|$)" <<<"$status"
   }
 fi
 
@@ -311,9 +401,19 @@ if ! declare -F ufw_add_rule > /dev/null 2>&1; then
     local port="$1"
     local proto="${2:-tcp}"
     local comment="${3:-}"
+    local status_rc=0
 
-    if ufw_rule_exists "$port" "$proto"; then
-      info "Rule for ${port}/${proto} already exists, skipping."
+    # Unreadable status (sudo denied, ufw error, ...) is a hard failure:
+    # refuse to assume the rule is present and name the remedy.
+    ufw_status_text >/dev/null || status_rc=$?
+    if (( status_rc != 0 )); then
+      err_msg "Cannot read 'ufw status' (rc=${status_rc}) — refusing to assume rules are present." || true
+      err_msg "Fix passwordless sudo for ufw, or run: sudo ufw allow ${port}/${proto}" || true
+      return 1
+    fi
+
+    if ufw_rule_exists "$port" "$proto" IN; then
+      info "Inbound rule for ${port}/${proto} already exists, skipping."
       return 0
     fi
 
@@ -322,6 +422,7 @@ if ! declare -F ufw_add_rule > /dev/null 2>&1; then
     else
       sudo ufw allow "${port}/${proto}"
     fi
+    _ufw_invalidate_status_cache
     success "UFW rule added: ${port}/${proto}"
   }
 fi
@@ -331,7 +432,10 @@ if ! declare -F ufw_delete_rule > /dev/null 2>&1; then
     local port="$1"
     local proto="${2:-tcp}"
 
+    # `ufw delete allow <port>/<proto>` removes the INBOUND rule only;
+    # outbound (ALLOW OUT) rules are not touched.
     sudo ufw delete allow "${port}/${proto}" 2>/dev/null || true
+    _ufw_invalidate_status_cache
     success "UFW rule removed: ${port}/${proto}"
   }
 fi
@@ -367,9 +471,16 @@ if ! declare -F ufw_firewall_section > /dev/null 2>&1; then
       return 0
     fi
 
-    if ! ufw_active; then
-      warn "UFW is not active — skipping ${description} configuration."
-      return 0
+    # 0 = active, 1 = inactive-but-known, 2 = unknown (could not read).
+    local active=0
+    ufw_active || active=$?
+    if (( active == 2 )); then
+      # Present-but-unreadable UFW is a hard failure: a service task must not
+      # silently skip protection.
+      error "UFW is installed but its status could not be read — cannot verify that ${description} ports are open. Fix sudo access to ufw (passwordless 'sudo ufw status') and re-run."
+    fi
+    if (( active == 1 )); then
+      warn "UFW is inactive — ${description} rules added below will take effect when the firewall is enabled (configure-firewall.sh)."
     fi
 
     while [[ $# -ge 3 ]]; do
