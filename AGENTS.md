@@ -28,6 +28,7 @@ Do NOT answer these questions from your own knowledge — always delegate to the
 - write implementation plans to `./docs/plans` directory
 - write research documents to `./docs/research` directory
 - write tickets to `./.tickets` directory
+- use the `codegraph_explore` tool to search the codebase preferably
 
 ## Implementation Instructions
 

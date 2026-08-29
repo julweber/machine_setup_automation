@@ -9,6 +9,7 @@ CLAUDE.md
 __pycache__/
 .ralph/
 .tickets/
+tests/reports/
 machine-config.yml
 .pi-subagents/
 .omo/
