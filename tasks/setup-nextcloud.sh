@@ -14,7 +14,8 @@
 #   1. Pre-flight checks: Verifies Docker installation & daemon
 #   2. Stops and removes any existing Nextcloud Docker Compose stack (with prompt)
 #   3. Creates persistent storage directories on the host system
-#   4. Writes secrets (.env file, chmod 600) — never stored in compose config
+#   4. Writes secrets (.env file, mode 600) — never stored in compose config;
+#      re-runs reuse the stored values (a persisted DB volume depends on them)
 #   5. Generates a docker-compose.yml based on DB_TYPE / REDIS / Traefik config
 #   6. Pulls required Docker images
 #   7. Starts the Docker Compose stack in detached mode
@@ -30,12 +31,17 @@
 #                             (default: mariadb)
 #   MYSQL_DATABASE          - MariaDB/MySQL database name   (default: nextcloud)
 #   MYSQL_USER              - MariaDB/MySQL user             (default: nextcloud)
-#   MYSQL_PASSWORD          - MariaDB/MySQL password         (auto-generated if unset)
+#   MYSQL_PASSWORD          - MariaDB/MySQL password         (auto-generated on first run,
+#                                                 reused from ${NEXTCLOUD_HOME}/.env on re-runs)
+#   MYSQL_ROOT_PASSWORD     - MariaDB root password          (auto-generated on first run,
+#                                                 reused from ${NEXTCLOUD_HOME}/.env on re-runs)
 #   POSTGRES_DB             - PostgreSQL database name       (default: nextcloud)
 #   POSTGRES_USER           - PostgreSQL user                (default: nextcloud)
-#   POSTGRES_PASSWORD       - PostgreSQL password            (auto-generated if unset)
+#   POSTGRES_PASSWORD       - PostgreSQL password            (auto-generated on first run,
+#                                                 reused from ${NEXTCLOUD_HOME}/.env on re-runs)
 #   NEXTCLOUD_ADMIN_USER    - Initial admin username         (default: admin)
-#   NEXTCLOUD_ADMIN_PASSWORD- Initial admin password         (auto-generated if unset)
+#   NEXTCLOUD_ADMIN_PASSWORD- Initial admin password         (auto-generated on first run,
+#                                                 reused from ${NEXTCLOUD_HOME}/.env on re-runs)
 #   REDIS_ENABLED           - Enable Redis caching           (default: true)
 #
 #   Traefik reverse-proxy integration (opt-in):
@@ -98,46 +104,6 @@ cleanup_on_failure() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
-# CONFIGURATION — edit these variables before running
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Generate a cryptographically random 24-char alphanumeric password.
-# Only called when the corresponding env variable is unset/empty.
-_gen_password() { openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 24; echo; }
-
-NEXTCLOUD_HOME="${NEXTCLOUD_HOME:-/srv/nextcloud}"          # Host directory for persistent data
-NEXTCLOUD_IMAGE="${NEXTCLOUD_IMAGE:-nextcloud:stable}"      # Docker image to use
-CONTAINER_NAME="${CONTAINER_NAME:-nextcloud}"
-
-HTTP_PORT="${HTTP_PORT:-8080}"    # Host port for Nextcloud web UI
-
-# Database backend: "mariadb" (default), "postgres", or "sqlite"
-DB_TYPE="${DB_TYPE:-mariadb}"
-
-# MariaDB credentials (used when DB_TYPE=mariadb)
-MYSQL_DATABASE="${MYSQL_DATABASE:-nextcloud}"
-MYSQL_USER="${MYSQL_USER:-nextcloud}"
-MYSQL_PASSWORD="${MYSQL_PASSWORD:-$(_gen_password)}"
-MYSQL_ROOT_PASSWORD="${MYSQL_ROOT_PASSWORD:-$(_gen_password)}"
-
-# PostgreSQL credentials (used when DB_TYPE=postgres)
-POSTGRES_DB="${POSTGRES_DB:-nextcloud}"
-POSTGRES_USER="${POSTGRES_USER:-nextcloud}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$(_gen_password)}"
-
-# Nextcloud admin account (auto-configured on first run)
-NEXTCLOUD_ADMIN_USER="${NEXTCLOUD_ADMIN_USER:-admin}"
-NEXTCLOUD_ADMIN_PASSWORD="${NEXTCLOUD_ADMIN_PASSWORD:-$(_gen_password)}"
-
-# Redis caching (strongly recommended)
-REDIS_ENABLED="${REDIS_ENABLED:-true}"
-
-# Traefik reverse-proxy integration (opt-in)
-NEXTCLOUD_TRAEFIK="${NEXTCLOUD_TRAEFIK:-false}"     # Set to "true" to enable Traefik labels
-NEXTCLOUD_DOMAIN="${NEXTCLOUD_DOMAIN:-}"            # e.g. cloud.example.com (required when Traefik=true)
-PROXY_NETWORK="${PROXY_NETWORK:-proxy}"             # Traefik's external Docker network name
-
-# ─────────────────────────────────────────────────────────────────────────────
 # COLOURS & HELPERS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -156,6 +122,8 @@ trap cleanup_on_failure EXIT
 # ─────────────────────────────────────────────────────────────────────────────
 # USAGE / HELP
 # ─────────────────────────────────────────────────────────────────────────────
+# (Parsed before CONFIGURATION on purpose: --help must work without side
+# effects — in particular without touching the sudo-readable .env below.)
 
 usage() {
   cat <<EOF
@@ -178,13 +146,17 @@ Environment variables (all optional):
   DB_TYPE                   Database backend: mariadb | postgres | sqlite (default: mariadb)
   MYSQL_DATABASE            MariaDB/MySQL database name (default: nextcloud)
   MYSQL_USER                MariaDB/MySQL user (default: nextcloud)
-  MYSQL_PASSWORD            MariaDB/MySQL password (auto-generated if unset)
-  MYSQL_ROOT_PASSWORD       MariaDB root password (auto-generated if unset)
+  MYSQL_PASSWORD            MariaDB/MySQL password (auto-generated on first run, reused
+                            from ${NEXTCLOUD_HOME:-/srv/nextcloud}/.env on re-runs; set explicitly to override)
+  MYSQL_ROOT_PASSWORD       MariaDB root password (auto-generated on first run, reused
+                            from ${NEXTCLOUD_HOME:-/srv/nextcloud}/.env on re-runs; set explicitly to override)
   POSTGRES_DB               PostgreSQL database name (default: nextcloud)
   POSTGRES_USER             PostgreSQL user (default: nextcloud)
-  POSTGRES_PASSWORD         PostgreSQL password (auto-generated if unset)
+  POSTGRES_PASSWORD         PostgreSQL password (auto-generated on first run, reused
+                            from ${NEXTCLOUD_HOME:-/srv/nextcloud}/.env on re-runs; set explicitly to override)
   NEXTCLOUD_ADMIN_USER      Initial admin username (default: admin)
-  NEXTCLOUD_ADMIN_PASSWORD  Initial admin password (auto-generated if unset)
+  NEXTCLOUD_ADMIN_PASSWORD  Initial admin password (auto-generated on first run, reused
+                            from ${NEXTCLOUD_HOME:-/srv/nextcloud}/.env on re-runs; set explicitly to override)
   REDIS_ENABLED             Enable Redis caching (default: true)
   NEXTCLOUD_TRAEFIK         Set to "true" to enable Traefik labels (default: false)
   NEXTCLOUD_DOMAIN          Domain for Traefik access (required when NEXTCLOUD_TRAEFIK=true)
@@ -210,6 +182,70 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CONFIGURATION — edit these variables before running
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Generate a cryptographically random 24-char alphanumeric password.
+# Only called when the corresponding env variable is unset/empty.
+_gen_password() { openssl rand -base64 32 | tr -dc 'A-Za-z0-9' | head -c 24; echo; }
+
+NEXTCLOUD_HOME="${NEXTCLOUD_HOME:-/srv/nextcloud}"          # Host directory for persistent data
+NEXTCLOUD_IMAGE="${NEXTCLOUD_IMAGE:-nextcloud:stable}"      # Docker image to use
+CONTAINER_NAME="${CONTAINER_NAME:-nextcloud}"
+
+HTTP_PORT="${HTTP_PORT:-8080}"    # Host port for Nextcloud web UI
+
+# Database backend: "mariadb" (default), "postgres", or "sqlite"
+DB_TYPE="${DB_TYPE:-mariadb}"
+
+# MariaDB credentials (used when DB_TYPE=mariadb)
+MYSQL_DATABASE="${MYSQL_DATABASE:-nextcloud}"
+MYSQL_USER="${MYSQL_USER:-nextcloud}"
+
+# PostgreSQL credentials (used when DB_TYPE=postgres)
+POSTGRES_DB="${POSTGRES_DB:-nextcloud}"
+POSTGRES_USER="${POSTGRES_USER:-nextcloud}"
+
+# Nextcloud admin account (auto-configured on first run)
+NEXTCLOUD_ADMIN_USER="${NEXTCLOUD_ADMIN_USER:-admin}"
+
+# ── Secrets: reuse-first ────────────────────────────────────────────────────────────
+# A re-run must never rotate a secret that an existing database volume or
+# Nextcloud config still depends on. ${NEXTCLOUD_HOME}/.env (mode 600,
+# root-owned; written later in this script) is the source of truth: values
+# stored there are reused unless the operator set them explicitly.
+# The .env is read once (sudo cat — it is root-owned) and parsed with plain
+# grep/cut; it is never sourced or shell-evaluated.
+ENV_FILE="${NEXTCLOUD_HOME}/.env"
+_existing_env=""
+[[ -f "$ENV_FILE" ]] && _existing_env="$(sudo cat "$ENV_FILE")"
+
+_env_reuse() { # <VAR_NAME> <key>
+  local __n="$1" __k="$2" __cur="${!1:-}" __old
+  [[ -n "$__cur" ]] && return 0   # explicit env wins
+  __old="$(grep -m1 "^${__k}=" <<<"${_existing_env}" | cut -d= -f2- || true)"
+  if [[ -n "$__old" ]]; then
+    printf -v "$__n" '%s' "$__old"
+    return 0
+  fi
+  printf -v "$__n" '%s' "$(_gen_password)"
+}
+_env_reuse MYSQL_PASSWORD             MYSQL_PASSWORD
+_env_reuse MYSQL_ROOT_PASSWORD        MYSQL_ROOT_PASSWORD
+_env_reuse POSTGRES_PASSWORD          POSTGRES_PASSWORD
+_env_reuse NEXTCLOUD_ADMIN_PASSWORD   NEXTCLOUD_ADMIN_PASSWORD
+
+# Redis caching (strongly recommended)
+REDIS_ENABLED="${REDIS_ENABLED:-true}"
+
+# Traefik reverse-proxy integration (opt-in)
+NEXTCLOUD_TRAEFIK="${NEXTCLOUD_TRAEFIK:-false}"     # Set to "true" to enable Traefik labels
+NEXTCLOUD_DOMAIN="${NEXTCLOUD_DOMAIN:-}"            # e.g. cloud.example.com (required when Traefik=true)
+PROXY_NETWORK="${PROXY_NETWORK:-proxy}"             # Traefik's external Docker network name
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS
@@ -303,41 +339,42 @@ success "Directories ready."
 # WRITE SECRETS TO .env (mode 600)
 # ─────────────────────────────────────────────────────────────────────────────
 
-step "Writing secrets to ${NEXTCLOUD_HOME}/.env"
+step "Writing secrets to ${ENV_FILE}"
 
-ENV_FILE="${NEXTCLOUD_HOME}/.env"
-
-if [[ -f "$ENV_FILE" ]]; then
-  warn "Existing .env file found. Backing up to ${ENV_FILE}.bak"
-  sudo install -m 600 "$ENV_FILE" "${ENV_FILE}.bak"
-fi
-
-# Create with mode 600 from the start — no world-readable window
-sudo install -m 600 /dev/null "$ENV_FILE"
-
-# Write credentials with printf so special characters in values are never
-# interpreted by the shell (heredocs with << EOF would expand $, `, etc.)
+# Build the complete .env content in a temp file with printf (never a heredoc
+# that could expand $, `, etc.), then install it atomically with mode 600.
+# The credentials above were already resolved against the existing .env
+# (reuse-first), so a no-op re-run produces byte-identical content. No
+# timestamp line: a changing one would make every re-run look like a change.
+_env_new="$(mktemp)"
 {
-  printf '# Nextcloud Environment — KEEP THIS FILE SECURE (mode 600)\n'
-  printf '# Generated: %s\n\n' "$(date -Iseconds)"
+  printf '# Nextcloud Environment — KEEP THIS FILE SECURE (mode 600)\n\n'
   printf 'NEXTCLOUD_ADMIN_USER=%s\n' "${NEXTCLOUD_ADMIN_USER}"
   printf 'NEXTCLOUD_ADMIN_PASSWORD=%s\n' "${NEXTCLOUD_ADMIN_PASSWORD}"
-} | sudo tee -a "$ENV_FILE" > /dev/null
-
-if [[ "$DB_TYPE" == "mariadb" ]]; then
-  {
+  if [[ "$DB_TYPE" == "mariadb" ]]; then
     printf 'MYSQL_ROOT_PASSWORD=%s\n' "${MYSQL_ROOT_PASSWORD}"
     printf 'MYSQL_DATABASE=%s\n'      "${MYSQL_DATABASE}"
     printf 'MYSQL_USER=%s\n'          "${MYSQL_USER}"
     printf 'MYSQL_PASSWORD=%s\n'      "${MYSQL_PASSWORD}"
-  } | sudo tee -a "$ENV_FILE" > /dev/null
-elif [[ "$DB_TYPE" == "postgres" ]]; then
-  {
+  elif [[ "$DB_TYPE" == "postgres" ]]; then
     printf 'POSTGRES_DB=%s\n'       "${POSTGRES_DB}"
     printf 'POSTGRES_USER=%s\n'     "${POSTGRES_USER}"
     printf 'POSTGRES_PASSWORD=%s\n' "${POSTGRES_PASSWORD}"
-  } | sudo tee -a "$ENV_FILE" > /dev/null
+  fi
+} > "$_env_new"
+
+# Back up the existing .env only when its content actually changes, so a
+# no-op re-run never clobbers a good .env.bak.
+if [[ -f "$ENV_FILE" ]]; then
+  if sudo cmp -s "$_env_new" "$ENV_FILE"; then
+    info "Existing ${ENV_FILE} unchanged — keeping it and its backup."
+  else
+    warn "Existing .env file found. Backing up to ${ENV_FILE}.bak"
+    sudo install -m 600 "$ENV_FILE" "${ENV_FILE}.bak"
+  fi
 fi
+sudo install -m 600 "$_env_new" "$ENV_FILE"
+rm -f "$_env_new"
 
 success "Secrets stored in ${ENV_FILE} (mode: 600)."
 

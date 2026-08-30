@@ -266,6 +266,43 @@ if ! declare -F mktempfile > /dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# Secret env-file helpers
+#
+# Repo secret pattern (see AGENTS.md, "Secrets and templating"): secrets live
+# in /srv/<service>/.env (mode 600); rendered files keep ${VAR} literal and
+# resolve it at runtime (e.g. docker compose --env-file). These helpers read
+# and write such files. Never `source` an env file — it may contain
+# operator-edited values.
+# ---------------------------------------------------------------------------
+
+# env_file_get <file> <KEY>
+#   Prints the value of KEY=<value> from an env file (last occurrence wins),
+#   or nothing. Values are read literally — no shell evaluation.
+#   Returns 1 if the file does not exist, 0 otherwise (also when KEY is absent).
+if ! declare -F env_file_get > /dev/null 2>&1; then
+  env_file_get() {
+    local file="$1" key="$2"
+    [[ -f "$file" ]] || return 1
+    sed -n "s/^[[:space:]]*${key}=//p" "$file" | tail -n1
+  }
+fi
+
+# env_file_write <file>   (content on stdin)
+#   Installs stdin as <file> with mode 600 (mktemp + install), owned by the
+#   invoking user. Falls back to a root-owned file when the invoking user
+#   cannot install there directly (needs sudo).
+if ! declare -F env_file_write > /dev/null 2>&1; then
+  env_file_write() {
+    local file="$1" tmp
+    tmp="$(mktemp)"
+    cat > "$tmp"
+    install -m 600 -o "$(id -un)" -g "$(id -gn)" "$tmp" "$file" 2>/dev/null \
+      || { sudo install -m 600 -o root -g root "$tmp" "$file"; }
+    rm -f "$tmp"
+  }
+fi
+
+# ---------------------------------------------------------------------------
 # is_apt_package_installed
 #   Returns 0 if the given dpkg package is actually installed (status DB
 #   reports 'installed'), 1 otherwise.

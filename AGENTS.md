@@ -74,3 +74,21 @@ When modifying scripts: always ensure to keep the `--help` parameter output up t
 #### Templating
 
 If you need to use templating (e.g. for creating configuration files) you require to put template files in the according `templates/<component-name>` directory. DO NOT put inline templates into the bash scripts except this is explicitly required.
+
+#### Secrets and templating
+
+- Secrets (passwords, keys, tokens, URLs containing credentials) are **never**
+  substituted into a generated file. Keep `${VAR}` literal in
+  `templates/<component>/*` and resolve at runtime from
+  `/srv/<service>/.env` (mode 600) via `docker compose --env-file` or
+  `env_file:` in the service section.
+- Non-secret layout values (ports, paths, host names, network names) may be
+  `envsubst`ed at render time.
+- Every secret must be **read back** from the service `.env` before generating
+  a new value, so re-runs never rotate credentials a persisted volume depends
+  on (see `setup-monitoring.sh` / `setup-concourse.sh`).
+- `envsubst` reads its **environment**; render as the invoking user into a
+  `mktemp` file and install with `sudo install -m 600` (see
+  `setup-traefik.sh`), never `sudo envsubst`.
+- Shared env-file primitives: `lib/helpers.sh` (`env_file_get`,
+  `env_file_write`).

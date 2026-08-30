@@ -286,3 +286,57 @@
 - `systemd-run` unit name collisions on a re-arm are impossible by design (non-first enables skip arming); if the timer unit somehow existed already, `systemd-run` fails and the script warns ("verify access before leaving this session") instead of failing the run.
 - The `setup-docker` integration flake is tracked here as a known environmental artifact, not fixed in this ticket (out of scope).
 - Ticket's `**Status**: open` field left untouched, consistent with how tickets 01–03 were closed.
+
+## 2026-08-30T05:33:34+02:00 - worker (ticket 05)
+
+### Implemented: Planka secret lifecycle — `.env` (600) with reuse-first re-runs, secrets out of compose; Nextcloud read-before-write (ticket `05-planka-secrets-env-file`)
+
+- [x] `lib/helpers.sh` — new shared secret env-file primitives, both `declare -F`-guarded: `env_file_get <file> <KEY>` (prints the value, last occurrence wins, read literally, returns 1 on missing file) and `env_file_write <file>` (stdin installed with mode 600, mktemp + install, owner = invoking user with root fallback). Section header documents the repo secret pattern and the "never `source` an env file" rule.
+- [x] `tasks/setup-planka.sh` — Planka now implements the repo secret pattern (both halves H-4 was missing):
+  - **Reuse-first secret block** (before the existing-stack check, so reuse/drift-check run even when the script exits early): reads `SECRET_KEY`/`POSTGRES_PASSWORD` from `${PLANKA_HOME}/.env` via `env_file_get`, generates only what is missing (`openssl rand -hex 64` / `-hex 24`).
+  - **The "empty = trust auth" dev default is gone**: a `POSTGRES_PASSWORD` is now always stored and `PG_AUTH_METHOD=md5` always set (safe for existing trust-mode installs — trust accepts any password — per the ticket's recorded decision). Noted in `--help` and header.
+  - **Drift guard (review fix 3)**: if `POSTGRES_PASSWORD` was supplied via the environment *and* differs from the stored value *and* `${PLANKA_HOME}/postgres` is non-empty → non-zero exit with an `ALTER USER` instruction instead of a silently broken stack. `POSTGRES_PASSWORD_SUPPLIED` is captured before any `.env` reuse.
+  - **`.env` write (mode 600)**: `printf`-built (no heredoc), back up to `.env.bak` only on actual content change (`cmp -s`), installed via `sudo install -m 600 -o "$(id -un)" -g "$(id -gn)"`. `DATABASE_URL` is derived once and lives only in the `.env`.
+  - **Compose file holds no secret values**: `envsubst` lists reduced to layout values only (`PLANKA_IMAGE`, `CONTAINER_NAME`, `PLANKA_HOME`, `BASE_URL`, `HTTP_PORT`, `_planka_lan_suffix`, `PROXY_NETWORK`, `PLANKA_DOMAIN`, `POSTGRES_DB`, `POSTGRES_USER`); `SECRET_KEY`/`POSTGRES_PASSWORD`/`DATABASE_URL`/`PG_AUTH_METHOD`/`ADMIN_EMAIL` are no longer substituted and stay `${VAR}`-literal, resolved at runtime from the `.env`.
+  - **Every compose invocation carries `--env-file "$ENV_FILE"`** (14/14 lines: teardown `down`, `pull`, `up -d`, admin `run`, and all warn/summary hint strings — verified by grep).
+- [x] `templates/planka/docker-compose*.yml` (4 files) — all four variants now carry the full postgres block (`POSTGRES_DB`/`POSTGRES_USER`/`POSTGRES_HOST_AUTH_METHOD`/`POSTGRES_PASSWORD`, all `${...}`-literal). The `.password` variants are now content-identical to the base ones and are **not** deleted (ticket 19 consolidates); they carry a `# NOTE: SUPERSEDED … ticket 19` header. Selection logic left as-is (always picks `.password` now that a password is always set).
+- [x] `tasks/setup-nextcloud.sh` — read-before-write (Part B of H-4):
+  - The four `VAR="${VAR:-$(_gen_password)}"` lines are replaced by reuse-first `_env_reuse` (explicit env wins → value from the existing `${NEXTCLOUD_HOME}/.env` → fresh `openssl rand`), applied to `MYSQL_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `POSTGRES_PASSWORD`, `NEXTCLOUD_ADMIN_PASSWORD`. The root-owned `.env` is read once via `sudo cat` and parsed with plain `grep -m1`/`cut` (never sourced) — the ticket's "second form", since this script only conditionally sources `lib/helpers.sh`.
+  - `.env` write rewritten: complete content built in a `mktemp` with `printf`, `sudo cmp -s` against the existing file, `.env.bak` only on actual content change (a no-op re-run no longer clobbers a good backup), atomic `sudo install -m 600`.
+  - `--help` + header updated for the four variables: "auto-generated on first run, reused from <path>/.env on re-runs; set explicitly to override".
+- [x] `AGENTS.md` — new **bash Script Specifications → Secrets and templating** section with the ticket's four-bullet rule (secrets never substituted / layout values may be envsubsted / secrets read back before regeneration / render unprivileged into mktemp + `sudo install`, never `sudo envsubst`) plus a pointer to the new helpers.
+- [x] `specification/project/conventions.md` — new **Secrets and templating** section cross-referencing the rule and pointing to `AGENTS.md` and `lib/helpers.sh`.
+
+### Deviations from the ticket's reference implementation (documented in code + ticket file)
+- **Planka `.env` owned by the invoking user, mode 600** (not `root:root`, per the ticket's anticipated fallback): `docker compose --env-file` runs as the invoking user and cannot read a root-owned 600 file — the reference's ownership would fail every compose call on a uid-1000 install.
+- **No `# Generated:` timestamp line in either `.env`**: the ticket's own acceptance criterion (sha256-identical `.env` across re-runs) is impossible with a per-run timestamp; the backup-on-change `cmp` relies on deterministic content. Nextcloud's first new-script run against an old `.env` (which has the line) does a one-time backup + rewrite, then is stable.
+- **Planka writes the `.env` before the existing-stack check** (with a `sudo mkdir -p` guard): required so the teardown `down` can also carry `--env-file` — on a pre-ticket install no `.env` exists yet at that point and `--env-file <missing>` is a hard error. Side effect: pre-ticket installs gain their `.env` even on a run that then exits at the stack check (safe: trust-mode clusters accept any password).
+- **Drift-guard condition fixed**: the reference's `[[ -n "${POSTGRES_PASSWORD_SUPPLIED:-}" ]]` is always true once the variable is pre-initialised to `0` ("0" is non-empty) — verified live (no-supply re-run against a populated cluster was refused). Now `[[ "${POSTGRES_PASSWORD_SUPPLIED}" == "1" ]]`.
+- **Drift error uses the static container name** (`${CONTAINER_NAME}-postgres`) instead of a live `docker compose ps -q` lookup embedded in the error text (the stack may be down there).
+- **Nextcloud: `COLOURS & HELPERS` + `USAGE`/arg-parsing moved above `CONFIGURATION`**: with the ticket's placement, `--help` on an installed machine ran `sudo cat` before argument parsing and exited non-zero without printing help when sudo needs a password/TTY (verified live). The reuse-first block itself is unchanged; help text uses `${NEXTCLOUD_HOME:-/srv/nextcloud}` since the var is unset that early.
+
+### Validation
+- [x] `shellcheck lib/helpers.sh tasks/setup-planka.sh tasks/setup-nextcloud.sh` exit 0; `bash -n` clean on all three
+- [x] `yamllint -c templates/.yamllint templates/planka/` exit 0 (only the pre-existing `document-start` warnings, repo convention for templates)
+- [x] `env_file_get` unit tests: basic/last-occurrence/`=`-in-value/absent-key/missing-file (rc 1)/whitespace-prefixed — all pass; `env_file_write`: mode 600, owner = invoking user, content intact
+- [x] Planka two-phase stub run (docker/curl/sudo stubbed, `PLANKA_HOME=/tmp/planka-home`):
+  - fresh run → `.env` mode 600 with all six keys; rendered compose: `SECRET_KEY`/`POSTGRES_PASSWORD`/`DATABASE_URL` occur **only** as `${VAR}` literals, zero leaked values (direct mode and Traefik mode both verified; Traefik layout values `Host(planka.test)`/`network=proxy` substituted correctly)
+  - re-run (`--interactive`, answer y) → `sha256sum` of `.env` **identical** before/after, no `.env.bak` created, reaches "Planka is up and responding!", rc=0
+  - deliberate `POSTGRES_PASSWORD=other` + populated `postgres/` dir → **rc=1** with the `ALTER USER` instruction, `.env` not touched, failure happens before the write step
+  - no-supply re-run against a populated cluster → no false drift positive (this is the case that exposed the reference's `-n`/`0` guard bug)
+  - pre-ticket install (compose exists, no `.env`) → `.env` created before teardown, full run rc=0, subsequent re-run stable
+  - `grep -n 'docker compose' tasks/setup-planka.sh` → all 14 lines carry `--env-file`
+- [x] Nextcloud stub runs (`NEXTCLOUD_HOME=/tmp/nc-home`, mariadb + postgres paths):
+  - fresh → `.env` mode 600, compose contains only `${VAR}` literals (2× `POSTGRES_PASSWORD=${POSTGRES_PASSWORD}` in the postgres variant)
+  - no-op re-run → `.env` byte-identical, **no `.env.bak`**, rc=0
+  - explicit `NEXTCLOUD_ADMIN_PASSWORD` override → override wins, `.env.bak` created holding the pre-change content
+  - no-op after the change → `.env` and `.env.bak` both unchanged
+- [x] `--help` of both scripts exits 0 and describes reuse behaviour + new defaults; Nextcloud `--help` verified in a non-TTY with a real root-owned `/srv/nextcloud/.env` present (no sudo involvement, rc=0 — the regression the restructure fixes)
+- [x] Ticket file `.tickets/improvements-2/05-*.md` updated with an "Implementation notes (worker)" section recording the deviations
+- [x] Two-phase *live* VM run (`tests/run-vm-tests.sh --scripts setup-docker,setup-traefik,setup-planka --keep-vm`): **not executed** — Planka/Nextcloud are not enabled in `tests/machine-config.test.yml` and standing up a fresh VM for this ticket was out of capacity for this pass; the stub-based two-phase runs above cover the same code paths. Flagged for the branch's final validation.
+
+### Notes / assumptions
+- The duplicate `success "Directories ready."` print in `tasks/setup-planka.sh` (pre-existing) was left untouched per surgical-change discipline — candidate for a trivial follow-up.
+- The dev box has an actual pre-ticket Planka install at `/srv/planka` (trust-mode, Aug 23). One exploratory test run initially wrote its `.env` there by accident (a test-harness mistake, not a script bug); the file was removed and `/srv/planka` verified back to its exact pre-test state. Its old world-readable compose (inlined `SECRET_KEY`/`DATABASE_URL`) is replaced by the new script on the next real run — that is the ticket's migration path.
+- `env_file_get` on an existing-but-unreadable `.env` would yield empty values (sed failure swallowed by the pipeline) → regeneration. Unreachable in the supported cases (the file is always owned by the invoking user / root-readable), accepted as per the ticket's reference behaviour.
+- Ticket's `**Status**: open` field left untouched, consistent with how tickets 01–04 were closed.

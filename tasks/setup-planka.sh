@@ -6,6 +6,8 @@
 #
 # Description:
 #   Deploys Planka, a self-hosted Kanban board, using Docker Compose.
+#   Secrets are stored in PLANKA_HOME/.env (mode 600) and reused on re-runs;
+#   the generated docker-compose.yml contains no secret values.
 #
 # Usage:
 #   ./setup-planka.sh                 # install with defaults
@@ -62,7 +64,9 @@ ${BOLD}Environment variables${RESET} (all optional):
     PLANKA_EXTRA_ORIGINS    Extra comma-separated origins to allow, e.g.
                             http://evobox:1337,http://100.64.0.2:1337
     HTTP_PORT               Host port (default: 1337, ignored when PLANKA_TRAEFIK=true)
-    SECRET_KEY              App secret (auto-generated if empty)
+    SECRET_KEY              App secret (auto-generated on first run, then reused
+                            from PLANKA_HOME/.env on re-runs; set explicitly
+                            to override)
 
   Traefik reverse-proxy integration (opt-in):
     PLANKA_TRAEFIK          Set to "true" to enable Traefik routing (default: false)
@@ -72,7 +76,14 @@ ${BOLD}Environment variables${RESET} (all optional):
   PostgreSQL:
     POSTGRES_DB             Database name (default: planka)
     POSTGRES_USER           Database user (default: postgres)
-    POSTGRES_PASSWORD       Database password (default: empty = trust auth, dev only)
+    POSTGRES_PASSWORD       Database password (auto-generated on first run,
+                            then reused from PLANKA_HOME/.env on re-runs; set
+                            explicitly to override). The former "empty = trust
+                            auth" dev mode is gone — a password is always
+                            stored (md5 auth). Supplying a different value
+                            while PLANKA_HOME/postgres already holds data is
+                            refused (the cluster keeps its old password);
+                            change it inside the DB instead.
 
   Admin user:
     ADMIN_EMAIL             Create admin user non-interactively
@@ -82,6 +93,11 @@ ${BOLD}Environment variables${RESET} (all optional):
     ADMIN_PASSWORD          Admin password
     ADMIN_NAME              Admin display name (default: Admin)
     ADMIN_USERNAME          Admin username (optional, forwarded to Planka)
+
+  Secrets:
+    All secrets are stored in PLANKA_HOME/.env (mode 600) and reused on every
+    re-run. The generated docker-compose.yml contains no secret values — only
+    literal \${VAR} placeholders resolved at runtime via --env-file.
 
 ${BOLD}Examples:${RESET}
   $0
@@ -132,9 +148,13 @@ PROXY_NETWORK="${PROXY_NETWORK:-proxy}"
 # PostgreSQL settings
 POSTGRES_DB="${POSTGRES_DB:-planka}"
 POSTGRES_USER="${POSTGRES_USER:-postgres}"
-POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"          # Leave empty to use trust auth (dev only)
+# Database password — auto-generated on first run, then reused from
+# ${PLANKA_HOME}/.env on every re-run. The former "empty = trust auth" dev
+# mode is gone: a password is always stored (md5 auth).
+POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-}"
 
-# Application secret key — generated automatically if left empty
+# Application secret key — auto-generated on first run, then reused from
+# ${PLANKA_HOME}/.env on every re-run
 SECRET_KEY="${SECRET_KEY:-}"
 
 # Admin user (optional — leave ADMIN_EMAIL empty to be prompted after startup)
@@ -266,17 +286,82 @@ success "BASE_URL: ${BASE_URL}"
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# GENERATE SECRET KEY (if not provided)
+# SECRETS — REUSE, GENERATE, PERSIST (.env, mode 600)
 # ─────────────────────────────────────────────────────────────────────────────
+#
+# ${PLANKA_HOME}/.env is the source of truth for SECRET_KEY and
+# POSTGRES_PASSWORD: a re-run must reuse the stored values, because the
+# Postgres cluster (data dir ${PLANKA_HOME}/postgres) honours the password it
+# was initialised with and the app's sessions are tied to SECRET_KEY.
+# The compose file never contains secret values — only ${VAR} references,
+# resolved at runtime from this .env via --env-file.
+#
+# This happens BEFORE the existing-stack check below on purpose: reuse and
+# the drift check must run even when the script exits early there.
 
-step "Preparing SECRET_KEY"
+ENV_FILE="${PLANKA_HOME}/.env"
+COMPOSE_FILE="${PLANKA_HOME}/docker-compose.yml"
 
-if [[ -z "$SECRET_KEY" ]]; then
-  SECRET_KEY="$(openssl rand -hex 64)"
-  info "Generated new SECRET_KEY."
-else
-  info "Using provided SECRET_KEY."
+# Capture whether the operator supplied POSTGRES_PASSWORD via the environment
+# on THIS run, before any .env reuse can answer the question (drift check).
+POSTGRES_PASSWORD_SUPPLIED=0
+[[ -n "${POSTGRES_PASSWORD:-}" ]] && POSTGRES_PASSWORD_SUPPLIED=1
+
+step "Reusing existing secrets where present"
+
+_stored_pg_pw=""
+if [[ -f "$ENV_FILE" ]]; then
+  info "Found ${ENV_FILE} — reusing stored secrets."
+  SECRET_KEY="${SECRET_KEY:-$(env_file_get "$ENV_FILE" SECRET_KEY)}"
+  _stored_pg_pw="$(env_file_get "$ENV_FILE" POSTGRES_PASSWORD)"
+  POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-$_stored_pg_pw}"
 fi
+
+[[ -n "$SECRET_KEY" ]] || { SECRET_KEY="$(openssl rand -hex 64)"; info "Generated a new SECRET_KEY."; }
+[[ -n "$POSTGRES_PASSWORD" ]] || { POSTGRES_PASSWORD="$(openssl rand -hex 24)"; info "Generated a new POSTGRES_PASSWORD."; }
+
+# A deliberately changed password against a populated cluster would leave the
+# stack broken: the postgres image honours POSTGRES_PASSWORD only while its
+# data dir is empty. Fail with instructions instead of silently producing a
+# broken stack.
+if [[ "${POSTGRES_PASSWORD_SUPPLIED}" == "1" && "${POSTGRES_PASSWORD}" != "${_stored_pg_pw}" \
+      && -n "$(ls -A "${PLANKA_HOME}/postgres" 2>/dev/null)" ]]; then
+  error "POSTGRES_PASSWORD was supplied but differs from the password of the existing cluster in ${PLANKA_HOME}/postgres. The cluster keeps its old password, so the stack would come up broken. Change the password inside the DB instead:
+    docker exec -it ${CONTAINER_NAME}-postgres psql -U ${POSTGRES_USER} -c \"ALTER USER ${POSTGRES_USER} PASSWORD '<new-password>'\"
+  then update POSTGRES_PASSWORD and DATABASE_URL in ${ENV_FILE} and re-run."
+fi
+
+# DATABASE_URL is derived once and lives only in the .env (never in compose).
+DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}"
+PG_AUTH_METHOD="md5"
+
+step "Writing ${ENV_FILE} (mode 600)"
+#
+# Written with printf (never a heredoc that could expand values). Owned by the
+# invoking user, mode 600 — NOT root:root, because docker compose --env-file
+# runs as the invoking user and cannot read a root-owned 600 file. No
+# timestamp line: a no-op re-run must produce byte-identical content so the
+# backup check below (and operators comparing checksums) see a stable file.
+_env_new="$(mktemp)"
+{
+  printf '# Planka secrets — KEEP SECURE (mode 600). Re-runs reuse these values.\n'
+  printf 'SECRET_KEY=%s\n'        "${SECRET_KEY}"
+  printf 'POSTGRES_DB=%s\n'       "${POSTGRES_DB}"
+  printf 'POSTGRES_USER=%s\n'     "${POSTGRES_USER}"
+  printf 'POSTGRES_PASSWORD=%s\n' "${POSTGRES_PASSWORD}"
+  printf 'DATABASE_URL=%s\n'      "${DATABASE_URL}"
+  printf 'PG_AUTH_METHOD=%s\n'    "${PG_AUTH_METHOD}"
+} > "$_env_new"
+# Parent dir must exist for the install (fresh machines create it here; the
+# storage subdirectories are created by the next section).
+sudo mkdir -p "${PLANKA_HOME}"
+# Back up only on an actual content change, so a no-op re-run never clobbers a good .env.bak
+if [[ -f "$ENV_FILE" ]] && ! sudo cmp -s "$_env_new" "$ENV_FILE"; then
+  sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" "$ENV_FILE" "${ENV_FILE}.bak"
+fi
+sudo install -m 600 -o "$(id -un)" -g "$(id -gn)" "$_env_new" "$ENV_FILE"
+rm -f "$_env_new"
+success "Secrets stored in ${ENV_FILE} (mode 600, owner: $(id -un))."
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -285,15 +370,13 @@ fi
 
 step "Checking for an existing Planka compose stack"
 
-COMPOSE_FILE="${PLANKA_HOME}/docker-compose.yml"
-
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
   if [[ "$INTERACTIVE" == "true" ]]; then
     read -rp "    Tear down existing stack and re-create? Data in ${PLANKA_HOME}/data will be preserved. [y/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
       info "Stopping and removing existing stack..."
-      docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+      docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down 2>/dev/null || true
       success "Old stack removed."
     else
       info "Keeping existing stack. Exiting."
@@ -326,20 +409,6 @@ success "Directories ready."
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# BUILD DATABASE URL
-# ─────────────────────────────────────────────────────────────────────────────
-
-if [[ -n "$POSTGRES_PASSWORD" ]]; then
-  DATABASE_URL="postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}"
-  PG_AUTH_METHOD="md5"
-else
-  # Trust auth — no password required (suitable for dev/local setups)
-  DATABASE_URL="postgresql://${POSTGRES_USER}@postgres/${POSTGRES_DB}"
-  PG_AUTH_METHOD="trust"
-fi
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # GENERATE DOCKER COMPOSE FILE
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -349,8 +418,10 @@ step "Generating ${COMPOSE_FILE}"
 TEMPLATE_DIR="${SCRIPT_DIR}/../templates/planka"
 command -v envsubst || error "envsubst not installed — install with: sudo apt-get install gettext-base"
 
-# Select compose variant: deployment mode x postgres password presence
-# (the .password variants add the POSTGRES_PASSWORD line for md5 auth)
+# Select compose variant: deployment mode x postgres password presence.
+# A POSTGRES_PASSWORD is now always set (md5 auth, value in ${ENV_FILE}), so
+# the .password variants — content-identical to the base ones and marked
+# superseded there — are always selected. Variant consolidation is ticket 19.
 if [[ "$PLANKA_TRAEFIK" == "true" ]]; then
   _planka_mode="traefik"
 else
@@ -366,18 +437,21 @@ TEMPLATE_FILE="${TEMPLATE_DIR}/docker-compose.${_planka_mode}${_planka_pw}.yml"
 # LAN hint suffix for the ports comment (empty when no LAN IP is set)
 _planka_lan_suffix="${LAN_IP:+, http://${LAN_IP}:${HTTP_PORT}}"
 
-# Export variables for envsubst (explicit list, never bare envsubst)
-export PLANKA_IMAGE CONTAINER_NAME PLANKA_HOME BASE_URL DATABASE_URL SECRET_KEY \
-  POSTGRES_DB POSTGRES_USER PG_AUTH_METHOD POSTGRES_PASSWORD ADMIN_EMAIL
+# Export variables for envsubst (explicit list, never bare envsubst).
+# Layout values ONLY — secrets (SECRET_KEY, POSTGRES_PASSWORD, DATABASE_URL,
+# PG_AUTH_METHOD) are never substituted: they stay ${VAR}-literal in the
+# rendered file and are resolved at runtime from ${ENV_FILE} via --env-file.
+export PLANKA_IMAGE CONTAINER_NAME PLANKA_HOME BASE_URL \
+  POSTGRES_DB POSTGRES_USER
 if [[ "$PLANKA_TRAEFIK" == "true" ]]; then
   export PROXY_NETWORK PLANKA_DOMAIN
   # shellcheck disable=SC2016  # envsubst expects the literal variable list
-  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${PLANKA_HOME} ${BASE_URL} ${DATABASE_URL} ${SECRET_KEY} ${PROXY_NETWORK} ${PLANKA_DOMAIN} ${POSTGRES_DB} ${POSTGRES_USER} ${PG_AUTH_METHOD} ${POSTGRES_PASSWORD} ${ADMIN_EMAIL}' \
+  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${PLANKA_HOME} ${BASE_URL} ${PROXY_NETWORK} ${PLANKA_DOMAIN} ${POSTGRES_DB} ${POSTGRES_USER}' \
     < "${TEMPLATE_FILE}" > "$COMPOSE_FILE"
 else
   export HTTP_PORT _planka_lan_suffix
   # shellcheck disable=SC2016  # envsubst expects the literal variable list
-  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${HTTP_PORT} ${_planka_lan_suffix} ${PLANKA_HOME} ${BASE_URL} ${DATABASE_URL} ${SECRET_KEY} ${ADMIN_EMAIL} ${POSTGRES_DB} ${POSTGRES_USER} ${PG_AUTH_METHOD} ${POSTGRES_PASSWORD}' \
+  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${HTTP_PORT} ${_planka_lan_suffix} ${PLANKA_HOME} ${BASE_URL} ${POSTGRES_DB} ${POSTGRES_USER}' \
     < "${TEMPLATE_FILE}" > "$COMPOSE_FILE"
 fi
 
@@ -389,7 +463,7 @@ success "docker-compose.yml written to ${COMPOSE_FILE}"
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Pulling Docker images"
-docker compose -f "$COMPOSE_FILE" pull
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" pull
 success "Images pulled."
 
 
@@ -398,7 +472,7 @@ success "Images pulled."
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Starting Planka stack (detached)"
-docker compose -f "$COMPOSE_FILE" up -d
+docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
 success "Stack started."
 
 
@@ -432,12 +506,12 @@ else
   if [[ "$PLANKA_TRAEFIK" == "true" ]]; then
     warn "Planka did not respond within ${MAX_WAIT}s."
     warn "It may still be starting, or DNS/TLS may need time to propagate."
-    warn "  Check container: docker compose -f ${COMPOSE_FILE} logs -f"
+    warn "  Check container: docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} logs -f"
     warn "  Check Traefik:  docker logs traefik | grep ${PLANKA_DOMAIN}"
   else
     warn "Planka did not respond within ${MAX_WAIT}s."
     warn "It may still be starting. Check logs with:"
-    warn "  docker compose -f ${COMPOSE_FILE} logs -f"
+    warn "  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} logs -f"
   fi
 fi
 
@@ -450,7 +524,7 @@ step "Creating admin user"
 
 if [[ -n "$ADMIN_EMAIL" && -n "$ADMIN_PASSWORD" ]]; then
   info "Creating admin user non-interactively (${ADMIN_EMAIL})..."
-  if docker compose -f "$COMPOSE_FILE" run --rm planka \
+  if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run --rm planka \
     npm run db:create-admin-user -- \
       --email "${ADMIN_EMAIL}" \
       --password "${ADMIN_PASSWORD}" \
@@ -468,12 +542,12 @@ else
     info "No ADMIN_EMAIL/ADMIN_PASSWORD provided — create the admin user later:"
   fi
   echo ""
-  echo -e "  ${BOLD}docker compose -f ${COMPOSE_FILE} run --rm planka npm run db:create-admin-user${RESET}"
+  echo -e "  ${BOLD}docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} run --rm planka npm run db:create-admin-user${RESET}"
   echo ""
   if [[ "$INTERACTIVE" == "true" ]]; then
     read -rp "    Create admin user interactively now? [Y/n] " _create
     if [[ "${_create,,}" != "n" ]]; then
-      if docker compose -f "$COMPOSE_FILE" run --rm planka npm run db:create-admin-user
+      if docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" run --rm planka npm run db:create-admin-user
       then
         success "Admin user created."
       else
@@ -516,12 +590,12 @@ if [[ -n "$ADMIN_EMAIL" ]]; then
   echo ""
 fi
 echo -e "${BOLD}Useful commands:${RESET}"
-echo -e "  Follow logs        :  docker compose -f ${COMPOSE_FILE} logs -f"
-echo -e "  Stop stack         :  docker compose -f ${COMPOSE_FILE} down"
-echo -e "  Start stack        :  docker compose -f ${COMPOSE_FILE} up -d"
-echo -e "  Restart stack      :  docker compose -f ${COMPOSE_FILE} restart"
+echo -e "  Follow logs        :  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} logs -f"
+echo -e "  Stop stack         :  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} down"
+echo -e "  Start stack        :  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} up -d"
+echo -e "  Restart stack      :  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} restart"
 echo -e "  Shell into app     :  docker exec -it ${CONTAINER_NAME} sh"
-echo -e "  Create admin user  :  docker compose -f ${COMPOSE_FILE} run --rm planka npm run db:create-admin-user"
+echo -e "  Create admin user  :  docker compose --env-file ${ENV_FILE} -f ${COMPOSE_FILE} run --rm planka npm run db:create-admin-user"
 if [[ "$PLANKA_TRAEFIK" == "true" ]]; then
   echo ""
   echo -e "${CYAN}  # Traefik-specific debug commands${RESET}"

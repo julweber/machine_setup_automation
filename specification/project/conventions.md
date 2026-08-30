@@ -33,6 +33,20 @@
 
 - **Firewall:** Always use `ufw`. Never use `iptables` directly.
 
+## Secrets and templating
+
+- Secrets (passwords, keys, tokens, URLs containing credentials) are **never**
+  substituted into a generated file: keep `${VAR}` literal in
+  `templates/<component>/*` and resolve it at runtime from
+  `/srv/<service>/.env` (mode 600) via `docker compose --env-file` or
+  `env_file:` in the service section. Non-secret layout values (ports, paths,
+  host names, network names) may be `envsubst`ed at render time.
+- Every secret is **read back** from the service `.env` before generating a new
+  value, so re-runs never rotate credentials a persisted volume depends on.
+- Full rule with examples: `AGENTS.md` → *bash Script Specifications →
+  Secrets and templating*; shared helpers: `lib/helpers.sh`
+  (`env_file_get`, `env_file_write`).
+
 ## Anti-Patterns
 
 - **No interactive prompts** unless `--interactive` is explicitly passed.
