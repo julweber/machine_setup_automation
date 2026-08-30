@@ -10,7 +10,7 @@
 #
 # KEY ACTIONS:
 #   1. Pre-flight checks: systemctl, curl, port availability
-#   2. Checks for existing installation — prompts to recreate if found
+#   2. Keeps an existing installation unless `--force`; prompts only with `--interactive`
 #   3. Downloads the latest llama-swap binary from GitHub releases
 #   4. Generates config.yaml from template (comprehensive example with all options)
 #   5. Generates and installs llama-swap.service from template
@@ -45,7 +45,11 @@
 #   ./setup-llama-swap.sh                          # defaults
 #   ./setup-llama-swap.sh --check                  # check status only
 #   ./setup-llama-swap.sh --force                  # force reinstall/update without prompts
+#   ./setup-llama-swap.sh --interactive            # prompt before replacing an existing install
 #   ./setup-llama-swap.sh --help                   # show help and exit
+#
+#   An existing installation is kept by default (exit 0, nothing changed).
+#   --force takes precedence over --interactive (no prompt, re-install).
 #
 # REFERENCE:
 #   https://github.com/mostlygeek/llama-swap
@@ -125,6 +129,7 @@ CONFIG_FILE="${CONFIG_DIR}/config.yaml"
 SERVICE_FILE="/etc/systemd/system/llama-swap.service"
 CHECK_ONLY=0
 FORCE=0
+INTERACTIVE=false
 GITHUB_REPO="mostlygeek/llama-swap"
 
 # ─────────────────────────────────────────────────────────────────────────
@@ -139,9 +144,13 @@ Installs llama-swap, a multi-model LLM proxy with hot-swap support, as a
 native systemd service. Runs the single Go binary directly on the host.
 
 ${BOLD}Options:${RESET}
-  --check     Check installation status only (no changes)
-  --force     Force reinstall/update without prompts
-  -h, --help  Show this help and exit
+  --check        Check installation status only (no changes)
+  --force        Force reinstall/update without prompts
+  --interactive  Prompt before replacing an existing install (default: keep it, exit 0)
+  -h, --help     Show this help and exit
+
+  An existing installation is kept by default (exit 0, nothing changed).
+  --force wins: no prompt, re-installs and updates the binary.
 
 ${BOLD}Environment variables${RESET} (all optional):
   LLAMA_SWAP_PORT          Host port for web UI access (default: 9292)
@@ -162,6 +171,7 @@ while [[ $# -gt 0 ]]; do
   case "$1" in
     --check) CHECK_ONLY=1 ;;
     --force) FORCE=1 ;;
+    --interactive) INTERACTIVE=true ;;
     -h|--help) usage; exit 0 ;;
     *) error "Unknown option: $1 (use --help for usage)" ;;
   esac
@@ -245,12 +255,16 @@ if [[ -f "$SERVICE_FILE" ]]; then
   info "The llama-swap binary will be updated to the latest version."
   if [[ "$FORCE" -eq 1 ]]; then
     info "--force flag set — proceeding automatically."
-  else
+  elif [[ "$INTERACTIVE" == "true" ]]; then
     read -rp "    Re-install and update binary? [y/N] " answer
     if [[ "${answer,,}" != "y" ]]; then
       info "Keeping existing setup. Exiting."
       exit 0
     fi
+  else
+    info "Non-interactive: keeping existing setup (${SERVICE_FILE} untouched)."
+    info "Re-run with --interactive to be asked, or --force to re-install and update the binary."
+    exit 0
   fi
   # Stop and disable existing service before re-install
   info "Stopping existing service..."
@@ -289,12 +303,16 @@ if [[ -x "$LLAMA_SWAP_BIN_PATH" ]]; then
   info "Existing binary found: ${EXISTING_VERSION}"
   if [[ "$FORCE" -eq 1 ]]; then
     info "--force flag set — proceeding with binary replacement."
-  else
+  elif [[ "$INTERACTIVE" == "true" ]]; then
     read -rp "    Re-download and replace binary? [y/N] " answer
     if [[ "${answer,,}" != "y" ]]; then
       info "Keeping existing binary. Skipping download."
       SKIP_BINARY_DOWNLOAD=1
     fi
+  else
+    info "Non-interactive: keeping existing binary (${LLAMA_SWAP_BIN_PATH})."
+    info "Re-run with --interactive to be asked, or --force to update it."
+    SKIP_BINARY_DOWNLOAD=1
   fi
 fi
 

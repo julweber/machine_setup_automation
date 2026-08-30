@@ -539,3 +539,30 @@
 - No VM run for this ticket: all changes are CLI/contract-level and were verified with the ticket's probe harness, exit-code matrix, colour probes and stripped-PATH traces on the dev box (same machine class as the harness target). A fresh-VM `tests/run-vm-tests.sh` pass was not executed in this pass (capacity) — the precheck form it consumes (`-c <config> status`) is verified above.
 - The two untracked `docs/` files at the branch root (`docs/plans/vm-integration-tests.md`, `docs/qwen38-flash-next-review.md`) are pre-existing and were left untouched and uncommitted.
 - Ticket's `**Status**: open` field left untouched, consistent with how tickets 01–09 were closed.
+
+## 2026-08-30T15:32:31+02:00 - worker (ticket 11)
+
+### Implemented: `setup-llama-swap.sh` non-interactive by default — `INTERACTIVE` flag gates both `read -rp` prompts, "keep existing + exit 0" is the non-interactive default (ticket `11-llama-swap-non-interactive`)
+
+- [x] `INTERACTIVE=false` added to the flag-default block next to `FORCE=0`; new `--interactive) INTERACTIVE=true ;;` arm in the existing `while`/`case` parser (the stricter loop is kept; the ticket's "mirror traefik's for-loop parser" reference is superseded by its own Notes section)
+- [x] Prompt 1 (existing unit, `:246-264`): `--force` proceeds as before; `--interactive` prompts `[y/N]` as before (`n` → keep + `exit 0`); neither → `info "Non-interactive: keeping existing setup (${SERVICE_FILE} untouched)."` + re-run hint + `exit 0` — the zero status keeps ticket 09's `cleanup_on_failure` trap quiet; the trap itself is untouched
+- [x] Prompt 2 (existing binary, `:296-312`): same gating; the non-interactive branch sets `SKIP_BINARY_DOWNLOAD=1` (reuses existing state, no new variable) → "Binary unchanged at …"
+- [x] Header `KEY ACTIONS` item 2 ("Keeps an existing installation unless `--force`; prompts only with `--interactive`"), header `USAGE` block (`--interactive` line + "`--force` takes precedence over `--interactive`") and `usage()` (option line + precedence note, options re-aligned) updated; `IMPORTANT VARIABLES` and the `--help` env list unchanged (no env-var changes)
+
+### Validation
+- [x] `bash -n tasks/setup-llama-swap.sh` + `shellcheck -x tasks/setup-llama-swap.sh` exit 0
+- [x] `grep -n 'read -rp'` → exactly 2 lines, each directly under `elif [[ "$INTERACTIVE" == "true" ]]`; `grep -n 'INTERACTIVE'` shows `INTERACTIVE=false` in the flag-default block and `--interactive) INTERACTIVE=true ;;` in the parse loop
+- [x] `--help | grep -c -- '--interactive'` → 1; unknown option still → clean `[ERROR]` + rc=1
+- [x] VM harness (`tests/run-vm-tests.sh --scripts setup-basics,setup-llama-swap --keep-vm`, fresh Ubuntu 26.04 `resolute`): **5/5 PASS** — llama-swap integration (fresh install, unit active) rc=0 in 6 s; **idempotency rc=0 in 0 s** via the harness's non-tty stdin — exactly the keep-existing path this ticket makes safe (pre-fix this run aborted at `read` EOF under `set -euo pipefail`)
+- [x] **The ticket's literal check** (VM, unit active + binary present): `sha256sum` of `/etc/systemd/system/llama-swap.service` and `stat %Y` of `/usr/local/bin/llama-swap` captured before; `time ./tasks/setup-llama-swap.sh </dev/null; echo "exit=$?"` → **exit=0 in 0.011 s** printing "Non-interactive: keeping existing setup (… untouched)" + hint; after: `systemctl is-active` = `active`, sha256 and mtime byte-identical
+- [x] `--force </dev/null` → "proceeding automatically", unit stopped+disabled first, binary re-downloaded and replaced (mtime changed), never prompts, service restarted + healthy, exit=0
+- [x] `--interactive --force </dev/null` → **force wins**: both prompts auto-proceed, no prompt, binary replaced, exit=0
+- [x] `--interactive` on a tty (via `script` pty, delayed input): `n` → "Keeping existing setup. Exiting." exit=0 with nothing touched; `y` + `n` → unit stopped/disabled, prompt 2 kept the binary ("Binary unchanged at …"), service re-installed + healthy, exit=0
+- [x] `--check` output unchanged (service/config/binary reports + status dump, exit 0)
+- [x] VM torn down after verification (`vm-destroy mas-vmtest-20260830-151555`)
+
+### Notes / assumptions
+- First interactive pty probe used `printf 'y\nn\n' | script -qec …`: the input pipe closed immediately, so `script` tore down the pty before prompt 2's `read` (EOF → `set -e` abort → the flag-guarded trap reported "already stopped — config and data … preserved", unit left stopped, data intact). That is the ticket's documented residual risk ("`--interactive` without a tty still aborts at `read`"), not a script defect — a real operator tty stays open; the retest with delayed input passes end-to-end.
+- `INTERACTIVE` is a plain script-local flag (like the ten other task scripts), not inherited from the environment: `run-setup.sh`'s `INTERACTIVE` env (ticket 10) reaches this child, but the local default overwrites it — exactly the reference the ticket specifies. Net effect: under `run-setup.sh apply` (non-interactive children get `stdin=/dev/null`) the script keeps an existing install and exits 0 without hanging or tearing down; an operator who wants prompts passes `--interactive` via the config's `args:` (interactive children keep the inherited tty).
+- Ticket body line numbers drift from the file (ticket 09's trap rework added lines); all edits matched by content.
+- Ticket's `**Status**: open` field left untouched, consistent with how tickets 01–10 were closed.
