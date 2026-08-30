@@ -162,7 +162,7 @@ Installs Docker Engine from the official Docker repository, adds the current use
 #### `setup-traefik.sh`
 Deploys production-ready Traefik v3 reverse proxy with Docker Compose, TLS via Let's Encrypt, security headers, rate limiting, and optional protected dashboard.
 
-**Environment variables:** `TRAEFIK_HOME`, `TRAEFIK_DOMAIN`, `TRAEFIK_DASHBOARD`, `ACME_EMAIL` (**required**), `ACME_STAGING`, `DNS_PROVIDER`, `CF_DNS_API_TOKEN`, `TRAEFIK_ADMIN_USER`, `TRAEFIK_ADMIN_PASS`, `PROXY_NETWORK`, `HTTP_PORT`, `HTTPS_PORT`, `USE_SOCKET_PROXY`
+**Environment variables:** `TRAEFIK_HOME`, `TRAEFIK_DOMAIN`, `TRAEFIK_DASHBOARD`, `SOCKET_PROXY_IMAGE`, `ACME_EMAIL` (**required**), `ACME_STAGING`, `DNS_PROVIDER`, `CF_DNS_API_TOKEN`, `TRAEFIK_ADMIN_USER`, `TRAEFIK_ADMIN_PASS`, `PROXY_NETWORK`, `HTTP_PORT`, `HTTPS_PORT`, `USE_SOCKET_PROXY`
 
 **See also:** [README_TRAEFIK.md](README_TRAEFIK.md) for full documentation
 

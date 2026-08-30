@@ -10,6 +10,7 @@
 # KEY VARIABLES:
 #   TRAEFIK_HOME=/opt/traefik     - Config directory
 #   TRAEFIK_DASHBOARD=false       - Enable dashboard (requires DOMAIN)
+#   SOCKET_PROXY_IMAGE=<pinned>   - docker-socket-proxy image (pinned tag+digest)
 #   ACME_EMAIL=admin@example.com  - Let's Encrypt email
 #   DNS_PROVIDER=                 - Cloudflare or empty for HTTP challenge
 #   CF_DNS_API_TOKEN=             - Required if using DNS challenge
@@ -45,12 +46,17 @@ source "${LIB_PATH}" || {
 # │                                                                         │
 # │   TRAEFIK_HOME=/opt/traefik    # Config directory                      │
 # │   TRAEFIK_DASHBOARD=false      # Enable dashboard                       │
+# │   SOCKET_PROXY_IMAGE=pinned    # docker-socket-proxy image (pinned)     │
 # │   ACME_EMAIL=admin@example.com # Let's Encrypt email                    │
 # │   DNS_PROVIDER=                # Cloudflare or empty for HTTP          │
 # └─────────────────────────────────────────────────────────────────────────┘
 
 TRAEFIK_HOME="${TRAEFIK_HOME:-/opt/traefik}"
 TRAEFIK_IMAGE="${TRAEFIK_IMAGE:-traefik:v3}"
+# Pinned on purpose: this container fronts /var/run/docker.sock.
+# Update deliberately: docker buildx imagetools inspect ghcr.io/tecnativa/docker-socket-proxy:<tag>
+: "${SOCKET_PROXY_IMAGE:=ghcr.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459}"
+export SOCKET_PROXY_IMAGE
 TRAEFIK_DOMAIN="${TRAEFIK_DOMAIN:-traefik.example.com}"
 TRAEFIK_DASHBOARD="${TRAEFIK_DASHBOARD:-false}"
 ACME_EMAIL="${ACME_EMAIL:-admin@example.com}"
@@ -107,6 +113,8 @@ ${BOLD}Options:${RESET}
 ${BOLD}Environment variables${RESET} (all optional):
   TRAEFIK_HOME        Config directory (default: /opt/traefik)
   TRAEFIK_IMAGE       Traefik image tag (default: traefik:v3)
+  SOCKET_PROXY_IMAGE  Docker socket-proxy image, pinned tag+digest (default:
+                      ghcr.io/tecnativa/docker-socket-proxy:v0.5.0@sha256:1f5038b54f06c3e18422902cf00ba21803d1c97805aae032e5e6673d532d3459)
   TRAEFIK_DOMAIN      Traefik's own domain (default: traefik.example.com)
   TRAEFIK_DASHBOARD   Enable dashboard: true/false (default: false)
   ACME_EMAIL          Let's Encrypt email (default: admin@example.com)
@@ -477,8 +485,10 @@ else
 fi
 _traefik_template="${TEMPLATE_DIR}/traefik.${_acme_env}.${_acme_variant}.yml"
 
-# Export variables for envsubst
-export _api_dashboard _docker_endpoint DNS_PROVIDER
+# Export variables for envsubst (envsubst reads the environment, not the shell
+# — every listed variable must be exported or it renders empty; the VM-verified
+# symptom of a missing export is entryPoints.address: ":", i.e. a random port)
+export _api_dashboard _docker_endpoint DNS_PROVIDER HTTP_PORT HTTPS_PORT PROXY_NETWORK ACME_EMAIL
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
 envsubst '${_api_dashboard} ${_docker_endpoint} ${DNS_PROVIDER} ${HTTP_PORT} ${HTTPS_PORT} ${PROXY_NETWORK} ${ACME_EMAIL}' \
   < "${_traefik_template}" > "${_traefik_yml_tmp}"
@@ -605,9 +615,9 @@ fi
 COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.${_compose_variant}.yml"
 
 # Export variables for envsubst
-export TRAEFIK_IMAGE HTTP_PORT HTTPS_PORT TRAEFIK_HOME PROXY_NETWORK TRAEFIK_DOMAIN
+export TRAEFIK_IMAGE SOCKET_PROXY_IMAGE HTTP_PORT HTTPS_PORT TRAEFIK_HOME PROXY_NETWORK TRAEFIK_DOMAIN
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
-envsubst '${TRAEFIK_IMAGE} ${HTTP_PORT} ${HTTPS_PORT} ${TRAEFIK_HOME} ${PROXY_NETWORK} ${TRAEFIK_DOMAIN}' \
+envsubst '${TRAEFIK_IMAGE} ${SOCKET_PROXY_IMAGE} ${HTTP_PORT} ${HTTPS_PORT} ${TRAEFIK_HOME} ${PROXY_NETWORK} ${TRAEFIK_DOMAIN}' \
   < "${COMPOSE_TEMPLATE}" > "${_compose_tmp}"
 
 sudo mv "${_compose_tmp}" "${COMPOSE_FILE}"

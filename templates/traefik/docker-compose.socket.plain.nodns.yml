@@ -3,11 +3,23 @@
 services:
 
   # ── Docker Socket Proxy ────────────────────────────────────────────────────
+  # Userspace API proxy: the environment list below IS the permission set.
+  # Deliberately hardened (cap_drop: ALL + no-new-privileges) — widening its
+  # rights would hand the host to anyone who can reach socket-net:2375.
+  # read_only is NOT set: the v0.5.0 image is haproxy-based and the haproxy
+  # master writes /run/haproxy.pid at startup, which crashes on a read-only
+  # rootfs (verified against v0.5.0). cap_drop: ALL + no-new-privileges carry
+  # the hardening; a tmpfs on /run could restore read_only if ever wanted.
   socket-proxy:
-    image: ghcr.io/tecnativa/docker-socket-proxy:latest
+    image: ${SOCKET_PROXY_IMAGE}
     container_name: traefik-socket-proxy
     restart: unless-stopped
-    privileged: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    tmpfs:
+      - /tmp
     environment:
       CONTAINERS: 1
       NETWORKS: 1

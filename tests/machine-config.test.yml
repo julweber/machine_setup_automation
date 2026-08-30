@@ -78,5 +78,9 @@ scripts:
   setup-traefik:
     enabled: true
     description: Traefik reverse proxy (docker)
-    env: {}
+    env:
+      # setup-traefik rejects the default ACME_EMAIL (Let's Encrypt requires a
+      # real address). The VM never issues certificates — this only proves the
+      # stack, the unprivileged socket proxy, and Docker provider discovery.
+      ACME_EMAIL: "vmtest@example.com"
     args: []
