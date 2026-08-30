@@ -7,6 +7,13 @@
 # Description:
 #   Installs Docker Engine and related components on Ubuntu systems.
 #
+# Behaviour:
+#   Exits early only when Docker is *usable* (daemon answers via sudo and the
+#   Compose plugin is present); a host with docker.io alone falls through to the
+#   idempotent apt install below. Runs fully non-interactive: no interactive
+#   shell is ever spawned. After install, docker group membership needs a
+#   re-login before unprivileged `docker` works.
+#
 # Options:
 #   --force   Skip the Docker installed check and force reinstallation
 #   --help    Show help message
@@ -56,6 +63,13 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --force   Skip the Docker installed check and force reinstallation"
       echo "  --help    Show this help message"
+      echo ""
+      echo "Behaviour:"
+      echo "  Non-interactive: no interactive shell is ever spawned. After install,"
+      echo "  docker group membership needs a re-login for unprivileged docker to work."
+      echo "  The early exit fires only for a usable install (daemon answering via sudo"
+      echo "  docker info + Compose plugin present), otherwise the idempotent apt"
+      echo "  install below runs."
       exit 0
       ;;
     *)
@@ -72,9 +86,17 @@ done
 
 step "Setting up Docker"
 
-# Check if Docker is already installed
-if [[ "${FORCE}" == false ]] && command -v docker &>/dev/null && docker --version &>/dev/null; then
-  success "Docker is already installed: $(docker --version)"
+# Check if Docker is already installed *and usable*:
+#   - the docker CLI exists
+#   - the Compose plugin is present (every downstream compose task needs it)
+#   - the daemon answers
+# Probes run through sudo so they work before group membership takes effect in
+# this session (a fresh group member cannot query the daemon without re-login).
+# A host with only Ubuntu's docker.io (no compose plugin) or a stopped daemon
+# falls through: the apt install below is idempotent and installs the plugin.
+if [[ "${FORCE}" == false ]] && command -v docker &>/dev/null && docker --version &>/dev/null \
+   && sudo docker compose version &>/dev/null && sudo docker info &>/dev/null; then
+  success "Docker is already installed and usable: $(docker --version)"
   exit 0
 fi
 
@@ -124,19 +146,28 @@ else
   sudo groupadd docker
 fi
 sudo chown root:docker /var/run/docker.sock 2>/dev/null || true
-sudo usermod -aG docker "${USER}"
 
-# Verify group membership
-if id -nG | grep -q docker; then
-  info "User already in docker group"
+# Add the invoking user to the docker group. $USER is unset under some
+# sudo -E / cron invocations, so fall back to the effective uid's name.
+RUN_USER="${USER:-$(id -un)}"
+# Query the group database for RUN_USER, not this shell's credentials: a group
+# added by usermod is never visible in the current session.
+if id -nG "${RUN_USER}" | tr ' ' '\n' | grep -qx docker; then
+  info "User ${RUN_USER} already in docker group"
 else
-  newgrp docker >/dev/null 2>&1 || true
+  sudo usermod -aG docker "${RUN_USER}"
+  info "Added ${RUN_USER} to docker group - re-login required for unprivileged docker to work"
 fi
 
-# Verify installation
+# Verify installation (non-fatal: a host without egress must not fail a
+# successful install; --rm keeps hello-world containers from piling up)
 step "Testing Docker installation"
-docker run hello-world
+if sudo docker run --rm hello-world >/dev/null 2>&1; then
+  success "Docker smoke test passed (hello-world)."
+else
+  warn "Docker smoke test failed (network or daemon issue?) - install completed; verify with: sudo docker info"
+fi
 
 UBUNTU_VERSION=$(lsb_release -rs 2>/dev/null || echo "unknown")
 success "Docker installed successfully on Ubuntu ${UBUNTU_VERSION}"
-info "You may need to log out and back in for group changes to take effect"
+info "Log out and back in (or start a new session) for docker group membership to take effect"
