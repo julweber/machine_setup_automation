@@ -66,6 +66,9 @@ ${BOLD}Options:${RESET}
 
 ${BOLD}Environment variables${RESET} (all optional):
   HERMES_TARGET_REPO_DIRECTORY  Directory to set up Hermes (default: /srv/hermes)
+  WAIT_TIMEOUT                  Max seconds to wait for the gateway container
+                                to come up after 'docker compose up -d'
+                                (default: 180)
 EOF
 }
 
@@ -204,6 +207,11 @@ if [[ "${HERMES_CONFIG_EXISTS}" == true ]] || [[ "${HERMES_ENV_EXISTS}" == true 
         warn "Failed to start via docker compose. Run manually:"
         info "  cd ${HERMES_TARGET_REPO_DIRECTORY} && docker compose up -d hermes-gateway"
       }
+      # Health gate: prove the gateway container is actually up before
+      # reporting the update as successful (container name is fixed by the
+      # template; docker inspect accepts names as well as ids).
+      wait_for_healthy "${WAIT_TIMEOUT:-180}" hermes-gateway \
+        || error "hermes-gateway did not come up — see the status output above"
     fi
   fi
 

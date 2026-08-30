@@ -128,6 +128,8 @@ Environment variables (all optional):
   FORGEJO_DOMAIN      Domain for Traefik routing (required when FORGEJO_TRAEFIK=true)
   PROXY_NETWORK       Traefik's external Docker network name (default: proxy)
   HOST_IP             Host IP for an extra LAN port binding (default: auto-detected)
+  WAIT_TIMEOUT        Max seconds to wait for the stack to come up and become
+                      healthy after 'docker compose up -d' (default: 180)
 EOF
 }
 
@@ -370,7 +372,11 @@ success "Images pulled."
 
 step "Starting Forgejo stack (detached)"
 sudo docker compose -f "$COMPOSE_FILE" up -d
-success "Stack started."
+
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(sudo docker compose -f "$COMPOSE_FILE" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Forgejo stack did not come up — see the status output above"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WAIT FOR FORGEJO TO BECOME AVAILABLE

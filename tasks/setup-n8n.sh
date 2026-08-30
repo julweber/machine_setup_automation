@@ -46,6 +46,8 @@ ${BOLD}Options:${RESET}
 ${BOLD}Environment variables${RESET} (all optional):
   N8N_DIR           Installation directory (default: /srv/n8n)
   TRAEFIK_ENABLED   Enable Traefik integration (default: false)
+  WAIT_TIMEOUT      Max seconds to wait for the stack to come up and become
+                    healthy after 'docker compose up -d' (default: 180)
 
 ${BOLD}Note:${RESET} A .env template with placeholder values is written to
 ${N8N_DIR:-/srv/n8n}/.env — review it before starting n8n.
@@ -115,6 +117,11 @@ fi
 # Bring stack up
 step "Starting n8n"
 docker compose -f "${COMPOSE_FILE}" up -d --build n8n
+
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(docker compose -f "${COMPOSE_FILE}" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "n8n stack did not come up — see the status output above"
 
 success "n8n installed successfully"
 info "Access at http://localhost:5678 (or https://automation.example.com with Traefik)"

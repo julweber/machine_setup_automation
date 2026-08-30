@@ -49,6 +49,10 @@
 #   NEXTCLOUD_DOMAIN        - Domain for Traefik access (required when Traefik=true)
 #   PROXY_NETWORK           - Traefik's external Docker network name (default: proxy)
 #
+#   WAIT_TIMEOUT            - Max seconds to wait for the stack to come up and
+#                             become healthy after 'docker compose up -d'
+#                             (default: 180)
+#
 # DEPENDENCIES:
 #   - Docker: Must be installed and daemon must be running
 #   - Docker Compose v2+
@@ -161,6 +165,9 @@ Environment variables (all optional):
   NEXTCLOUD_TRAEFIK         Set to "true" to enable Traefik labels (default: false)
   NEXTCLOUD_DOMAIN          Domain for Traefik access (required when NEXTCLOUD_TRAEFIK=true)
   PROXY_NETWORK             Traefik's external Docker network name (default: proxy)
+  WAIT_TIMEOUT              Max seconds to wait for the stack to come up and
+                            become healthy after 'docker compose up -d'
+                            (default: 180)
 EOF
 }
 
@@ -276,10 +283,15 @@ case "$DB_TYPE" in
   *) error "Unknown DB_TYPE '${DB_TYPE}'. Valid values: mariadb, postgres, sqlite" ;;
 esac
 
-# Traefik pre-flight (only when opt-in)
+# Shared helpers (e.g. wait_for_healthy for the stack health gate below).
+# Sourced unconditionally: all lib definitions are guarded, and this
+# script's own colour/logging functions (defined above) take precedence.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=../lib/helpers.sh
+source "${SCRIPT_DIR}/../lib/helpers.sh"
+
+# Traefik pre-flight (only when opt-in)
 if [[ "$NEXTCLOUD_TRAEFIK" == "true" ]]; then
-  source "${SCRIPT_DIR}/../lib/helpers.sh"
   if ! ensure_proxy_network; then
     error "Traefik proxy network '${PROXY_NETWORK}' not found or inaccessible."
   fi
@@ -606,7 +618,11 @@ success "Images pulled."
 
 step "Starting Nextcloud stack (detached)"
 sudo docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
-success "Stack started."
+
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(sudo docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Nextcloud stack did not come up — see the status output above"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WAIT FOR NEXTCLOUD TO BECOME AVAILABLE

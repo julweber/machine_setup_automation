@@ -127,6 +127,8 @@ ${BOLD}Environment variables${RESET} (all optional):
   USE_SOCKET_PROXY    Route via docker.sock proxy: true/false (default: true)
   HTTP_PORT           HTTP entrypoint port (default: 80)
   HTTPS_PORT          HTTPS entrypoint port (default: 443)
+  WAIT_TIMEOUT        Max seconds to wait for the stack to come up and become
+                      healthy after 'docker compose up -d' (default: 180)
 EOF
 }
 
@@ -650,7 +652,12 @@ step "Starting Traefik stack (detached)"
 if ! docker compose -f "${COMPOSE_FILE}" up -d; then
   error "Failed to start Traefik stack. Check the error output above."
 fi
-success "Stack started."
+
+# Health gate: prove the containers (traefik + optional socket proxy) are
+# actually up before reporting success.
+mapfile -t _ids < <(docker compose -f "${COMPOSE_FILE}" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Traefik stack did not come up — see the status output above"
 
 step "Waiting for Traefik container to become healthy (up to 60s)"
 MAX_WAIT=60

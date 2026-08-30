@@ -47,6 +47,31 @@
   Secrets and templating*; shared helpers: `lib/helpers.sh`
   (`env_file_get`, `env_file_write`).
 
+## Stack health verification
+
+A task script that starts a docker stack must prove the stack is up before
+reporting success: `wait_for_healthy` (or an HTTP readiness poll where one
+already exists) after every `docker compose up -d`, with a bounded timeout
+and a non-zero exit on failure.
+
+- Use `wait_for_healthy <timeout_s> <container-id...>` from `lib/helpers.sh`
+  with the container list from `docker compose ps -q`, passing the same
+  `--env-file`/`-f` (and `sudo`, where used) as the `up -d` call. The helper
+  returns 1 (it never exits) when a container is exited/dead/restarting or
+  unhealthy — or when the bounded timeout is reached — naming the offending
+  containers and pointing at the logs. Containers without a healthcheck count
+  as ready once running.
+- Call it as
+  `wait_for_healthy … || error "<service> stack did not come up — see the status output above"`
+  so a crash-looping stack can never be reported as success.
+- Existing HTTP readiness polls (planka, openwebui, concourse, …) are kept:
+  they prove the app answers, the helper proves the containers are alive.
+- The timeout is exposed as an env var with a sensible default (`WAIT_TIMEOUT`,
+  180 s; inference stacks use a script-specific, longer default) and
+  documented in the script's `--help`.
+- Never swallow `docker compose up -d` with `|| true`, and never print a
+  success summary before the gate.
+
 ## Anti-Patterns
 
 - **No interactive prompts** unless `--interactive` is explicitly passed.

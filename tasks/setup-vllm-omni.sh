@@ -148,6 +148,11 @@ usage() {
   echo "  --check               Check installation status and exit"
   echo "  --help                Show this help"
   echo ""
+  echo -e "${BOLD}Environment variables${RESET} (relevant extras):"
+  echo "  VLLM_OMNI_HEALTH_TIMEOUT  Seconds to wait for the stack to come up"
+  echo "                            after 'docker compose up -d' (default: 300 –"
+  echo "                            model loading is slow)"
+  echo ""
   echo -e "${BOLD}Model selection${RESET} (set after install, in ${PROJECT_DIR}/.env):"
   echo "  VLLM_OMNI_MODEL=Tongyi-MAI/Z-Image-Turbo   # text-to-image (quickstart)"
   echo "  VLLM_OMNI_MODEL=<HF omni/TTS/diffusion model id>"
@@ -451,7 +456,12 @@ if [[ -z "$VLLM_OMNI_MODEL" ]]; then
 else
   step "Starting vLLM-Omni stack"
   (cd "$PROJECT_DIR" && docker compose up -d)
-  success "Stack started."
+
+  # Health gate: prove the container is actually up before reporting success.
+  # 300 s default: model loading is slow on inference stacks.
+  mapfile -t _ids < <(cd "$PROJECT_DIR" && docker compose ps -q)
+  wait_for_healthy "${VLLM_OMNI_HEALTH_TIMEOUT:-300}" "${_ids[@]}" \
+    || error "vLLM-Omni stack did not come up — see the status output above"
 
   step "Waiting for vLLM-Omni to respond"
 

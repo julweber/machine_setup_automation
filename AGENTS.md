@@ -71,6 +71,14 @@ When modifying scripts: always ensure to keep the `--help` parameter output up t
 - For scripts that setup services/software that is run as daemon/server or within docker containers: use the `/srv/<service-name>` directory for configuration files
 - For scripts that setup tools for the user on the host directly: use the appropriate default directory for the tool in the user's `$HOME`
 
+#### Stack health verification
+
+- A task script that starts a docker stack must prove the stack is up before
+  reporting success: `wait_for_healthy` (from `lib/helpers.sh`, or an HTTP
+  readiness poll where one already exists) after every `docker compose up -d`,
+  with a bounded timeout and a non-zero exit on failure. See
+  `specification/project/conventions.md` → *Stack health verification*.
+
 #### Templating
 
 If you need to use templating (e.g. for creating configuration files) you require to put template files in the according `templates/<component-name>` directory. DO NOT put inline templates into the bash scripts except this is explicitly required.

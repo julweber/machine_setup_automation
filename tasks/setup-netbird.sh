@@ -153,6 +153,9 @@ ${BOLD}Environment variables${RESET} (all optional):
   NETBIRD_SETUP_KEY        Required when NETBIRD_CLIENT_ENABLED=true
   NETBIRD_CLIENT_HOSTNAME  Client container hostname (default: netbird-peer)
   NETBIRD_LOG_LEVEL        Server log level (default: info)
+  WAIT_TIMEOUT             Max seconds to wait for the stack to come up and
+                           become healthy after 'docker compose up -d'
+                           (default: 180)
 EOF
 }
 
@@ -362,7 +365,11 @@ success "Images pulled."
 
 step "Starting NetBird stack (detached)"
 docker compose -f "$COMPOSE_FILE" up -d
-success "Stack started."
+
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(docker compose -f "$COMPOSE_FILE" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "NetBird stack did not come up — see the status output above"
 
 # Optional routing-peer client
 if [[ "$NETBIRD_CLIENT_ENABLED" == "true" ]]; then
@@ -370,7 +377,10 @@ if [[ "$NETBIRD_CLIENT_ENABLED" == "true" ]]; then
   echo 'net.ipv4.ip_forward=1' | sudo tee /etc/sysctl.d/99-netbird.conf > /dev/null
   sudo sysctl -w net.ipv4.ip_forward=1 > /dev/null
   docker compose -f "$COMPOSE_FILE" --profile client up -d netbird-client
-  success "netbird-client started (host IP forwarding enabled)."
+  # Health gate for the client (the project-wide list now includes it).
+  mapfile -t _ids < <(docker compose -f "$COMPOSE_FILE" --profile client ps -q)
+  wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+    || error "netbird-client did not come up — see the status output above"
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────

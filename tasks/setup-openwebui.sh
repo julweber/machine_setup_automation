@@ -147,6 +147,8 @@ Environment variables (all optional):
   OPENWEBUI_TRAEFIK  Set to "true" to enable Traefik routing (default: false)
   OPENWEBUI_DOMAIN   Domain for Traefik access (required when OPENWEBUI_TRAEFIK=true)
   PROXY_NETWORK      Traefik's external Docker network name (default: proxy)
+  WAIT_TIMEOUT       Max seconds to wait for the stack to come up and become
+                     healthy after 'docker compose up -d' (default: 180)
 
 Note: LM Studio must be running on LM_STUDIO_PORT.
 EOF
@@ -393,7 +395,10 @@ step "Starting Open WebUI stack (detached)"
 
 docker compose --env-file "$ENV_FILE" up -d
 
-success "Stack started."
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(docker compose --env-file "$ENV_FILE" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Open WebUI stack did not come up — see the status output above"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WAIT FOR OPENWEBUI TO BECOME AVAILABLE

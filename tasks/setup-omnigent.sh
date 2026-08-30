@@ -100,6 +100,9 @@ Environment Variables:
   OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD  Pre-seed admin password for headless deploys
   POSTGRES_USER                    Postgres user (default: omnigent)
   POSTGRES_DB                      Postgres database name (default: omnigent)
+  WAIT_TIMEOUT                     Max seconds to wait for the stack to come up
+                                   and become healthy after 'docker compose up -d'
+                                   (default: 180)
 
 Examples:
   $(basename "$0")
@@ -405,7 +408,11 @@ success "Old stack removed. Data volumes preserved."
 
 step "Starting Omnigent stack (detached)"
 (cd "$OMNIGENT_HOME" && docker compose up -d --pull always)
-success "Stack started."
+
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(cd "$OMNIGENT_HOME" && docker compose ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Omnigent stack did not come up — see the status output above"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENSURE POSTGRES PASSWORD MATCHES .ENV

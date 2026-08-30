@@ -85,6 +85,11 @@ ${BOLD}Environment variables${RESET} (all optional):
                             refused (the cluster keeps its old password);
                             change it inside the DB instead.
 
+  Startup:
+    WAIT_TIMEOUT            Max seconds to wait for the stack to come up and
+                            become healthy after 'docker compose up -d'
+                            (default: 180)
+
   Admin user:
     ADMIN_EMAIL             Create admin user non-interactively
                             (default: empty = print the admin-user creation
@@ -473,7 +478,11 @@ success "Images pulled."
 
 step "Starting Planka stack (detached)"
 docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" up -d
-success "Stack started."
+
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Planka stack did not come up — see the status output above"
 
 
 # ─────────────────────────────────────────────────────────────────────────────

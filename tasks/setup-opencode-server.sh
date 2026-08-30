@@ -294,7 +294,12 @@ setup_docker() {
 
     step "Starting Opencode stack (detached)"
     sudo docker compose up -d
-    success "Stack started."
+
+    # Health gate: prove the containers are actually up before reporting
+    # success (on failure the EXIT trap above tears the stack down).
+    mapfile -t _ids < <(sudo docker compose ps -q)
+    wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+      || error "Opencode stack did not come up — see the status output above"
 
     _wait_for_opencode_docker
     _configure_ufw_docker
@@ -546,6 +551,9 @@ DEPLOYMENT MODE
 DOCKER MODE OPTIONS            (only used when USE_DOCKER=true)
   OPENCODE_DATA_DIR            Host directory for Docker Compose files and .env.
                                Default: /srv/opencode
+  WAIT_TIMEOUT                 Max seconds to wait for the stack to come up and
+                               become healthy after 'docker compose up -d'.
+                               Default: 180
 
 TRAEFIK OPTIONS                (only used when USE_DOCKER=true)
   OPENCODE_TRAEFIK             Set to "true" to enable Traefik reverse proxy integration.

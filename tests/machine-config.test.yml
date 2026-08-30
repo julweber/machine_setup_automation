@@ -84,3 +84,25 @@ scripts:
       # stack, the unprivileged socket proxy, and Docker provider discovery.
       ACME_EMAIL: "vmtest@example.com"
     args: []
+
+  # Ad-hoc service tiers for --scripts runs (see ticket improvements-2/08):
+  #   tests/run-vm-tests.sh --scripts \
+  #     setup-docker,setup-traefik,setup-planka,setup-monitoring
+  # Both stay out of the default set (heavy images).
+  setup-planka:
+    enabled: false
+    description: Planka Kanban (docker) — ad-hoc via --scripts
+    env: {}
+    args: []
+
+  setup-monitoring:
+    enabled: false
+    description: Prometheus + Grafana (docker) — ad-hoc via --scripts
+    env:
+      # Required by the script (no opt-out).
+      GRAFANA_DOMAIN: "monitoring.vmtest"
+      # The non-interactive existing-stack refusal is ticket 12's scope; force a
+      # re-create so the idempotency phase exercises the full start+health-gate
+      # path a second time (data is preserved).
+      MONITORING_FORCE: "true"
+    args: []

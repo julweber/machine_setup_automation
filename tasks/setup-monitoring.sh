@@ -174,6 +174,9 @@ ${BOLD}Environment variables${RESET} (all optional):
   NODE_EXPORTER_IMAGE_VERSION  Node Exporter image tag (default: quay.io/prometheus/node-exporter:v1.12.1)
   CADVISOR_IMAGE_VERSION     cAdvisor image tag (default: ghcr.io/google/cadvisor:v0.60.5)
   MONITORING_FORCE           Set to "true" to re-create an existing stack (default: false)
+  WAIT_TIMEOUT               Max seconds to wait for the stack to come up and
+                             become healthy after 'docker compose up -d'
+                             (default: 180)
 EOF
 }
 
@@ -243,13 +246,9 @@ if [[ "$GRAFANA_TRAEFIK" == "true" ]]; then
     warn "Traefik container is not running. Grafana will not be reachable until Traefik is started."
   fi
 else
-  # Direct mode: verify the host ports to be published (loopback) are free.
-  local_listening_ports="$(ss -tln 2>/dev/null | awk 'NR > 1 {print $4}' | sed 's/.*[:.]//')"
-  for port in "$GRAFANA_PORT" "$PROMETHEUS_PORT"; do
-    if grep -qx "$port" <<< "$local_listening_ports"; then
-      error "Port ${port} is already in use. Choose a different GRAFANA_PORT/PROMETHEUS_PORT."
-    fi
-  done
+  # Direct mode: the host port conflict check runs AFTER the idempotency
+  # section below — a re-create (MONITORING_FORCE / --interactive) must first
+  # tear down the existing stack that still holds the ports.
   success "Grafana will be exposed at http://${GRAFANA_BIND_ADDRESS}:${GRAFANA_PORT}"
   success "Prometheus UI will be exposed at http://${PROMETHEUS_BIND_ADDRESS}:${PROMETHEUS_PORT}"
   if [[ "$PROMETHEUS_BIND_ADDRESS" != "127.0.0.1" && "$PROMETHEUS_BIND_ADDRESS" != "localhost" ]]; then
@@ -312,6 +311,17 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
 fi
 
+if [[ "$GRAFANA_TRAEFIK" != "true" ]]; then
+  # Direct mode: verify the host ports to be published (loopback) are free —
+  # now that any existing monitoring stack has been torn down (re-create path).
+  local_listening_ports="$(ss -tln 2>/dev/null | awk 'NR > 1 {print $4}' | sed 's/.*[:.]//')"
+  for port in "$GRAFANA_PORT" "$PROMETHEUS_PORT"; do
+    if grep -qx "$port" <<< "$local_listening_ports"; then
+      error "Port ${port} is already in use. Choose a different GRAFANA_PORT/PROMETHEUS_PORT."
+    fi
+  done
+fi
+
 # ─────────────────────────────────────────────────────────────────────────────
 # CREATE PERSISTENT DIRECTORIES + OWNERSHIP (guarded, never recursive chown)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -321,11 +331,19 @@ step "Creating persistent directories under ${MONITORING_HOME}"
 # Prometheus data + config owned by UID/GID 65534 (nobody)
 sudo install -d -o 65534 -g 65534 "${PROMETHEUS_HOME}/data" "${PROMETHEUS_HOME}/config"
 
-# Grafana data, provisioning (datasources + dashboards providers), dashboards
-sudo install -d -o 472 -g 472 \
+# Grafana data, provisioning (datasources + dashboards providers), dashboards.
+# The grafana image runs as UID/GID 472; chown with numeric ids on purpose —
+# no host user 472 exists on a fresh system, and 'install -o 472' rejects
+# unknown ids. After the first container run the ownership is already
+# 472:472, so this is a no-op on re-runs.
+sudo mkdir -p \
   "${GRAFANA_HOME}/data" \
   "${GRAFANA_HOME}/provisioning/datasources" \
   "${GRAFANA_HOME}/provisioning/dashboards" \
+  "${GRAFANA_HOME}/dashboards"
+sudo chown -R 472:472 \
+  "${GRAFANA_HOME}/data" \
+  "${GRAFANA_HOME}/provisioning" \
   "${GRAFANA_HOME}/dashboards"
 
 sudo mkdir -p "${MONITORING_COMPOSE_DIR}"
@@ -429,7 +447,11 @@ success "Images pulled."
 
 step "Starting monitoring stack (detached)"
 docker compose -f "$COMPOSE_FILE" up -d
-success "Stack started."
+
+# Health gate: prove the containers are actually up before reporting success.
+mapfile -t _ids < <(docker compose -f "$COMPOSE_FILE" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Monitoring stack did not come up — see the status output above"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HEALTH CHECK

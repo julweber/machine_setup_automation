@@ -119,6 +119,9 @@ ${BOLD}Environment variables${RESET} (all optional):
   CONCOURSE_TRAEFIK         Enable Traefik integration: true/false (default: false)
   CONCOURSE_DOMAIN          Domain for Traefik routing (required when CONCOURSE_TRAEFIK=true)
   PROXY_NETWORK             Traefik's network name (default: proxy)
+  WAIT_TIMEOUT              Max seconds to wait for the stack to come up and
+                            become healthy after 'docker compose up -d'
+                            (default: 180)
 EOF
 }
 
@@ -388,13 +391,12 @@ success "Images pulled."
 step "Starting Concourse stack (detached)"
 sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" up -d
 
-# Check for service startup failures
-if sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" ps --filter "status=exited" --format "{{.Name}}" | grep -q .; then
-  warn "One or more services failed to start. Displaying logs:"
-  sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" logs
-  exit 1
-fi
-success "Stack started."
+# Health gate: prove the containers are actually up before reporting success.
+# (Single implementation in lib/helpers.sh — also covers crash loops, not just
+# already-exited containers.)
+mapfile -t _ids < <(sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" ps -q)
+wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
+  || error "Concourse stack did not come up — see the status output above"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WAIT FOR CONCOURSE TO BECOME AVAILABLE

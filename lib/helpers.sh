@@ -303,6 +303,82 @@ if ! declare -F env_file_write > /dev/null 2>&1; then
 fi
 
 # ---------------------------------------------------------------------------
+# wait_for_healthy <timeout_s> <container_id...>
+#   Polls 'docker inspect' until every container is running (and, when it
+#   defines a healthcheck, healthy). Exits non-zero with the bad container
+#   names + a logs hint.
+#   Containers without a healthcheck count as ready once State.Status ==
+#   running. A container that exited/dead/restarting is an immediate failure
+#   (no point burning the whole timeout on a crash loop).
+#
+#   Typical use from a task script (pass --env-file/-f exactly as the
+#   surrounding 'docker compose up -d' does):
+#     mapfile -t _ids < <(docker compose -f "$COMPOSE_FILE" ps -q)
+#     wait_for_healthy 180 "${_ids[@]}" \
+#       || error "<service> stack did not come up — see the status output above"
+#
+#   The helper RETURNS non-zero (it never calls error) so each task can
+#   decide. Call it under `set -e` — plainly, or with `|| error "..."` for
+#   a better message (preferred: the `||` context also keeps every
+#   diagnostic line of this function from being cut off by set -e).
+#   `docker compose ps -q` returns only the containers of the current
+#   project; an empty list is a hard failure, never a vacuous pass.
+# ---------------------------------------------------------------------------
+if ! declare -F wait_for_healthy > /dev/null 2>&1; then
+  wait_for_healthy() {
+    local timeout="${1:-120}"; shift
+    local -a ids=("$@")
+    local waited=0 state health bad line rest name
+    if (( ${#ids[@]} == 0 )); then
+      err_msg "wait_for_healthy: no containers to check" || return 1
+    fi
+
+    local hardfail=0
+    while (( waited <= timeout )); do
+      bad=""; hardfail=0
+      for id in "${ids[@]}"; do
+        # Some tasks drive compose with 'sudo docker'; fall back once per query.
+        line="$(docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Name}}' "$id" 2>/dev/null \
+             || sudo docker inspect --format '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Name}}' "$id" 2>/dev/null)" \
+          || { bad+=" ${id}(uninspectable)"; hardfail=1; continue; }
+        state="${line%% *}"; rest="${line#* }"; health="${rest%% *}"; name="${rest#* }"
+        case "$state" in
+          exited|dead)   bad+=" ${name}(${state})"; hardfail=1; continue ;;
+          restarting)    bad+=" ${name}(restarting)"; hardfail=1; continue ;;
+        esac
+        # Health statuses: starting | healthy | unhealthy ("none" = no healthcheck).
+        if [[ "$health" == "unhealthy" ]]; then
+          bad+=" ${name}(unhealthy)"
+        elif [[ ! ( "$state" == "running" && ( "$health" == "healthy" || "$health" == "none" ) ) ]]; then
+          bad+=" ${name}(${state}/${health})"
+        fi
+      done
+      if [[ -z "$bad" ]]; then
+        success "All ${#ids[@]} container(s) up and healthy."
+        return 0
+      fi
+      # exited/dead/restarting/uninspectable = immediate failure (crash loop or
+      # vanished container): no point burning the whole timeout. (A "created"
+      # container is only "not yet ready" — the loop keeps waiting.)
+      (( hardfail )) && break
+      (( waited == timeout )) && break
+      sleep 5; waited=$(( waited + 5 ))
+    done
+
+    echo "--- container status ---"
+    docker ps -a --filter "id=$(IFS=,; echo "${ids[*]}")" 2>/dev/null || true
+    if (( hardfail )); then
+      err_msg "Stack not healthy — a container is in a failed state (crash loop?):${bad}" || true
+    else
+      err_msg "Stack not healthy after ${timeout}s:${bad}" || true
+    fi
+    err_msg "Inspect with:  docker inspect ${ids[*]}" || true
+    err_msg "Logs:          docker compose -f <compose-file> logs" || true
+    return 1
+  }
+fi
+
+# ---------------------------------------------------------------------------
 # is_apt_package_installed
 #   Returns 0 if the given dpkg package is actually installed (status DB
 #   reports 'installed'), 1 otherwise.

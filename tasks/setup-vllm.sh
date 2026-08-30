@@ -255,7 +255,7 @@ usage() {
   echo "  --tool-call-parser <name>  Tool-call parser for agent-ready serving"
   echo "  --enable-auto-tool-choice  Enable automatic tool choice"
   echo "  --spark-env <KEY=V ...>    Extra env vars for DGX Spark (version-specific workarounds)"
-  echo "  --health-timeout <s>  Seconds to wait for /health  (default: 900 GPU / 120 CPU)"
+  echo "  --health-timeout <s>  Seconds to wait for the stack to come up and for /health (default: 900 GPU / 120 CPU)"
   echo "  --no-warmup           Skip the post-health warmup request"
   echo "  --dir <path>          Installation directory  (default: /srv/vllm)"
   echo "  --traefik             Enable Traefik reverse-proxy integration"
@@ -780,7 +780,13 @@ if [[ -z "$VLLM_MODEL" ]]; then
 else
   step "Starting vLLM stack"
   (cd "$PROJECT_DIR" && docker compose up -d)
-  success "Stack started."
+
+  # Health gate: prove the container is actually up before reporting success.
+  # Reuses VLLM_HEALTH_TIMEOUT (the script's existing timeout convention):
+  # the budget must cover model loading for stacks whose image start is slow.
+  mapfile -t _ids < <(cd "$PROJECT_DIR" && docker compose ps -q)
+  wait_for_healthy "${VLLM_HEALTH_TIMEOUT}" "${_ids[@]}" \
+    || error "vLLM stack did not come up — see the status output above"
 
   # ── Health check ──────────────────────────────────────────────────────────
   step "Waiting for vLLM to respond (timeout: ${VLLM_HEALTH_TIMEOUT}s)"
