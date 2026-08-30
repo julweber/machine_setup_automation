@@ -252,15 +252,17 @@ Builds and installs llama.cpp from source with auto or manual GPU backend select
 #### `setup-openwebui.sh`
 Deploys Open WebUI using Docker Compose, connecting to an external LM Studio instance for AI model inference. Supports both direct access mode and Traefik reverse-proxy integration.
 
-**Environment variables:** `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `/srv/openwebui`), `WEBUI_SECRET_KEY` (auto-generated if not set), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
+**Environment variables:** `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `/srv/openwebui`), `WEBUI_SECRET_KEY` (generated on first run if not set; stored in `.env` and reused on re-runs — set explicitly to override), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
 
 **Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
 
 **Features:**
 - Direct mode: Accessible at `http://localhost:3333`
 - Traefik mode: Accessible via custom domain with TLS
-- Auto-generates secure secret key stored in `.env` file
+- Secure secret key: generated on first run, stored in `.env` (mode 600), reused on re-runs (never rotated); `docker-compose.yml` keeps only a literal `${WEBUI_SECRET_KEY}` placeholder resolved from the project `.env`
 - Creates convenience start script
+
+**Upgrade note:** Installs that predate this change carried the key inside `docker-compose.yml`. On the first run of the updated script a fresh key is generated — existing sessions are invalidated, but data is preserved.
 
 #### `setup-opencode-server.sh`
 Installs and configures the Opencode AI coding agent server with systemd integration.

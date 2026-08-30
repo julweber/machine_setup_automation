@@ -12,7 +12,8 @@
 # KEY ACTIONS:
 #   1. Pre-flight checks: Verifies Docker installation & daemon, port availability
 #   2. Checks if an existing Open WebUI container/compose stack is running
-#   3. Generates a secure secret key (stored in .env file for security)
+#   3. Secures the secret key (generated on first run, stored in .env mode 600,
+#      reused on re-runs — never rotated)
 #   4. Creates docker-compose.yml with Traefik or direct access mode
 #   5. Pulls required Docker images
 #   6. Starts the Docker Compose stack in detached mode
@@ -23,7 +24,8 @@
 #   OPENWEBUI_PORT     - Host port for direct web UI access (default: 3333)
 #   LM_STUDIO_PORT     - Port where LM Studio API is listening (default: 1234)
 #   PROJECT_DIR        - Installation directory (default: /srv/openwebui)
-#   WEBUI_SECRET_KEY   - Custom secret key (auto-generated if not set, stored in .env)
+#   WEBUI_SECRET_KEY   - Custom secret key (generated on first run if not set;
+#                        re-runs reuse the value stored in .env — never rotated)
 #
 #   Traefik reverse-proxy integration (opt-in):
 #   OPENWEBUI_TRAEFIK  - Set to "true" to enable Traefik routing (default: false)
@@ -114,6 +116,10 @@ warn()    { echo -e "${YELLOW}[WARN]${RESET}  $*"; }
 error()   { echo -e "${RED}[ERROR]${RESET} $*" >&2; exit 1; }
 step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
 
+# Shared helpers (env_file_get, ensure_proxy_network). Sourced after the
+# colour/logging definitions above, so this script's versions are kept.
+source "${SCRIPT_DIR}/../lib/helpers.sh"
+
 # ─────────────────────────────────────────────────────────────────────────────
 # USAGE / HELP
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,7 +140,10 @@ Environment variables (all optional):
   OPENWEBUI_PORT     Host port for direct web UI access (default: 3333)
   LM_STUDIO_PORT     Port where LM Studio API is listening (default: 1234)
   PROJECT_DIR        Installation directory (default: /srv/openwebui)
-  WEBUI_SECRET_KEY   Custom secret key (auto-generated if not set, stored in .env)
+  WEBUI_SECRET_KEY   Custom secret key. If unset, a key is generated on the
+                     first run and stored in .env (mode 600, default
+                     ${PROJECT_DIR}/.env). Re-runs reuse the stored key
+                     (never rotated); set this variable to override it.
   OPENWEBUI_TRAEFIK  Set to "true" to enable Traefik routing (default: false)
   OPENWEBUI_DOMAIN   Domain for Traefik access (required when OPENWEBUI_TRAEFIK=true)
   PROXY_NETWORK      Traefik's external Docker network name (default: proxy)
@@ -205,8 +214,6 @@ fi
 
 # Traefik pre-flight (only when opt-in)
 if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
-  # shellcheck disable=SC1091
-  source "${SCRIPT_DIR}/../lib/helpers.sh"
   if ! ensure_proxy_network; then
     error "Traefik proxy network '${PROXY_NETWORK}' not found or inaccessible."
   fi
@@ -265,19 +272,23 @@ fi
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Render .env from templates/openwebui/env.template.
-# Existing .env files are backed up to .env.bak first (user-edit preservation).
+# A pre-existing .env is backed up to .env.bak ONLY when the content actually
+# changes, so a no-op re-run never clobbers a good backup. Mode stays 600.
 _generate_env_file() {
-  local env_file="$1"
-
-  if [[ -f "$env_file" ]]; then
-    warn "Existing .env file found. Backing up to ${env_file}.bak"
-    sudo cp "$env_file" "${env_file}.bak"
-  fi
-
+  local env_file="$1" tmp
+  tmp="$(mktemp)"
   export WEBUI_SECRET_KEY
   # shellcheck disable=SC2016  # envsubst expects the literal variable list
-  envsubst '${WEBUI_SECRET_KEY}' \
-    < "${TEMPLATE_DIR}/env.template" > "$env_file"
+  envsubst '${WEBUI_SECRET_KEY}' < "${TEMPLATE_DIR}/env.template" > "$tmp"
+  if [[ -f "$env_file" ]]; then
+    if cmp -s "$tmp" "$env_file"; then
+      info "${env_file} unchanged."
+    else
+      warn "Existing .env changed — backing up to ${env_file}.bak"
+      cp "$env_file" "${env_file}.bak"
+    fi
+  fi
+  mv "$tmp" "$env_file"
   chmod 600 "$env_file"
 }
 
@@ -293,10 +304,10 @@ _generate_compose_file() {
   fi
 
   GENERATED_DATE="$(date -Iseconds)"
-  export GENERATED_DATE OPENWEBUI_PORT LM_STUDIO_PORT WEBUI_SECRET_KEY \
-    PROXY_NETWORK OPENWEBUI_DOMAIN
-  # shellcheck disable=SC2016  # envsubst expects the literal variable list
-  envsubst '${GENERATED_DATE} ${OPENWEBUI_PORT} ${LM_STUDIO_PORT} ${WEBUI_SECRET_KEY} ${PROXY_NETWORK} ${OPENWEBUI_DOMAIN}' \
+  export GENERATED_DATE OPENWEBUI_PORT LM_STUDIO_PORT PROXY_NETWORK OPENWEBUI_DOMAIN
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list;
+  # WEBUI_SECRET_KEY stays LITERAL on purpose — Compose resolves it from ${PROJECT_DIR}/.env
+  envsubst '${GENERATED_DATE} ${OPENWEBUI_PORT} ${LM_STUDIO_PORT} ${PROXY_NETWORK} ${OPENWEBUI_DOMAIN}' \
     < "$compose_template" > "$compose_file"
 }
 
@@ -328,17 +339,25 @@ success "Directory ready."
 
 step "Generating secure secret key"
 
-if [[ -n "$WEBUI_SECRET_KEY" ]]; then
-  info "Using custom WEBUI_SECRET_KEY from environment variable."
-else
-  WEBUI_SECRET_KEY="$(openssl rand -hex 32)"
-  success "Generated new random secret key (first 8 chars: ${WEBUI_SECRET_KEY:0:8}...)."
+ENV_FILE="${PROJECT_DIR}/.env"
+
+# Reuse the persisted key: rotating it invalidates every session and signed token.
+if [[ -z "$WEBUI_SECRET_KEY" && -f "$ENV_FILE" ]]; then
+  WEBUI_SECRET_KEY="$(env_file_get "$ENV_FILE" WEBUI_SECRET_KEY || true)"
+  [[ -n "$WEBUI_SECRET_KEY" ]] && info "Reusing WEBUI_SECRET_KEY from ${ENV_FILE}."
 fi
 
-# Store secret in .env file for security (not in docker-compose.yml)
-ENV_FILE="${PROJECT_DIR}/.env"
+if [[ -n "$WEBUI_SECRET_KEY" ]]; then
+  info "Using WEBUI_SECRET_KEY from environment variable."
+else
+  WEBUI_SECRET_KEY="$(openssl rand -hex 32)"
+  success "Generated new random secret key."
+fi
+
+# Store the key in .env (mode 600). The compose file keeps only the literal
+# ${WEBUI_SECRET_KEY} placeholder; Compose resolves it from .env at runtime.
 _generate_env_file "$ENV_FILE"
-success "Secret key stored securely in .env file (mode: 600)."
+success "Secret key stored securely in ${ENV_FILE} (mode: 600)."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # GENERATE DOCKER COMPOSE FILE
@@ -362,7 +381,7 @@ success "start_openwebui.sh created."
 
 step "Pulling Docker images"
 
-docker compose pull
+docker compose --env-file "$ENV_FILE" pull
 
 success "Images pulled."
 
@@ -372,7 +391,7 @@ success "Images pulled."
 
 step "Starting Open WebUI stack (detached)"
 
-docker compose up -d
+docker compose --env-file "$ENV_FILE" up -d
 
 success "Stack started."
 
@@ -446,13 +465,13 @@ echo -e "  ${BOLD}Environment file${RESET}   ${PROJECT_DIR}/.env"
 echo ""
 echo -e "${YELLOW}  First-time setup:${RESET}"
 echo -e "  Open the Web UI and create your admin account."
-echo -e "  The secret key has been auto-generated and stored in .env file."
+echo -e "  The secret key is stored in ${ENV_FILE} (generated on first run, reused on re-runs)."
 
 if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
   echo ""
   echo -e "${YELLOW}  Note:${RESET}"
-  echo -e "  - WEBUI_SECRET_KEY is securely generated and stored in .env file (not docker-compose.yml)"
-  echo -e "  - To use a custom key, set WEBUI_SECRET_KEY env var before running this script"
+  echo -e "  - WEBUI_SECRET_KEY is stored in ${ENV_FILE} (mode 600); ${COMPOSE_FILE} carries only the literal \${WEBUI_SECRET_KEY} placeholder"
+  echo -e "  - Re-runs reuse the stored key (never rotated); set the WEBUI_SECRET_KEY env var to override it"
 fi
 
 echo ""
@@ -466,15 +485,16 @@ if [[ "$OPENWEBUI_TRAEFIK" == "true" ]]; then
 fi
 
 echo -e "  Start:        ./start_openwebui.sh"
-echo -e "  Stop:         docker compose down"
-echo -e "  Restart:      docker compose restart"
-echo -e "  Follow logs:  docker compose logs -f"
+echo -e "                (or: docker compose --env-file ${ENV_FILE} up -d)"
+echo -e "  Stop:         docker compose --env-file ${ENV_FILE} down"
+echo -e "  Restart:      docker compose --env-file ${ENV_FILE} restart"
+echo -e "  Follow logs:  docker compose --env-file ${ENV_FILE} logs -f"
 echo -e "  Shell into:   docker exec -it openwebui bash"
 
 if [[ "$OPENWEBUI_TRAEFIK" != "true" ]]; then
   echo ""
   echo -e "${BOLD}🔐 Security Notice:${RESET}"
-  echo -e "  Your WEBUI_SECRET_KEY is stored in .env file (mode: 600)."
+  echo -e "  Your WEBUI_SECRET_KEY is stored in ${ENV_FILE} (mode: 600); ${COMPOSE_FILE} contains only a literal \${WEBUI_SECRET_KEY} placeholder."
   echo -e "  Do not share this file or expose it publicly without TLS protection."
 fi
 

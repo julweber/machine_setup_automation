@@ -340,3 +340,37 @@
 - The dev box has an actual pre-ticket Planka install at `/srv/planka` (trust-mode, Aug 23). One exploratory test run initially wrote its `.env` there by accident (a test-harness mistake, not a script bug); the file was removed and `/srv/planka` verified back to its exact pre-test state. Its old world-readable compose (inlined `SECRET_KEY`/`DATABASE_URL`) is replaced by the new script on the next real run — that is the ticket's migration path.
 - `env_file_get` on an existing-but-unreadable `.env` would yield empty values (sed failure swallowed by the pipeline) → regeneration. Unreachable in the supported cases (the file is always owned by the invoking user / root-readable), accepted as per the ticket's reference behaviour.
 - Ticket's `**Status**: open` field left untouched, consistent with how tickets 01–04 were closed.
+
+## 2026-08-30T06:18:36+02:00 - worker (ticket 06)
+
+### Implemented: Open WebUI secret lifecycle — `WEBUI_SECRET_KEY` out of `docker-compose.yml`, no rotation on re-run, contradictory docs fixed (ticket `06-openwebui-secret-lifecycle`)
+
+- [x] `tasks/setup-openwebui.sh` — reuse-first key block: before generation, `WEBUI_SECRET_KEY` is read from `${PROJECT_DIR}/.env` via `env_file_get` (ticket 05 helper) when the env var is unset; a key is generated only on a genuine first run or when the operator sets it explicitly. `ENV_FILE=` assignment moved up, duplicate deleted.
+- [x] `tasks/setup-openwebui.sh` — `lib/helpers.sh` now sourced unconditionally (previously only inside the Traefik pre-flight) so `env_file_get` is available; sourced after this script's colour/logging definitions so those are kept (lib definitions are `declare -F`-guarded).
+- [x] `tasks/setup-openwebui.sh` — `_generate_env_file` renders to `mktemp` and creates `.env.bak` ONLY on actual content change (`cmp -s`); a no-op re-run logs ".env unchanged" and no longer clobbers a good `.env.bak`; mode 600 kept. The `sudo cp` is gone (project dir is user-owned; the ticket's reference).
+- [x] `tasks/setup-openwebui.sh` — `WEBUI_SECRET_KEY` removed from the compose `export`/`envsubst` lists, so `docker-compose.yml` carries only the literal `${WEBUI_SECRET_KEY}` placeholder; Compose resolves it from the project `.env` at runtime.
+- [x] `tasks/setup-openwebui.sh` — `docker compose pull` / `up -d` now carry explicit `--env-file "$ENV_FILE"`; the summary "Useful commands" block shows the explicit `--env-file` form (down/restart/logs + an `up -d` alternative next to `./start_openwebui.sh`), consistent with the ticket-05 Planka summary convention.
+- [x] `tasks/setup-openwebui.sh` — secret out of the run log: the generation success message no longer prints the first 8 characters of the key (only that a key was generated).
+- [x] `templates/openwebui/docker-compose.direct.yml` + `docker-compose.traefik.yml` — header comment now states `WEBUI_SECRET_KEY` is resolved at runtime from `${PROJECT_DIR}/.env` (mode 600) and intentionally left as a literal `${VAR}` token; the inline env-line comment fixed to match ("resolved from the project .env at runtime").
+- [x] `tasks/setup-openwebui.sh` — summary/Note/Security-Notice lines now state the real paths and that the compose file carries only a placeholder (the "not docker-compose.yml" statements are now verifiably true); the "First-time setup" line says the key is generated on first run and reused on re-runs.
+- [x] `tasks/setup-openwebui.sh` — `--help` + header comment document the reuse behaviour for `WEBUI_SECRET_KEY` (generated on first run, stored in `.env` mode 600, reused on re-runs — never rotated; explicit env wins).
+- [x] `README.md` — Open WebUI entry updated (env-var semantics + Features bullet) plus the ticket's upgrade note: pre-change installs that carried the key in `docker-compose.yml` get a fresh key on first run of the updated script (sessions invalidated, data preserved).
+
+### Validation
+- [x] `shellcheck tasks/setup-openwebui.sh` exit 0; `bash -n` clean
+- [x] `yamllint -c templates/.yamllint templates/openwebui/` — only the pre-existing `document-start` warnings (repo convention for templates)
+- [x] Ticket render-level proof: rendered direct + traefik compose both contain `- WEBUI_SECRET_KEY=${WEBUI_SECRET_KEY}` literal; `grep -c '[0-9a-f]\{32\}'` → 0 on both
+- [x] Real-docker `docker compose config` on the rendered file: with `.env` present → exactly one `WEBUI_SECRET_KEY: <64-hex>`; without `.env` → `WEBUI_SECRET_KEY: ""` (no 32-hex secret leaks)
+- [x] Stub-based two-phase runs (docker/curl/ss stubbed, `PROJECT_DIR=/tmp/…`; dev-box `/srv/openwebui` untouched):
+  - fresh run → `.env` mode 600 with 64-hex key; compose holds only the literal placeholder; the key **and its first 8 chars appear nowhere** in the run log
+  - no-op re-run (`--interactive`, y) → `.env` `sha256` **identical**, **no `.env.bak` created**, "Reusing WEBUI_SECRET_KEY …" + ".env unchanged" logged, rc=0
+  - explicit `WEBUI_SECRET_KEY` override → wins over the persisted value, written to `.env`, `.env.bak` holds the previous key (both mode 600), override value absent from the log
+  - edge case: pre-existing `.env` with **no** key → fresh key generated (the `[[ ]] && info` reuse guard does not trip `set -euo pipefail`), old content backed up
+- [x] `--help` exits 0 and documents the reuse behaviour (the `${PROJECT_DIR}` in the help text expands to the effective default)
+
+### Notes / assumptions
+- The ticket's reference line `info "Using WEBUI_SECRET_KEY from environment variable."` is kept verbatim; on a `.env`-reuse run the immediately preceding "Reusing WEBUI_SECRET_KEY from …" line is the accurate one, so provenance is explicit either way.
+- `templates/openwebui/start_openwebui.sh` intentionally untouched (its SC2046/SC2164 findings belong to ticket `20-lint-gate-and-ci.md`, per the ticket).
+- The non-`--interactive` existing-stack refusal (`:222-243`) is out of scope (ticket `12-existing-stack-rerun-policy.md`); image pinning likewise (ticket `17-supply-chain-pinning.md`).
+- Live VM run (`tests/run-vm-tests.sh --scripts setup-docker,setup-traefik,setup-openwebui --keep-vm`) not executed in this pass (capacity); the stub-based two-phase runs cover the same code paths and the render-level + real-`docker compose config` proofs cover the template side. Flagged for the branch's final validation, same as ticket 05.
+- Ticket's `**Status**: open` field left untouched, consistent with how tickets 01–05 were closed.
