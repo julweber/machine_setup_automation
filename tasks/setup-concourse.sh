@@ -103,7 +103,9 @@ generates TSA/worker RSA keys, writes ${CONCOURSE_HOME}/.env with credentials,
 and installs/configures the fly CLI.
 
 ${BOLD}Options:${RESET}
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
+                  (port conflicts, …)
   -h, --help      Show this help and exit
 
 ${BOLD}Environment variables${RESET} (all optional):
@@ -204,32 +206,41 @@ ENV_FILE="${CONCOURSE_HOME}/.env"
 
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
-  warn "This will re-create the Concourse stack."
-  
+  # Re-run policy (ticket 12): the existing stack is CONVERGED — config is
+  # re-rendered, the stored credentials in ${ENV_FILE} are reused to match
+  # the persisted postgres volume, and 'docker compose up -d' reconciles only
+  # what changed. Tear-down (and the optional volume wipe) is only offered
+  # with --interactive, and only then only on explicit 'y'.
+  info "Re-running will converge the existing stack (no tear-down)."
+
   # Preserve RSA keys - they are bind-mounted and will survive re-deployment
   if [[ -d "${CONCOURSE_HOME}/keys" ]]; then
     info "RSA keys in ${CONCOURSE_HOME}/keys/ will be preserved for session continuity."
   fi
 
+  RECREATE=false
+  WIPE_VOLUMES=false
   if [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Re-create stack? [y/N] " answer
-    [[ "${answer,,}" == "y" ]] || { info "Keeping existing stack. Exiting."; exit 0; }
-
-    read -rp "    Also wipe the PostgreSQL data volume? Credentials will be regenerated. [y/N] " wipe_answer
-    WIPE_VOLUMES=false
-    [[ "${wipe_answer,,}" == "y" ]] && WIPE_VOLUMES=true
-  else
-    error "Existing Concourse stack detected at ${CONCOURSE_HOME}. Re-run with --interactive to re-create the stack (optionally wiping the PostgreSQL data volume), or remove ${COMPOSE_FILE} manually."
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      RECREATE=true
+      read -rp "    Also wipe the PostgreSQL data volume? Credentials will be regenerated. [y/N] " wipe_answer
+      if [[ "${wipe_answer,,}" == "y" ]]; then
+        WIPE_VOLUMES=true
+      fi
+    fi
   fi
 
-  info "Stopping and removing existing stack..."
-  if [[ "$WIPE_VOLUMES" == "true" ]]; then
-    sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" down -v 2>/dev/null || true
-    success "Old stack and database volume removed."
-  else
-    sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" down 2>/dev/null || true
-    info "Existing credentials from ${ENV_FILE} will be reused to match the preserved volume."
-    success "Old stack removed. Database volume and keys preserved."
+  if [[ "$RECREATE" == "true" ]]; then
+    info "Stopping and removing existing stack..."
+    if [[ "$WIPE_VOLUMES" == "true" ]]; then
+      sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" down -v 2>/dev/null || true
+      success "Old stack and database volume removed."
+    else
+      sudo docker compose --env-file "${ENV_FILE}" -f "$COMPOSE_FILE" down 2>/dev/null || true
+      info "Existing credentials from ${ENV_FILE} will be reused to match the preserved volume."
+      success "Old stack removed. Database volume and keys preserved."
+    fi
   fi
 fi
 

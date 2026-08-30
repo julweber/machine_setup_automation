@@ -75,7 +75,20 @@ DB_TYPE="${DB_TYPE:-sqlite}"
 # PostgreSQL settings (only used when DB_TYPE=postgres)
 POSTGRES_DB="${POSTGRES_DB:-forgejo}"
 POSTGRES_USER="${POSTGRES_USER:-forgejo}"
+POSTGRES_PASSWORD_SUPPLIED="${POSTGRES_PASSWORD:-}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-changeme}"     # ← change before running!
+POSTGRES_PASSWORD_REUSED=false
+# Reuse-first (re-run policy, ticket 12): when the postgres password was not
+# set explicitly, reuse the value stored in the existing compose file.
+# Re-rendering with the default 'changeme' would break DB auth against the
+# persisted postgres volume on a re-run.
+if [[ "$DB_TYPE" != "sqlite" && -z "${POSTGRES_PASSWORD_SUPPLIED}" && -f "${FORGEJO_HOME}/docker-compose.yml" ]]; then
+  _stored_pg_password="$(grep -m1 'POSTGRES_PASSWORD=' "${FORGEJO_HOME}/docker-compose.yml" | cut -d= -f2- || true)"
+  if [[ -n "${_stored_pg_password}" && "${_stored_pg_password}" != "changeme" ]]; then
+    POSTGRES_PASSWORD="${_stored_pg_password}"
+    POSTGRES_PASSWORD_REUSED=true
+  fi
+fi
 
 # Traefik reverse-proxy integration (opt-in)
 FORGEJO_TRAEFIK="${FORGEJO_TRAEFIK:-false}"            # Set to "true" to enable Traefik labels
@@ -109,7 +122,9 @@ Supports SQLite for lightweight setups or PostgreSQL for production use,
 with optional Traefik reverse-proxy integration.
 
 Options:
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
+                  (default passwords, …)
   -h, --help      Show this help and exit
 
 Environment variables (all optional):
@@ -168,11 +183,13 @@ fi
 
 success "Docker $(docker --version | awk '{print $3}' | tr -d ',') detected and running."
 
-# Traefik pre-flight (only when opt-in)
+# Shared helpers (health gate, …) — idempotent; colors above are kept
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/../lib/helpers.sh"
+
+# Traefik pre-flight (only when opt-in)
 if [[ "$FORGEJO_TRAEFIK" == "true" ]]; then
-  # shellcheck disable=SC1091
-  source "${SCRIPT_DIR}/../lib/helpers.sh"
   ensure_proxy_network
   if [[ -z "$FORGEJO_DOMAIN" ]]; then
     echo -e "${RED}[ERROR]${RESET} FORGEJO_DOMAIN must be set when FORGEJO_TRAEFIK=true." >&2
@@ -204,18 +221,41 @@ COMPOSE_FILE="${FORGEJO_HOME}/docker-compose.yml"
 
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
+  # Re-run policy (ticket 12): the existing stack is CONVERGED — the compose
+  # file is re-rendered (stored secrets reused, see above) and 'docker
+  # compose up -d' reconciles only what changed. Tear-down only on explicit
+  # interactive 'y'. Data in ${FORGEJO_HOME}/data is preserved either way.
+  info "Re-running will converge the existing stack (no tear-down)."
+  if [[ "$POSTGRES_PASSWORD_REUSED" == "true" ]]; then
+    info "Reusing the stored PostgreSQL password (re-render keeps DB auth against the persisted volume)."
+  fi
+  # Re-run policy (ticket 12): the postgres password is baked into the
+  # persisted data volume, so an explicitly changed value cannot be converged
+  # onto the existing stack. Print the exact remedy and exit 0 (nothing is
+  # modified; the stored password stays in effect).
+  _existing_pg_password="$(grep -m1 'POSTGRES_PASSWORD=' "${COMPOSE_FILE}" | cut -d= -f2- || true)"
+  if [[ "$DB_TYPE" != "sqlite" && -n "${POSTGRES_PASSWORD_SUPPLIED}" && "${POSTGRES_PASSWORD_SUPPLIED}" != "${_existing_pg_password}" ]]; then
+    warn "POSTGRES_PASSWORD was explicitly changed, but the postgres password is"
+    warn "baked into the persisted data volume. Nothing was changed — the stored"
+    warn "password in ${COMPOSE_FILE} stays in effect."
+    warn "Either unset POSTGRES_PASSWORD and re-run (the stored value is reused), or"
+    warn "reset it in the database after starting the stack:"
+    warn "  sudo docker compose -f ${COMPOSE_FILE} exec -T postgres psql -U ${POSTGRES_USER} -d ${POSTGRES_DB} -c \"ALTER USER ${POSTGRES_USER} WITH PASSWORD '<new-password>';\""
+    warn "Or tear down and re-create interactively (data preserved):"
+    warn "  $0 --interactive"
+    exit 0
+  fi
+  RECREATE=false
   if [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Tear down existing stack and re-create? Data in ${FORGEJO_HOME}/data will be preserved. [y/N] " answer
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
-      info "Stopping and removing existing stack..."
-      sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-      success "Old stack removed."
-    else
-      info "Keeping existing stack. Exiting."
-      exit 0
+      RECREATE=true
     fi
-  else
-    error "Existing Forgejo stack detected at ${FORGEJO_HOME}. Re-run with --interactive to tear down and re-create, or remove ${COMPOSE_FILE} manually."
+  fi
+  if [[ "$RECREATE" == "true" ]]; then
+    info "Stopping and removing existing stack..."
+    sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+    success "Old stack removed."
   fi
 fi
 

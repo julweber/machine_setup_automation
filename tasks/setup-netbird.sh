@@ -156,6 +156,11 @@ ${BOLD}Environment variables${RESET} (all optional):
   WAIT_TIMEOUT             Max seconds to wait for the stack to come up and
                            become healthy after 'docker compose up -d'
                            (default: 180)
+
+${BOLD}Re-run policy${RESET} (converge by default): re-running an existing stack
+converges it — the generated files are left unchanged, images are pulled, and
+'docker compose up -d' reconciles only what changed (no tear-down, no silent
+skip). See specification/project/conventions.md.
 EOF
 }
 

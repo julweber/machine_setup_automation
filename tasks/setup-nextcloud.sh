@@ -152,7 +152,8 @@ backends, optional Redis caching, and Traefik reverse-proxy integration.
 Secrets are written to ${NEXTCLOUD_HOME:-/srv/nextcloud}/.env (mode 600), never in compose.
 
 Options:
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
   -h, --help      Show this help and exit
 
 Environment variables (all optional):
@@ -253,6 +254,12 @@ _env_reuse() { # <VAR_NAME> <key>
   fi
   printf -v "$__n" '%s' "$(_gen_password)"
 }
+# Re-run policy (ticket 12): remember whether the admin password was supplied
+# explicitly (it wins in _env_reuse) so the existing-stack check below can
+# detect a divergence that a running Nextcloud cannot converge.
+NEXTCLOUD_ADMIN_PASSWORD_SUPPLIED="${NEXTCLOUD_ADMIN_PASSWORD:-}"
+_stored_admin_password="$(grep -m1 '^NEXTCLOUD_ADMIN_PASSWORD=' <<<"${_existing_env}" | cut -d= -f2- || true)"
+
 _env_reuse MYSQL_PASSWORD             MYSQL_PASSWORD
 _env_reuse MYSQL_ROOT_PASSWORD        MYSQL_ROOT_PASSWORD
 _env_reuse POSTGRES_PASSWORD          POSTGRES_PASSWORD
@@ -324,26 +331,39 @@ COMPOSE_FILE="${NEXTCLOUD_HOME}/docker-compose.yml"
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
   echo ""
-  info "${BOLD}IMPORTANT:${RESET} Your Nextcloud data in ${NEXTCLOUD_HOME}/html and ${NEXTCLOUD_HOME}/data"
-  info "will be PRESERVED. Only the running stack will be replaced."
+  info "Re-running converges the existing stack: the config is re-rendered, the"
+  info "stored secrets in ${ENV_FILE} are reused, and 'docker compose up -d'"
+  info "reconciles only what changed. Your Nextcloud data in ${NEXTCLOUD_HOME}/html"
+  info "and ${NEXTCLOUD_HOME}/data is PRESERVED."
+  # Re-run policy (ticket 12): the admin password is applied only at FIRST
+  # install, so an explicitly changed value cannot be converged onto the
+  # existing stack. Print the exact remedy and exit 0 (nothing is modified;
+  # the stored password in ${ENV_FILE} stays in effect).
+  if [[ -n "${NEXTCLOUD_ADMIN_PASSWORD_SUPPLIED}" && "${NEXTCLOUD_ADMIN_PASSWORD_SUPPLIED}" != "${_stored_admin_password}" ]]; then
+    warn "NEXTCLOUD_ADMIN_PASSWORD was explicitly changed, but Nextcloud applies the"
+    warn "admin password only at first install. Nothing was changed — the stored"
+    warn "password in ${ENV_FILE} stays in effect."
+    warn "Change the admin password on the instance (start the stack first if it is stopped):"
+    warn "  sudo docker exec -u www-data ${CONTAINER_NAME} php occ user:resetpassword ${NEXTCLOUD_ADMIN_USER}"
+    warn "Or tear down and re-create interactively (data preserved):"
+    warn "  $0 --interactive"
+    exit 0
+  fi
+  RECREATE=false
   if [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Tear down existing stack and re-create? [y/N] " answer
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
-      # The operator confirmed the re-create: the cleanup trap must cover it,
-      # so a failure before 'up -d' or a half-created re-create is still
-      # cleaned up — and the trap must not claim "nothing torn down".
-      STACK_CREATED_THIS_RUN=1
-      info "Stopping and removing existing stack..."
-      sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
-      success "Old stack removed."
-    else
-      info "Keeping existing stack. Exiting."
-      exit 0
+      RECREATE=true
     fi
-  else
-    # Do not let the failure-cleanup trap tear down a pre-existing stack.
-    trap - EXIT
-    error "Existing Nextcloud stack detected at ${NEXTCLOUD_HOME}. Re-run with --interactive to tear down and re-create, or remove ${COMPOSE_FILE} manually."
+  fi
+  if [[ "$RECREATE" == "true" ]]; then
+    # The operator confirmed the re-create: the cleanup trap must cover it,
+    # so a failure before 'up -d' or a half-created re-create is still
+    # cleaned up — and the trap must not claim "nothing torn down".
+    STACK_CREATED_THIS_RUN=1
+    info "Stopping and removing existing stack..."
+    sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
+    success "Old stack removed."
   fi
 fi
 

@@ -167,7 +167,8 @@ labeled prometheus.scrape=true. Grafana is pre-provisioned with Node Exporter
 and cAdvisor dashboards. Re-runs are idempotent (data is never wiped).
 
 ${BOLD}Options:${RESET}
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); MONITORING_FORCE=true still re-creates
   -h, --help      Show this help and exit
 
 ${BOLD}Environment variables${RESET} (all optional):
@@ -304,29 +305,30 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   recreate=false
 
   if [[ "${MONITORING_FORCE}" == "true" ]]; then
+    # MONITORING_FORCE is the non-interactive re-create escape hatch — it wins
+    # over INTERACTIVE (re-run policy, ticket 12).
     info "MONITORING_FORCE=true — re-creating the stack (data preserved)."
     recreate=true
   elif [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Re-create the stack? Data in ${PROMETHEUS_HOME} and ${GRAFANA_HOME} will be preserved. [y/N] " _answer
-    [[ "${_answer,,}" == "y" ]] && recreate=true
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " _answer
+    if [[ "${_answer,,}" == "y" ]]; then
+      recreate=true
+    fi
+  fi
+
+  if [[ "$recreate" == "true" ]]; then
+    info "Stopping the existing stack (data preserved)."
+    # The operator explicitly accepted the re-create (MONITORING_FORCE or the
+    # interactive confirm above): the cleanup trap must cover this re-create,
+    # so a failure before 'up -d' or a half-created re-create is still cleaned
+    # up — and the trap must not claim "nothing torn down".
+    STACK_CREATED_THIS_RUN=1
+    docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
   else
-    # Do not let the failure-cleanup trap tear down a pre-existing stack.
-    trap - EXIT
-    error "Existing monitoring stack detected at ${COMPOSE_FILE}. Set MONITORING_FORCE=true to re-create it, re-run with --interactive to confirm, or remove ${COMPOSE_FILE} manually."
+    # Re-run policy (ticket 12): CONVERGE — the config is re-rendered below
+    # and 'docker compose up -d' reconciles only what changed (data preserved).
+    info "Re-running will converge the existing stack (no tear-down; data preserved)."
   fi
-
-  if [[ "$recreate" == "false" ]]; then
-    info "Keeping the existing stack. Exiting."
-    exit 0
-  fi
-
-  info "Stopping the existing stack (data preserved)."
-  # The operator explicitly accepted the re-create (MONITORING_FORCE or the
-  # interactive confirm above): the cleanup trap must cover this re-create,
-  # so a failure before 'up -d' or a half-created re-create is still cleaned
-  # up — and the trap must not claim "nothing torn down".
-  STACK_CREATED_THIS_RUN=1
-  docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
 fi
 
 if [[ "$GRAFANA_TRAEFIK" != "true" ]]; then

@@ -101,7 +101,9 @@ Deploys Excalidraw (virtual whiteboard) using Docker. Supports direct host
 port access or Traefik reverse-proxy integration with TLS termination.
 
 Options:
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
+                  (port conflicts, …)
   -h, --help      Show this help and exit
 
 Environment variables (all optional):
@@ -171,19 +173,69 @@ step "Checking for existing Excalidraw container"
 
 if docker ps --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
   warn "Excalidraw container is already running."
+  RECREATE_CONTAINER=false
   if [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Stop and re-create the container? [y/N] " answer
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
-      info "Stopping and removing existing container..."
-      docker stop "$CONTAINER_NAME" 2>/dev/null || true
-      docker rm "$CONTAINER_NAME" 2>/dev/null || true
-      success "Existing container removed."
+      RECREATE_CONTAINER=true
+    fi
+  fi
+  if [[ "$RECREATE_CONTAINER" == "true" ]]; then
+    info "Stopping and removing existing container..."
+    docker stop "$CONTAINER_NAME" 2>/dev/null || true
+    docker rm "$CONTAINER_NAME" 2>/dev/null || true
+    success "Existing container removed."
+  else
+    # Re-run policy (ticket 12): this is a bare 'docker run' container — there
+    # is nothing for compose to reconcile. Compare the running container's
+    # args with what this run would create: a match is a converged no-op,
+    # a difference is printed with the exact re-create command (exit 0,
+    # nothing touched).
+    _diffs=()
+    _actual_image="$(docker inspect --format '{{.Config.Image}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+    if [[ "${_actual_image}" != "${EXCALIDRAW_IMAGE}" ]]; then
+      _diffs+=("image: running '${_actual_image}' vs configured '${EXCALIDRAW_IMAGE}'")
+    fi
+    if [[ "$EXCALIDRAW_TRAEFIK" == "true" ]]; then
+      _actual_rule="$(docker inspect --format '{{index .Config.Labels "traefik.http.routers.excalidraw.rule"}}' "$CONTAINER_NAME" 2>/dev/null || true)"
+      if [[ "${_actual_rule}" != "Host(\`${EXCALIDRAW_DOMAIN}\`)" ]]; then
+        _diffs+=("traefik router rule: running '${_actual_rule}' vs configured 'Host(\`${EXCALIDRAW_DOMAIN}\`)'")
+      fi
     else
-      info "Keeping existing container. Exiting."
+      _actual_ports="$(docker port "$CONTAINER_NAME" 2>/dev/null || true)"
+      # 'docker port' prints e.g. '80/tcp  0.0.0.0:5005->80/tcp' — the host
+      # port is followed by '->', not by end-of-line.
+      if ! grep -Eq ":${HOST_PORT}($|->)" <<<"${_actual_ports}"; then
+        _diffs+=("host port: running container does not publish ${HOST_PORT}")
+      fi
+    fi
+    if [[ ${#_diffs[@]} -eq 0 ]]; then
+      success "Container '${CONTAINER_NAME}' matches the current configuration — converged (nothing to do)."
       exit 0
     fi
-  else
-    error "Excalidraw container '${CONTAINER_NAME}' is already running. Stop it manually (docker stop ${CONTAINER_NAME}) or re-run with --interactive to stop and re-create."
+    warn "Container '${CONTAINER_NAME}' diverges from the current configuration:"
+    for _d in "${_diffs[@]}"; do
+      warn "    - ${_d}"
+    done
+    warn "Container args are baked into 'docker run' at create time and cannot be reconciled in place."
+    warn "Converge now:"
+    if [[ "$EXCALIDRAW_TRAEFIK" == "true" ]]; then
+      warn "  docker rm -f ${CONTAINER_NAME} && docker run -dit \\"
+      warn "    --name ${CONTAINER_NAME} --restart always --network ${PROXY_NETWORK} \\"
+      warn "    --label traefik.enable=true \\"
+      warn "    --label traefik.docker.network=${PROXY_NETWORK} \\"
+      warn "    --label 'traefik.http.routers.excalidraw.rule=Host(\`${EXCALIDRAW_DOMAIN}\`)' \\"
+      warn "    --label traefik.http.routers.excalidraw.entrypoints=websecure \\"
+      warn "    --label traefik.http.routers.excalidraw.tls.certresolver=letsencrypt \\"
+      warn "    --label traefik.http.services.excalidraw.loadbalancer.server.port=80 \\"
+      warn "    ${EXCALIDRAW_IMAGE}"
+    else
+      warn "  docker rm -f ${CONTAINER_NAME} && docker run -dit \\"
+      warn "    --name ${CONTAINER_NAME} --restart always -p ${HOST_PORT}:80 ${EXCALIDRAW_IMAGE}"
+    fi
+    warn "Or re-run interactively to stop and re-create automatically:"
+    warn "  $0 --interactive"
+    exit 0
   fi
 elif docker ps -a --format '{{.Names}}' | grep -q "^${CONTAINER_NAME}$"; then
   # Container exists but is not running

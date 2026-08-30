@@ -54,7 +54,10 @@ VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"  # additional vLLM server arguments
 # ── Multi-GPU / memory tuning ─────────────────────────────────────────────────
 VLLM_TENSOR_PARALLEL="${VLLM_TENSOR_PARALLEL:-1}"  # tensor-parallel degree (# GPUs)
 VLLM_MAX_MODEL_LEN="${VLLM_MAX_MODEL_LEN:-}"        # cap context length to reduce KV memory
-VLLM_DTYPE="${VLLM_DTYPE:-auto}"                    # model dtype: auto|bfloat16|float16|float32
+# Empty default on purpose (re-run policy, ticket 12): a non-empty default
+# would overwrite a value the operator stored in .env on a re-run. vLLM's
+# own default is 'auto'; the --dtype flag is emitted only when set.
+VLLM_DTYPE="${VLLM_DTYPE:-}"                       # model dtype: auto|bfloat16|float16|float32
 VLLM_SHM_SIZE="${VLLM_SHM_SIZE:-8g}"               # shared memory size (increase for multi-GPU)
 VLLM_MAX_NUM_SEQS="${VLLM_MAX_NUM_SEQS:-}"           # max concurrent sequences (default: vLLM default)
 VLLM_MAX_NUM_BATCHED_TOKENS="${VLLM_MAX_NUM_BATCHED_TOKENS:-}"  # max batched tokens per iteration (default: vLLM default)
@@ -78,6 +81,7 @@ WARMUP=1                                          # post-health warmup request (
 BACKEND=""    # nvidia | amd | cpu  (empty = auto-detect)
 FORCE=0
 CHECK_ONLY=0
+INTERACTIVE=false   # re-run policy (ticket 12): offer tear-down/re-create of an existing stack
 
 VLLM_TRAEFIK="${VLLM_TRAEFIK:-false}"
 VLLM_DOMAIN="${VLLM_DOMAIN:-}"
@@ -261,6 +265,7 @@ usage() {
   echo "  --traefik             Enable Traefik reverse-proxy integration"
   echo "  --domain <host>       Domain for Traefik  (required with --traefik)"
   echo "  --force               Re-create stack even if already present"
+  echo "  --interactive         Offer tear-down/re-create of an existing stack (default: converge)"
   echo "  --check               Check installation status and exit"
   echo "  --help                Show this help"
   echo ""
@@ -293,6 +298,13 @@ usage() {
   echo "  $0 --image nvcr.io/nvidia/vllm:26.05-py3   # NGC image (needs: docker login nvcr.io)"
   echo "  $0 --check                          # show stack status"
   echo "  $0 --force --nvidia                 # re-create CUDA stack"
+  echo ""
+  echo -e "${BOLD}Re-run policy${RESET} (converge by default):"
+  echo "  Re-running an existing stack converges it: the .env and compose file are"
+  echo "  re-rendered (stored values reused), and 'docker compose up -d' reconciles"
+  echo "  only what changed. Model args that diverge from the running stack are"
+  echo "  printed with the exact re-create command. --force (or interactive 'y')"
+  echo "  tears down and re-creates."
   exit 0
 }
 
@@ -325,6 +337,7 @@ while [[ $# -gt 0 ]]; do
     --traefik)          VLLM_TRAEFIK="true" ;;
     --domain)           shift; VLLM_DOMAIN="$1" ;;
     --force)            FORCE=1 ;;
+    --interactive)      INTERACTIVE=true ;;
     --check)            CHECK_ONLY=1 ;;
     --help|-h)          usage ;;
     *) error "Unknown option: $1  (use --help for usage)" ;;
@@ -344,6 +357,36 @@ fi
 
 # ── Detect existing stack ──────────────────────────────────────────────────────
 COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yml"
+ENV_FILE="${PROJECT_DIR}/.env"
+
+# Re-run policy (ticket 12): reuse-first .env values. An explicitly set value
+# (env or CLI) wins; otherwise the value stored in the existing .env is reused
+# so a re-run never resets operator configuration (incl. the HF_TOKEN secret).
+_env_reused=()
+_env_reuse() { # <var-name> <key>
+  local var_name="$1" key="$2" current
+  if [[ -z "${!var_name}" && -f "$ENV_FILE" ]]; then
+    current="$(grep -m1 "^${key}=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+    if [[ -n "$current" ]]; then
+      printf -v "$var_name" '%s' "$current"
+      _env_reused+=("${key}")
+    fi
+  fi
+}
+_env_reuse VLLM_MODEL                  VLLM_MODEL
+_env_reuse HF_TOKEN                    HF_TOKEN
+_env_reuse VLLM_GPU_UTIL               VLLM_GPU_UTIL
+_env_reuse VLLM_DTYPE                  VLLM_DTYPE
+_env_reuse VLLM_MAX_MODEL_LEN          VLLM_MAX_MODEL_LEN
+_env_reuse VLLM_SERVED_MODEL_NAME      VLLM_SERVED_MODEL_NAME
+_env_reuse VLLM_TRUST_REMOTE_CODE      VLLM_TRUST_REMOTE_CODE
+_env_reuse VLLM_LOAD_FORMAT            VLLM_LOAD_FORMAT
+_env_reuse VLLM_REASONING_PARSER       VLLM_REASONING_PARSER
+_env_reuse VLLM_TOOL_CALL_PARSER       VLLM_TOOL_CALL_PARSER
+_env_reuse VLLM_ENABLE_AUTO_TOOL_CHOICE VLLM_ENABLE_AUTO_TOOL_CHOICE
+_env_reuse VLLM_EXTRA_ARGS             VLLM_EXTRA_ARGS
+_env_reuse VLLM_MAX_NUM_SEQS           VLLM_MAX_NUM_SEQS
+_env_reuse VLLM_MAX_NUM_BATCHED_TOKENS VLLM_MAX_NUM_BATCHED_TOKENS
 
 print_found_status() {
   echo ""
@@ -364,23 +407,44 @@ print_found_status() {
 
 step "Checking for existing vLLM installation"
 
+VLLM_STACK_RUNNING=false
+RECREATE_VLLM=false
+
 if [[ -f "$COMPOSE_FILE" ]]; then
   print_found_status
+  if docker compose -f "${COMPOSE_FILE}" ps --quiet 2>/dev/null | grep -q .; then
+    VLLM_STACK_RUNNING=true
+  fi
 
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
     info "Run with ${BOLD}--force${RESET} to re-create the stack."
     exit 0
   fi
 
-  if [[ "$FORCE" -eq 0 ]]; then
-    echo -e "  ${YELLOW}Nothing to do.${RESET} Use ${BOLD}--force${RESET} to re-create the stack."
+  if [[ "$FORCE" -eq 1 ]]; then
+    RECREATE_VLLM=true
+    warn "--force specified – tearing down existing stack."
+    (cd "$PROJECT_DIR" && docker compose down 2>/dev/null) || true
     echo ""
-    exit 0
+  elif [[ "$INTERACTIVE" == "true" && "$VLLM_STACK_RUNNING" == "true" ]]; then
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      RECREATE_VLLM=true
+      warn "Re-create confirmed – tearing down existing stack."
+      (cd "$PROJECT_DIR" && docker compose down 2>/dev/null) || true
+      echo ""
+    fi
   fi
-
-  warn "--force specified – tearing down existing stack."
-  (cd "$PROJECT_DIR" && docker compose down 2>/dev/null) || true
-  echo ""
+  if [[ "$RECREATE_VLLM" != "true" ]]; then
+    # Re-run policy (ticket 12): CONVERGE — the .env and compose file are
+    # re-rendered below (stored values reused) and 'docker compose up -d'
+    # reconciles only what changed. Model-arg divergence on the running stack
+    # is printed with the exact remedy (see the hash check after render).
+    info "Converging the existing stack (no tear-down)."
+    if [[ ${#_env_reused[@]} -gt 0 ]]; then
+      info "Reused ${#_env_reused[@]} value(s) from ${ENV_FILE}: ${_env_reused[*]}"
+    fi
+  fi
 else
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
     echo ""
@@ -700,8 +764,8 @@ _add_flag() { VLLM_COMMAND_FLAGS="${VLLM_COMMAND_FLAGS:+${VLLM_COMMAND_FLAGS}$'\
 if [[ "${VLLM_TENSOR_PARALLEL}" -gt 1 ]]; then
   _add_flag "--tensor-parallel-size ${VLLM_TENSOR_PARALLEL}"
 fi
-# dtype: emit flag only when not 'auto' (vLLM default is auto)
-if [[ "${VLLM_DTYPE}" != "auto" ]]; then
+# dtype: emit flag only when set and not 'auto' (vLLM default is auto)
+if [[ -n "${VLLM_DTYPE}" && "${VLLM_DTYPE}" != "auto" ]]; then
   _add_flag "--dtype ${VLLM_DTYPE}"
 fi
 # Values from .env stay compose-time substitutions (\$ kept literal)
@@ -751,6 +815,27 @@ envsubst '${VLLM_IMAGE} ${VLLM_SHM_SIZE} ${HF_CACHE_DIR} ${PROJECT_DIR} ${LMSTUD
 sed -i 's/[[:space:]]*$//' "$COMPOSE_FILE"
 success "docker-compose.yml created: ${COMPOSE_FILE} (backend: ${BACKEND}, exposure: ${EXPOSURE_MODE})"
 
+# ── Re-run policy (ticket 12): model args cannot converge a running stack ──
+# Model args are baked into the container command at create time (rendered
+# into the compose file and/or resolved from .env at start). The rendered
+# config (compose + .env + extra-vars.env, generated-date lines excluded)
+# is compared with what the running stack was last created from; on
+# divergence print the exact remedy and exit 0 — never silently recreate.
+CONVERGE_HASH_FILE="${PROJECT_DIR}/.converge-hash"
+_render_hash="$(sed '/^# Generated/d' "$COMPOSE_FILE" "$ENV_FILE" "$EXTRA_VARS_FILE" | sha256sum | awk '{print $1}')"
+if [[ "$VLLM_STACK_RUNNING" == "true" && "$RECREATE_VLLM" != "true" ]]; then
+  _stored_hash="$(cat "$CONVERGE_HASH_FILE" 2>/dev/null || true)"
+  if [[ -n "${_stored_hash}" && "${_stored_hash}" != "${_render_hash}" ]]; then
+    warn "Rendered vLLM config (.env model args / compose) differs from the running stack."
+    warn "Model args are baked into the container command at create time."
+    warn "Converge now:"
+    warn "  cd ${PROJECT_DIR} && docker compose up -d --force-recreate"
+    warn "Or tear down and re-create:"
+    warn "  $0 --force"
+    exit 0
+  fi
+fi
+
 # ── Pull image ─────────────────────────────────────────────────────────────────
 step "Pulling Docker image: ${VLLM_IMAGE}"
 (cd "$PROJECT_DIR" && docker compose pull) || {
@@ -787,6 +872,10 @@ else
   mapfile -t _ids < <(cd "$PROJECT_DIR" && docker compose ps -q)
   wait_for_healthy "${VLLM_HEALTH_TIMEOUT}" "${_ids[@]}" \
     || error "vLLM stack did not come up — see the status output above"
+
+  # Re-run policy (ticket 12): record what the stack is now created from, so
+  # the next run can detect divergent model args (see hash check above).
+  printf '%s\n' "${_render_hash}" > "$CONVERGE_HASH_FILE"
 
   # ── Health check ──────────────────────────────────────────────────────────
   step "Waiting for vLLM to respond (timeout: ${VLLM_HEALTH_TIMEOUT}s)"

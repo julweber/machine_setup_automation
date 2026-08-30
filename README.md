@@ -76,6 +76,7 @@ The agent will read the README and discover available scripts on its own, then g
 - **Orchestrator** - `run-setup.sh` reads a YAML configuration file to determine which services to install, then runs them in order. Use `./run-setup.sh status` to preview and `./run-setup.sh apply` to execute. The default config file is `machine-config.yml` in the repository root, or pass a different file with `--config` (before or after the subcommand).
 - **Modular task scripts** - Each `tasks/setup-*.sh` script is self-contained and idempotent; it can be run individually or through the orchestrator.
 - **Configuration via YAML** - `machine-config.yml` declares which scripts to run, their environment variables, and command-line arguments. All tunable values have sensible defaults and can be overridden.
+- **Re-run policy: converge by default** - Re-running a task script against an existing stack converges it: config is re-rendered, existing secrets are reused, and `docker compose up -d` reconciles only what changed — no tear-down, no silent skip. Divergence that cannot be applied to a running stack is printed with the exact re-create command (see `specification/project/conventions.md` → *Re-run policy: converge by default*).
 
 ## Configuration
 

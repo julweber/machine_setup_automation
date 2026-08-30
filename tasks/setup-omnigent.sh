@@ -81,7 +81,8 @@ Usage: $(basename "$0") [OPTIONS]
 Automated setup script for deploying Omnigent.
 
 Options:
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
   -h, --help      Show this help message and exit
 
 Environment Variables:
@@ -127,6 +128,7 @@ source "${SCRIPT_DIR}/../lib/helpers.sh"
 # ─────────────────────────────────────────────────────────────────────────────
 
 INTERACTIVE=false
+RECREATE=false     # --interactive + 'y' only; a plain re-run converges (ticket 12)
 
 for arg in "$@"; do
   case "$arg" in
@@ -230,34 +232,41 @@ COMPOSE_FILE="${OMNIGENT_HOME}/docker-compose.yml"
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
   echo ""
+  # Re-run policy (ticket 12): the existing stack is CONVERGED — the compose
+  # file and .env are re-rendered (secrets reused) and 'docker compose up -d'
+  # reconciles only what changed. Tear-down only on explicit interactive 'y'.
+  info "Re-running will converge the existing stack (no tear-down)."
   info "${BOLD}IMPORTANT:${RESET} Your data in Docker named volumes will be PRESERVED."
+  RECREATE=false
   if [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Tear down existing stack and re-create? [y/N] " answer
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
-      # The operator confirmed the re-create: the cleanup trap must cover it,
-      # so a failure before 'up -d' or a half-created re-create is still
-      # cleaned up — and the trap must not claim "nothing torn down".
-      STACK_CREATED_THIS_RUN=1
-      info "Stopping and removing existing stack..."
-      (cd "$OMNIGENT_HOME" && docker compose down 2>/dev/null) || true
-      success "Old stack removed. Data volumes preserved."
-    else
-      info "Keeping existing stack. Exiting."
-      exit 0
+      RECREATE=true
     fi
-  else
-    # Do not let the failure-cleanup trap tear down a pre-existing stack.
-    trap - EXIT
-    error "Existing Omnigent stack detected at ${OMNIGENT_HOME}. Re-run with --interactive to tear down and re-create, or remove ${COMPOSE_FILE} manually."
+  fi
+  if [[ "$RECREATE" == "true" ]]; then
+    # The operator confirmed the re-create: the cleanup trap must cover it,
+    # so a failure before 'up -d' or a half-created re-create is still
+    # cleaned up — and the trap must not claim "nothing torn down".
+    STACK_CREATED_THIS_RUN=1
+    info "Stopping and removing existing stack..."
+    (cd "$OMNIGENT_HOME" && docker compose down 2>/dev/null) || true
+    success "Old stack removed. Data volumes preserved."
   fi
 fi
 
 # Check for port conflict (direct mode only)
-# Only check after existing stack teardown — the port may be in use by the
-# existing Omnigent container, which is expected and will be freed on teardown.
+# A RUNNING existing Omnigent stack holds the port itself — that is expected
+# for a converge (ticket 12), so the conflict is only an error when our own
+# stack is not the one using the port.
 if [[ "$OMNIGENT_TRAEFIK" != "true" ]]; then
-  if ss -tln 2>/dev/null | grep -q ":${OMNIGENT_PORT} " || \
-     netstat -tln 2>/dev/null | grep -q ":${OMNIGENT_PORT} "; then
+  _omnigent_stack_running=false
+  if [[ -f "$COMPOSE_FILE" ]] && docker compose -f "$COMPOSE_FILE" ps -q 2>/dev/null | grep -q .; then
+    _omnigent_stack_running=true
+  fi
+  if [[ "$_omnigent_stack_running" != "true" ]] && \
+     { ss -tln 2>/dev/null | grep -q ":${OMNIGENT_PORT} " || \
+       netstat -tln 2>/dev/null | grep -q ":${OMNIGENT_PORT} "; }; then
     error "Port ${OMNIGENT_PORT} is already in use. Choose a different OMNIGENT_PORT."
   fi
 fi
@@ -419,18 +428,19 @@ fi
 # TEARDOWN & START
 # ─────────────────────────────────────────────────────────────────────────────
 
-# NOTE: unconditional teardown in the normal flow (no-op on a fresh install).
-# Whether a re-run tears down / converges / skips is a re-run POLICY decision
-# (ticket 12-existing-stack-rerun-policy); this script currently always
-# re-creates. The STACK_CREATED_THIS_RUN flag set before 'up -d' marks the
+# Re-run policy (ticket 12): NO unconditional teardown here — a re-run
+# converges the existing stack, and 'up -d' alone never tears anything down.
+# (The confirmed-recreate case tore down above; the RECREATE flag then also
+# opts into a fresh image pull, so plain re-runs do not depend on the
+# registry.) The STACK_CREATED_THIS_RUN flag set before 'up -d' marks the
 # stack (re)created by THIS run for the cleanup trap.
-step "Tearing down existing Omnigent stack"
-(cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
-success "Old stack removed. Data volumes preserved."
-
 step "Starting Omnigent stack (detached)"
 STACK_CREATED_THIS_RUN=1
-(cd "$OMNIGENT_HOME" && docker compose up -d --pull always)
+if [[ "$RECREATE" == "true" ]]; then
+  (cd "$OMNIGENT_HOME" && docker compose up -d --pull always)
+else
+  (cd "$OMNIGENT_HOME" && docker compose up -d)
+fi
 
 # Health gate: prove the containers are actually up before reporting success.
 # This also replaces the old ad-hoc "container running? / restart loop?"

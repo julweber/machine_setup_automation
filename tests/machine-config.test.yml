@@ -101,8 +101,7 @@ scripts:
     env:
       # Required by the script (no opt-out).
       GRAFANA_DOMAIN: "monitoring.vmtest"
-      # The non-interactive existing-stack refusal is ticket 12's scope; force a
-      # re-create so the idempotency phase exercises the full start+health-gate
-      # path a second time (data is preserved).
-      MONITORING_FORCE: "true"
+      # Re-runs converge the existing stack (ticket 12), so the idempotency
+      # phase exercises the full render + start + health-gate path without
+      # forcing a re-create. Set MONITORING_FORCE=true to test re-create.
     args: []

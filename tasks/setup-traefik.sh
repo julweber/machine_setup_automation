@@ -95,6 +95,9 @@ HTTPS_PORT="${HTTPS_PORT:-443}"
 # │      true     │ flags                                                   │
 # └─────────────────────────────────────────────────────────────────────────┘
 
+# Re-run policy (ticket 12): an existing stack is CONVERGED by default;
+# --interactive may additionally offer tear-down/re-create ('y' is the only
+# path that runs 'docker compose down').
 INTERACTIVE=false
 
 # USAGE / HELP
@@ -107,8 +110,14 @@ Compose: TLS via Let's Encrypt (HTTP or DNS challenge), security headers,
 rate limiting, and optional dashboard with basic auth.
 
 ${BOLD}Options:${RESET}
-  --interactive   Prompt for configuration interactively
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
   -h, --help      Show this help and exit
+
+Re-running against an existing stack converges it: the config is re-rendered,
+the stored credentials are reused, and 'docker compose up -d' reconciles only
+what changed. Divergent static settings (mode/dashboard, ACME, ports, …) are
+printed with the exact re-create command; they are never applied silently.
 
 ${BOLD}Environment variables${RESET} (all optional):
   TRAEFIK_HOME        Config directory (default: /opt/traefik)
@@ -231,30 +240,13 @@ if ! command -v envsubst &>/dev/null; then
   error "envsubst not installed — install with: sudo apt-get install gettext-base"
 fi
 success "envsubst is available."
-
-# ┌─────────────────────────────────────────────────────────────────────────┐
-# │ IDEMPOTENCY — detect existing Traefik and handle appropriately         │
-# │                                                                         │
-# │     Traefik running?                                                    │
-# │          │                                                              │
-# │   ┌─────┴──────┐                                                        │
-# │   │            │                                                        │
-# │ YES│            NO                                                       │
-# │    ▼            │                                                        │
-# │ Interactive?    Existing compose file?                                  │
-# │  ┌─┴─┐          │                                                       │
-# │ YES│NO│      ┌──┴──┐                                                    │
-# │   ▼  │     YES│NO│                                                      │
-# │ Tear  │     │        Proceed                                            │
-# │ down  │ NO  │                                                            │
-# │ or    │     ▼                                                            │
-# │ skip  │ ┌──────┐                                                         │
-# │       │ │ Ask? │                                                         │
-# │       │ └─┬───┘                                                          │
-# │       │YES│NO                                                           │
-# │       ▼   │                                                              │
-# │    Tear down                                                       │
-# └─────────────────────────────────────────────────────────────────────────┘
+# ── IDEMPOTENCY / RE-RUN POLICY (ticket 12) ──────────────────────────────────
+# Existing stack (running, or stopped with a compose file) → CONVERGE by
+# default: re-render config below, reuse stored credentials, 'up -d'
+# reconciles what changed. With --interactive the operator may answer 'y' to
+# tear down and re-create first; a non-interactive run never tears down and
+# never exits 0 silently. Static-key divergence on a running stack is printed
+# with the exact remedy (see the hash check after the compose render) + exit 0.
 step "Checking for an existing Traefik installation"
 
 COMPOSE_FILE="${TRAEFIK_HOME}/docker-compose.yml"
@@ -264,35 +256,31 @@ if docker ps --format '{{.Names}}' | grep -qx 'traefik' 2>/dev/null; then
   TRAEFIK_RUNNING=true
 fi
 
-if [[ "$TRAEFIK_RUNNING" == "true" ]]; then
-  if [[ "$INTERACTIVE" == "false" ]]; then
-    info "Traefik is already running — skipping setup."
-    exit 0
+# Re-run policy (ticket 12): an existing stack is CONVERGED — the config is
+# re-rendered below and 'docker compose up -d' reconciles only what changed.
+# Tear-down is never part of a normal (non-interactive) run; with
+# --interactive the operator may confirm a re-create (the letsencrypt data,
+# i.e. the ACME account and certificates, is preserved either way).
+RECREATE=false
+if [[ "$TRAEFIK_RUNNING" == "true" || -f "$COMPOSE_FILE" ]]; then
+  if [[ "$TRAEFIK_RUNNING" == "true" ]]; then
+    warn "Existing Traefik stack is running — it will be converged (no tear-down)."
   else
-    # Show container status
+    warn "Existing ${COMPOSE_FILE} found (no container running) — it will be converged (no tear-down)."
+  fi
+  if [[ "$INTERACTIVE" == "true" ]]; then
     CONTAINER_INFO=$(docker ps --filter name='^traefik$' --format 'Image: {{.Image}} | Status: {{.Status}}' 2>/dev/null || true)
     info "Existing Traefik container found: ${CONTAINER_INFO}"
-    read -rp "    Traefik is already running. Tear down and recreate? Data in ${TRAEFIK_HOME}/letsencrypt will be preserved. [y/N] " _answer
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " _answer
     if [[ "${_answer,,}" == "y" ]]; then
-      info "Stopping and removing existing stack..."
-      docker compose -f "${COMPOSE_FILE}" down 2>/dev/null || true
-      success "Existing stack removed."
-    else
-      warn "Skipping setup. Exiting."
-      exit 0
+      RECREATE=true
     fi
   fi
-elif [[ -f "$COMPOSE_FILE" ]]; then
-  # docker-compose.yml exists but no container is running
-  if [[ "$INTERACTIVE" == "true" ]]; then
-    info "Found existing ${COMPOSE_FILE} but no container is running."
-    read -rp "    Tear down and recreate? Data in ${TRAEFIK_HOME}/letsencrypt will be preserved. [y/N] " _answer
-    if [[ "${_answer,,}" != "y" ]]; then
-      warn "Skipping setup. Exiting."
-      exit 0
-    fi
+  if [[ "$RECREATE" == "true" ]]; then
+    info "Stopping and removing existing stack..."
+    docker compose -f "${COMPOSE_FILE}" down 2>/dev/null || true
+    success "Existing stack removed."
   fi
-  # Non-interactive with stopped compose: proceed with fresh install
 fi
 
 # ┌─────────────────────────────────────────────────────────────────────────┐
@@ -383,6 +371,14 @@ success "Directory structure ready."
 step "Generating dashboard credentials"
 
 PASS_GENERATED=false
+if [[ -z "${TRAEFIK_ADMIN_PASS}" && -f "${TRAEFIK_HOME}/.credentials" ]]; then
+  # Re-run policy (ticket 12): reuse the previously generated dashboard
+  # password so a re-run never rotates the dashboard login.
+  TRAEFIK_ADMIN_PASS="$(grep -m1 '^Admin password: ' "${TRAEFIK_HOME}/.credentials" | cut -d' ' -f3- || true)"
+  if [[ -n "${TRAEFIK_ADMIN_PASS}" ]]; then
+    info "Reusing existing dashboard password from ${TRAEFIK_HOME}/.credentials."
+  fi
+fi
 if [[ -z "${TRAEFIK_ADMIN_PASS}" ]]; then
   PASS_GENERATED=true
   if command -v openssl &>/dev/null; then
@@ -443,6 +439,13 @@ success "Credentials generated and written to ${TRAEFIK_HOME}/auth/.htpasswd"
 step "Generating configuration files"
 
 # ── .env ─────────────────────────────────────────────────────────────────────
+# Re-run policy (ticket 12): a Cloudflare token that is not set explicitly is
+# read back from the existing .env so a re-run never drops the credential the
+# already-issued ACME account depends on (explicit env always wins).
+if [[ -z "${CF_DNS_API_TOKEN}" && -f "${TRAEFIK_HOME}/.env" ]]; then
+  CF_DNS_API_TOKEN="$(env_file_get "${TRAEFIK_HOME}/.env" CF_DNS_API_TOKEN || true)"
+fi
+
 info "Writing ${TRAEFIK_HOME}/.env ..."
 _env_tmp="$(mktemp)"
 {
@@ -625,6 +628,32 @@ envsubst '${TRAEFIK_IMAGE} ${SOCKET_PROXY_IMAGE} ${HTTP_PORT} ${HTTPS_PORT} ${TR
 sudo mv "${_compose_tmp}" "${COMPOSE_FILE}"
 success "docker-compose.yml written to ${COMPOSE_FILE}"
 
+# ── Re-run policy (ticket 12): static keys cannot converge a running stack ──
+# The rendered config (compose + traefik.yml + .env) is hashed and compared
+# with what the running stack was last created from. A difference means a
+# static compose arg or traefik.yml key changed (mode/dashboard, ACME
+# settings, DNS_PROVIDER, USE_SOCKET_PROXY, ports): a plain 'up -d' would not
+# apply it correctly (the ACME account in ${TRAEFIK_HOME}/letsencrypt is
+# already issued, mounted config is only re-read on (re)create) — so print the
+# exact remedy and exit 0. A missing stored hash (pre-ticket install) is
+# treated as unknown: 'up -d' reconciles and the hash is recorded after.
+CONVERGE_HASH_FILE="${TRAEFIK_HOME}/.converge-hash"
+_render_hash="$(cat "${COMPOSE_FILE}" "${TRAEFIK_HOME}/traefik.yml" "${TRAEFIK_HOME}/.env" | sed '/^# Generated/d' | sha256sum | awk '{print $1}')"
+if [[ "$TRAEFIK_RUNNING" == "true" && "$RECREATE" != "true" ]]; then
+  _stored_hash="$(sudo cat "${CONVERGE_HASH_FILE}" 2>/dev/null || true)"
+  if [[ -n "${_stored_hash}" && "${_stored_hash}" != "${_render_hash}" ]]; then
+    warn "Rendered Traefik config differs from what the running stack was created from."
+    warn "Static compose args and traefik.yml settings (mode/dashboard, ACME settings,"
+    warn "DNS_PROVIDER, USE_SOCKET_PROXY, ports) cannot be applied to a running stack —"
+    warn "the ACME account in ${TRAEFIK_HOME}/letsencrypt is already issued."
+    warn "Converge now:"
+    warn "  docker compose -f ${COMPOSE_FILE} up -d --force-recreate traefik"
+    warn "Or tear down and re-create interactively:"
+    warn "  $0 --interactive"
+    exit 0
+  fi
+fi
+
 # ┌─────────────────────────────────────────────────────────────────────────┐
 # │ STACK STARTUP — pull, start, and wait for health                       │
 # │                                                                         │
@@ -658,6 +687,10 @@ fi
 mapfile -t _ids < <(docker compose -f "${COMPOSE_FILE}" ps -q)
 wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
   || error "Traefik stack did not come up — see the status output above"
+
+# Re-run policy (ticket 12): record what the stack is now created from, so
+# the next run can detect divergent static config (see hash check above).
+printf '%s\n' "${_render_hash}" | sudo tee "${CONVERGE_HASH_FILE}" >/dev/null
 
 step "Waiting for Traefik container to become healthy (up to 60s)"
 MAX_WAIT=60

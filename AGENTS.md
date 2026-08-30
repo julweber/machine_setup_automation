@@ -66,6 +66,10 @@ Scripts use environment variables for their main configuration options and provi
 
 When modifying scripts: always ensure to keep the `--help` parameter output up to date with the implementation logic and configuration options (parameters and environment variables)
 
+#### Re-run policy (converge by default)
+
+Re-running any task script against an existing stack must converge it (render templates, reuse secrets, `docker compose up -d`, verify health) — see *Re-run policy: converge by default* in `specification/project/conventions.md`.
+
 #### Configuration Paths
 
 - For scripts that setup services/software that is run as daemon/server or within docker containers: use the `/srv/<service-name>` directory for configuration files

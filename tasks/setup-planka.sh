@@ -42,7 +42,9 @@ Deploys Planka (self-hosted Kanban board) using Docker Compose.
 Data is stored under PLANKA_HOME (default: /srv/planka).
 
 ${BOLD}Options:${RESET}
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
+                  (weak ADMIN_PASSWORD, …)
   -h, --help      Show this help and exit
 
 ${BOLD}Environment variables${RESET} (all optional):
@@ -377,18 +379,22 @@ step "Checking for an existing Planka compose stack"
 
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
+  # Re-run policy (ticket 12): the existing stack is CONVERGED — the compose
+  # file is re-rendered, the secrets in ${ENV_FILE} are reused (never
+  # rotated), and 'docker compose up -d' reconciles only what changed.
+  # Tear-down only on explicit interactive 'y'.
+  info "Re-running will converge the existing stack (no tear-down). Data in ${PLANKA_HOME}/data is preserved."
+  RECREATE=false
   if [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Tear down existing stack and re-create? Data in ${PLANKA_HOME}/data will be preserved. [y/N] " answer
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
-      info "Stopping and removing existing stack..."
-      docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down 2>/dev/null || true
-      success "Old stack removed."
-    else
-      info "Keeping existing stack. Exiting."
-      exit 0
+      RECREATE=true
     fi
-  else
-    error "Existing stack detected at ${PLANKA_HOME}. Re-run with --interactive to tear down and re-create, or remove ${PLANKA_HOME}/docker-compose.yml manually."
+  fi
+  if [[ "$RECREATE" == "true" ]]; then
+    info "Stopping and removing existing stack..."
+    docker compose --env-file "$ENV_FILE" -f "$COMPOSE_FILE" down 2>/dev/null || true
+    success "Old stack removed."
   fi
 fi
 

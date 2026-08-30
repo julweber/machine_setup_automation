@@ -146,7 +146,8 @@ external LM Studio instance for AI model inference. Supports direct host
 port access or Traefik reverse-proxy integration.
 
 Options:
-  --interactive   Prompt for confirmation on risky conditions
+  --interactive   Offer tear-down/re-create of an existing stack (default:
+                  converge); prompt on other risky conditions
   -h, --help      Show this help and exit
 
 Environment variables (all optional):
@@ -248,27 +249,28 @@ COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yml"
 if [[ -f "$COMPOSE_FILE" ]]; then
   warn "Existing docker-compose.yml found at ${COMPOSE_FILE}."
   echo ""
-  info "${BOLD}IMPORTANT:${RESET} Your data in 'openwebui_data' volume will be PRESERVED."
-  info "However, resetting the stack may break references to old configurations."
+  # Re-run policy (ticket 12): the existing stack is CONVERGED — the config is
+  # re-rendered, the stored WEBUI_SECRET_KEY is reused (never rotated), and
+  # 'docker compose up -d' reconciles only what changed. Tear-down only on
+  # explicit interactive 'y'.
+  info "Re-running will converge the existing stack (no tear-down)."
+  info "Your data in 'openwebui_data' volume will be PRESERVED."
+  RECREATE=false
   if [[ "$INTERACTIVE" == "true" ]]; then
-    read -rp "    Are you sure you want to re-create the stack? [y/N] " answer
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
-      # The operator confirmed the re-create: the cleanup trap must cover it,
-      # so a failure before 'up -d' or a half-created re-create is still
-      # cleaned up — and the trap must not claim "nothing torn down".
-      STACK_CREATED_THIS_RUN=1
-      info "Stopping and removing existing stack..."
-      cd "$PROJECT_DIR"
-      docker compose down 2>/dev/null || true
-      success "Old stack removed. Data volume preserved."
-    else
-      info "Keeping existing stack. Exiting."
-      exit 0
+      RECREATE=true
     fi
-  else
-    # Do not let the failure-cleanup trap tear down a pre-existing stack.
-    trap - EXIT
-    error "Existing Open WebUI stack detected at ${PROJECT_DIR}. Re-run with --interactive to re-create the stack, or remove ${COMPOSE_FILE} manually."
+  fi
+  if [[ "$RECREATE" == "true" ]]; then
+    # The operator confirmed the re-create: the cleanup trap must cover it,
+    # so a failure before 'up -d' or a half-created re-create is still
+    # cleaned up — and the trap must not claim "nothing torn down".
+    STACK_CREATED_THIS_RUN=1
+    info "Stopping and removing existing stack..."
+    cd "$PROJECT_DIR"
+    docker compose down 2>/dev/null || true
+    success "Old stack removed. Data volume preserved."
   fi
 fi
 

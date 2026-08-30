@@ -51,6 +51,10 @@ ${BOLD}Environment variables${RESET} (all optional):
 
 ${BOLD}Note:${RESET} A .env template with placeholder values is written to
 ${N8N_DIR:-/srv/n8n}/.env — review it before starting n8n.
+
+${BOLD}Re-run policy${RESET} (converge by default): re-running an existing stack
+converges it — 'docker compose up -d' reconciles only what changed (no tear-down,
+no silent skip). See specification/project/conventions.md.
 EOF
 }
 

@@ -40,7 +40,10 @@ VLLM_OMNI_VERSION="${VLLM_OMNI_VERSION:-latest}"   # image tag (e.g. v0.24.0)
 VLLM_OMNI_PORT="${VLLM_OMNI_PORT:-8091}"           # host API port (container: 8000)
 VLLM_OMNI_MODEL="${VLLM_OMNI_MODEL:-}"             # HF model ID / in-container path
 HF_TOKEN="${HF_TOKEN:-}"                           # optional: gated models
-VLLM_OMNI_GPU_UTIL="${VLLM_OMNI_GPU_UTIL:-0.90}"   # GPU mem fraction (GPU backends)
+# Empty default on purpose (re-run policy, ticket 12): a non-empty default
+# would overwrite a value the operator stored in .env on a re-run. The 0.90
+# default is applied after the .env read-back, when nothing was set/stored.
+VLLM_OMNI_GPU_UTIL="${VLLM_OMNI_GPU_UTIL:-}"       # GPU mem fraction (GPU backends, default 0.90)
 VLLM_OMNI_TENSOR_PARALLEL="${VLLM_OMNI_TENSOR_PARALLEL:-1}"  # # GPUs
 VLLM_OMNI_MAX_MODEL_LEN="${VLLM_OMNI_MAX_MODEL_LEN:-}"       # cap context length
 VLLM_OMNI_SHM_SIZE="${VLLM_OMNI_SHM_SIZE:-8g}"     # container shared memory
@@ -53,6 +56,7 @@ PROXY_NETWORK="${PROXY_NETWORK:-proxy}"
 BACKEND=""       # nvidia | amd | cpu  (empty = auto-detect)
 FORCE=0
 CHECK_ONLY=0
+INTERACTIVE=false   # re-run policy (ticket 12): offer tear-down/re-create of an existing stack
 
 ARCH=$(uname -m) # x86_64 | aarch64
 
@@ -145,6 +149,7 @@ usage() {
   echo "  --traefik             Enable Traefik reverse-proxy integration"
   echo "  --domain <host>       Domain for Traefik  (required with --traefik)"
   echo "  --force               Re-create stack even if already present"
+  echo "  --interactive         Offer tear-down/re-create of an existing stack (default: converge)"
   echo "  --check               Check installation status and exit"
   echo "  --help                Show this help"
   echo ""
@@ -163,6 +168,13 @@ usage() {
   echo "  $0 --model Tongyi-MAI/Z-Image-Turbo    # set model and start"
   echo "  $0 --traefik --domain omni.example.com"
   echo "  $0 --check                             # show stack status"
+  echo ""
+  echo -e "${BOLD}Re-run policy${RESET} (converge by default):"
+  echo "  Re-running an existing stack converges it: the .env and compose file are"
+  echo "  re-rendered (stored values reused), and 'docker compose up -d' reconciles"
+  echo "  only what changed. Model args that diverge from the running stack are"
+  echo "  printed with the exact re-create command. --force (or interactive 'y')"
+  echo "  tears down and re-creates."
   exit 0
 }
 
@@ -184,6 +196,7 @@ while [[ $# -gt 0 ]]; do
     --traefik)          VLLM_OMNI_TRAEFIK="true" ;;
     --domain)           shift; VLLM_OMNI_DOMAIN="$1" ;;
     --force)            FORCE=1 ;;
+    --interactive)      INTERACTIVE=true ;;
     --check)            CHECK_ONLY=1 ;;
     --help|-h)          usage ;;
     *) error "Unknown option: $1  (use --help for usage)" ;;
@@ -214,6 +227,30 @@ fi
 
 # ── Detect existing stack ──────────────────────────────────────────────────────
 COMPOSE_FILE="${PROJECT_DIR}/docker-compose.yml"
+ENV_FILE="${PROJECT_DIR}/.env"
+
+# Re-run policy (ticket 12): reuse-first .env values. An explicitly set value
+# (env or CLI) wins; otherwise the value stored in the existing .env is reused
+# so a re-run never resets operator configuration (incl. the HF_TOKEN secret).
+_env_reused=()
+_env_reuse() { # <var-name> <key>
+  local var_name="$1" key="$2" current
+  if [[ -z "${!var_name}" && -f "$ENV_FILE" ]]; then
+    current="$(grep -m1 "^${key}=" "$ENV_FILE" 2>/dev/null | cut -d= -f2- || true)"
+    if [[ -n "$current" ]]; then
+      printf -v "$var_name" '%s' "$current"
+      _env_reused+=("${key}")
+    fi
+  fi
+}
+_env_reuse VLLM_OMNI_MODEL     VLLM_OMNI_MODEL
+_env_reuse HF_TOKEN            HF_TOKEN
+_env_reuse VLLM_OMNI_GPU_UTIL  VLLM_OMNI_GPU_UTIL
+_env_reuse VLLM_OMNI_MAX_MODEL_LEN VLLM_OMNI_MAX_MODEL_LEN
+_env_reuse VLLM_OMNI_EXTRA_ARGS VLLM_OMNI_EXTRA_ARGS
+# Nothing set and nothing stored: apply the GPU-util default (the compose
+# command resolves ${VLLM_OMNI_GPU_UTIL} from the .env at start).
+VLLM_OMNI_GPU_UTIL="${VLLM_OMNI_GPU_UTIL:-0.90}"
 
 print_found_status() {
   echo ""
@@ -231,23 +268,44 @@ print_found_status() {
 
 step "Checking for existing vLLM-Omni installation"
 
+VLLM_OMNI_STACK_RUNNING=false
+RECREATE_VLLM_OMNI=false
+
 if [[ -f "$COMPOSE_FILE" ]]; then
   print_found_status
+  if docker compose -f "${COMPOSE_FILE}" ps --quiet 2>/dev/null | grep -q .; then
+    VLLM_OMNI_STACK_RUNNING=true
+  fi
 
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
     info "Run with ${BOLD}--force${RESET} to re-create the stack."
     exit 0
   fi
 
-  if [[ "$FORCE" -eq 0 ]]; then
-    echo -e "  ${YELLOW}Nothing to do.${RESET} Use ${BOLD}--force${RESET} to re-create the stack."
+  if [[ "$FORCE" -eq 1 ]]; then
+    RECREATE_VLLM_OMNI=true
+    warn "--force specified - tearing down existing stack."
+    (cd "$PROJECT_DIR" && docker compose down 2>/dev/null) || true
     echo ""
-    exit 0
+  elif [[ "$INTERACTIVE" == "true" && "$VLLM_OMNI_STACK_RUNNING" == "true" ]]; then
+    read -rp "    Stack exists. Converge (default) or tear down and re-create? [c/N] " answer
+    if [[ "${answer,,}" == "y" ]]; then
+      RECREATE_VLLM_OMNI=true
+      warn "Re-create confirmed - tearing down existing stack."
+      (cd "$PROJECT_DIR" && docker compose down 2>/dev/null) || true
+      echo ""
+    fi
   fi
-
-  warn "--force specified - tearing down existing stack."
-  (cd "$PROJECT_DIR" && docker compose down 2>/dev/null) || true
-  echo ""
+  if [[ "$RECREATE_VLLM_OMNI" != "true" ]]; then
+    # Re-run policy (ticket 12): CONVERGE — the .env and compose file are
+    # re-rendered below (stored values reused) and 'docker compose up -d'
+    # reconciles only what changed. Model-arg divergence on the running stack
+    # is printed with the exact remedy (see the hash check after render).
+    info "Converging the existing stack (no tear-down)."
+    if [[ ${#_env_reused[@]} -gt 0 ]]; then
+      info "Reused ${#_env_reused[@]} value(s) from ${ENV_FILE}: ${_env_reused[*]}"
+    fi
+  fi
 else
   if [[ "$CHECK_ONLY" -eq 1 ]]; then
     echo ""
@@ -435,6 +493,27 @@ envsubst '${GENERATED_DATE} ${BACKEND_UPPER} ${ARCH} ${VLLM_OMNI_IMAGE} ${PROXY_
 
 success "docker-compose.yml created: ${COMPOSE_FILE}"
 
+# ── Re-run policy (ticket 12): model args cannot converge a running stack ──
+# Model args are baked into the container command at create time (rendered
+# into the compose file and/or resolved from .env at start). The rendered
+# config (compose + .env, generated-date lines excluded) is compared with
+# what the running stack was last created from; on divergence print the exact
+# remedy and exit 0 — never silently recreate.
+CONVERGE_HASH_FILE="${PROJECT_DIR}/.converge-hash"
+_render_hash="$(sed '/^# Generated/d' "$COMPOSE_FILE" "$ENV_FILE" | sha256sum | awk '{print $1}')"
+if [[ "$VLLM_OMNI_STACK_RUNNING" == "true" && "$RECREATE_VLLM_OMNI" != "true" ]]; then
+  _stored_hash="$(cat "$CONVERGE_HASH_FILE" 2>/dev/null || true)"
+  if [[ -n "${_stored_hash}" && "${_stored_hash}" != "${_render_hash}" ]]; then
+    warn "Rendered vLLM-Omni config (.env model args / compose) differs from the running stack."
+    warn "Model args are baked into the container command at create time."
+    warn "Converge now:"
+    warn "  cd ${PROJECT_DIR} && docker compose up -d --force-recreate"
+    warn "Or tear down and re-create:"
+    warn "  $0 --force"
+    exit 0
+  fi
+fi
+
 # ── Pull image ─────────────────────────────────────────────────────────────────
 step "Pulling Docker image: ${VLLM_OMNI_IMAGE}"
 (cd "$PROJECT_DIR" && docker compose pull)
@@ -462,6 +541,10 @@ else
   mapfile -t _ids < <(cd "$PROJECT_DIR" && docker compose ps -q)
   wait_for_healthy "${VLLM_OMNI_HEALTH_TIMEOUT:-300}" "${_ids[@]}" \
     || error "vLLM-Omni stack did not come up — see the status output above"
+
+  # Re-run policy (ticket 12): record what the stack is now created from, so
+  # the next run can detect divergent model args (see hash check above).
+  printf '%s\n' "${_render_hash}" > "$CONVERGE_HASH_FILE"
 
   step "Waiting for vLLM-Omni to respond"
 

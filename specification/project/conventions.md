@@ -19,6 +19,36 @@
 
 - **Idempotency** — Every task script must be safe to run repeatedly. Use guard checks (`command -v`, `dpkg -l`, file existence) to skip already-completed work.
 - **Non-interactive by default** — Scripts must not prompt the user for input during normal execution. Interactive behaviour is only allowed when the script is explicitly invoked with a `--interactive` flag.
+- **Re-run policy: converge by default** — When the target stack already
+  exists, a task script must re-render config from `templates/<component>/`
+  (never inline heredocs), reuse existing secrets instead of regenerating
+  them, run `docker compose up -d` so Docker reconciles only what changed,
+  and prove the stack healthy (see *Stack health verification*). It must not
+  run `docker compose down`, and never `docker compose down -v`, in a normal
+  non-interactive run. `--interactive` may additionally offer
+  tear-down/re-create (converge is the default answer; `y` is the only path
+  that may run `down`); volume wipes only where a wipe prompt already exists
+  (concourse). `--force` and `<NAME>_FORCE=true` keep their meaning (explicit
+  re-create) and win over `INTERACTIVE`.
+
+  Cases that cannot converge onto a running stack — print what diverged plus
+  the exact converge or interactive re-create command, then exit 0:
+  - **traefik** mode/dashboard/ACME settings, `DNS_PROVIDER`, `USE_SOCKET_PROXY`,
+    ports — static compose args; the ACME account is already issued:
+    `docker compose -f ${COMPOSE_FILE} up -d --force-recreate traefik`,
+    else re-run with `--interactive`.
+  - **nextcloud** admin user/password — applied only at first install:
+    reuse the stored `.env`; change the password with
+    `docker exec --user www-data <container> php occ user:resetpassword <user>`.
+  - **concourse / planka** credentials — tied to the persisted postgres
+    volume: reuse the stored `.env`; wipe only via the interactive prompt.
+  - **vllm / vllm-omni / colqwen** model args — baked into the container
+    command at create time: `cd ${PROJECT_DIR} && docker compose up -d --force-recreate`.
+  - **excalidraw** container args — bare `docker run`, nothing for compose to
+    reconcile: `docker rm -f ${CONTAINER_NAME}` then the exact `docker run`
+    line.
+- **Never `exit 0` silently on an existing stack** — either converge, or print
+  the diverging keys and the exact converge/re-create command.
 - **Help and Usage instructions** - All shell scripts have a `--help` parameter to display usage and configuration information
 - **Env var configuration** — All tunable values must be exposed as environment variables with sensible defaults defined at the top of each script.
 - **Single-process sourcing** — Task scripts are sourced (not executed as subprocesses) so that env vars flow between scripts.
