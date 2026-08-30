@@ -121,6 +121,13 @@ scripts:
 
 All scripts are **disabled by default** — enable only the ones you need.
 
+**SSH / firewall ordering (lockout avoidance):** `setup-sshd` must run
+**before** `configure-firewall`. sshd moves to the new port first, and the
+firewall then allows that port. With the order reversed, UFW goes to
+default-deny around a port sshd is not listening on and the next reconnect
+cuts you off the machine. (`machine-config.yml.example` ships in this order —
+keep it when copying to `machine-config.yml`.)
+
 ### Running the Orchestrator
 
 ```bash
@@ -172,14 +179,56 @@ Prepares the Zabbly mainline kernel apt repository on Ubuntu 22.04/24.04 LTS, pr
 - Officially supports Ubuntu Noble (24.04) and Jammy (22.04)
 
 #### `setup-sshd.sh`
-Installs OpenSSH server, ensures it runs on a custom port, adds safe defaults (`PubkeyAuthentication yes`, `PasswordAuthentication no`).
+Installs OpenSSH server and configures it through the managed drop-in
+`/etc/ssh/sshd_config.d/99-machine-setup.conf` (the main `sshd_config` is never
+touched). Lockout-safe: `PasswordAuthentication no` only when a usable key is
+in `~/.ssh/authorized_keys`; when moving the port, the old/live port keeps
+listening; the new port is allowed in UFW before the restart; on
+socket-activated systems (Ubuntu 24.04+ default, `ssh.socket`) the socket is
+disabled for a port move — a socket-activated sshd would not bind the new
+port; `sshd -t` validates before any restart (invalid drop-in is reverted) and
+the effective config is proven with `sshd -T` afterwards. An unchanged
+drop-in does not trigger a restart.
 
-**Environment variables:** `SSHD_PORT` (default 2224)
+**Environment variables:** `SSHD_PORT` (default 2224), `SSHD_LEGACY_PORT`
+(extra port to keep listening on while migrating), `SSHD_ALLOW_PASSWORDAUTH`
+(`yes` keeps password auth on when no usable key is present)
 
 #### `configure-firewall.sh`
-Sets up **UFW** rules for the ports used by other services.
+Sets up **UFW** rules for the SSH port plus any explicitly requested ports —
+each service's own setup script opens its port (no speculative rules).
+Lockout-safe: over SSH it refuses to enable UFW while the live session's port
+would be cut, and the first remote enable arms the
+`machine-setup-ufw-rollback` timer (see below).
 
-**Environment variables:** `SSHD_PORT`, `LM_STUDIO_PORT` (default 1234), `OPENWEBUI_PORT` (default 3333), `KUBERNETES_API_PORT` (default 6443), `GNOME_REMOTE_PORT` (default 3389), `OPENCODE_PORT` (default 4096)
+**Environment variables:** `SSHD_PORT` (default 2224),
+`FIREWALL_EXTRA_PORTS` (e.g. `1234/tcp,4096/tcp`), `FIREWALL_ALLOW_SSH_MISMATCH`
+(`true` overrides the session-port lockout guard), `FIREWALL_ARM_ROLLBACK`
+(default `true`; `false` for headless CI), `FIREWALL_ROLLBACK_MINUTES`
+(default 10). `LM_STUDIO_PORT`, `OPENCODE_PORT`, `OPENWEBUI_PORT`,
+`KUBERNETES_API_PORT`, `GNOME_REMOTE_PORT` are displayed only.
+
+##### SSH / firewall lock-out protection (escape hatches)
+
+- **`SSHD_ALLOW_PASSWORDAUTH=yes`** (`setup-sshd.sh`) — keep
+  `PasswordAuthentication yes` when `~/.ssh/authorized_keys` has no usable
+  public key, instead of refusing to run.
+- **`FIREWALL_ALLOW_SSH_MISMATCH=true`** (`configure-firewall.sh`) — proceed
+  even when this SSH session's port would not be allowed by the new rules.
+- **`FIREWALL_ARM_ROLLBACK=false`** / **`FIREWALL_ROLLBACK_MINUTES=<n>`**
+  (`configure-firewall.sh`) — disable the self-rollback safety net on a first
+  enable over SSH (headless CI), or change its delay.
+
+The **self-rollback**: when UFW is enabled for the first time from a remote
+session, the transient unit **`machine-setup-ufw-rollback`** is armed and
+runs `ufw disable` again after `FIREWALL_ROLLBACK_MINUTES` — a mistake cannot
+cause a permanent lockout. The timer is deliberately *not* cancelled by the
+script: after you confirm a **new** ssh connection works, cancel it yourself
+with `sudo systemctl stop machine-setup-ufw-rollback.timer` (console/IPMI if
+you lost access; the firewall also disables itself once the timer fires).
+
+Remember: keep the old session open and test the new one from a second
+terminal before closing it.
 
 #### `setup-fail2ban.sh`
 Installs **fail2ban** (including the Python 3.12 `pyasynchat` compatibility fix) and configures the jail to monitor the custom SSH port, protecting SSH from brute-force attacks.

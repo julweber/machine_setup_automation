@@ -12,14 +12,18 @@ scripts:
     description: Install Docker Engine and related components
     env: {}
     args: []
-  configure-firewall:
-    enabled: false
-    description: Configure UFW firewall rules
-    env: {}
-    args: []
+  # --- SSH / firewall ordering (lockout avoidance) ---
+  # setup-sshd MUST run BEFORE configure-firewall: sshd moves to the new port
+  # first, and the firewall then allows that port. Reversed, UFW goes to
+  # default-deny around a port sshd is not listening on -> remote lockout.
   setup-sshd:
     enabled: false
     description: Configure SSH daemon settings
+    env: {}
+    args: []
+  configure-firewall:
+    enabled: false
+    description: Configure UFW firewall rules
     env: {}
     args: []
   setup-traefik:

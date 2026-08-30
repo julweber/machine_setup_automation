@@ -13,6 +13,14 @@
 #   never move or firewall the harness connection (their default 2224
 #   would cut the harness off mid-run).
 #
+#   The VM has no operator key and the harness must not arm a UFW
+#   self-rollback timer, so additionally:
+#   - setup-sshd:    SSHD_ALLOW_PASSWORDAUTH=yes  (keep password auth on
+#                    if the injected key is ever missing)
+#   - configure-firewall: FIREWALL_ARM_ROLLBACK=false (headless CI opt-out)
+#   The scripts' own lockout guards (pre-flight, sshd -t, key check) are
+#   still fully active and are covered by the acceptance tests.
+#
 # Order matters: setup-basics first (git/yq/jq/node), setup-docker before
 # setup-traefik.
 # =============================================================================
@@ -31,6 +39,7 @@ scripts:
     description: UFW rules (SSH kept on port 22 for harness access)
     env:
       SSHD_PORT: "22"
+      FIREWALL_ARM_ROLLBACK: "false"
     args: []
 
   setup-docker:
@@ -44,6 +53,7 @@ scripts:
     description: sshd hardening (kept on port 22 for harness access)
     env:
       SSHD_PORT: "22"
+      SSHD_ALLOW_PASSWORDAUTH: "yes"
     args: []
 
   setup-fail2ban:

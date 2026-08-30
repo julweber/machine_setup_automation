@@ -285,7 +285,7 @@ fi
 # UFW Firewall Helpers
 #   Provides common functions for managing UFW firewall rules.
 #
-#   `ufw status` is always read through ufw_status_text(), which caches its
+#   `ufw status verbose` is always read through ufw_status_text(), which caches its
 #   result in _UFW_STATUS for the lifetime of the shell, so a task with N
 #   rules does not shell out N times. The cache is invalidated after every
 #   successful rule mutation (ufw allow / ufw delete) so readers never see
@@ -311,10 +311,15 @@ fi
 
 if ! declare -F ufw_status_text > /dev/null 2>&1; then
   # ufw_status_text
-  #   Prints machine-readable `ufw status` output. Returns:
+  #   Prints machine-readable `ufw status verbose` output. Returns:
   #     0 = readable (active or inactive)
   #     1 = ufw binary present but status could not be read (sudo denied, error, ...)
   #     2 = ufw not installed
+  #   The verbose format is used deliberately: plain `ufw status` omits the
+  #   direction column on ufw >= 0.36 ("22/tcp ALLOW Anywhere"), which would
+  #   break the direction-anchored ufw_rule_exists check; verbose always
+  #   prints it ("22/tcp ALLOW IN Anywhere"). The first line is the same
+  #   "Status: active|inactive" line in both formats.
   #   The result is cached in _UFW_STATUS for the lifetime of the shell;
   #   _ufw_invalidate_status_cache() clears it after rule mutations.
   ufw_status_text() {
@@ -336,7 +341,7 @@ if ! declare -F ufw_status_text > /dev/null 2>&1; then
     # only when the failure was not a password requirement (which would just
     # prompt again or fail the same way).
     err_file="$(mktemp)"
-    if out="$(sudo -n ufw status 2>"${err_file}")" && grep -q "^Status:" <<<"$out"; then
+    if out="$(sudo -n ufw status verbose 2>"${err_file}")" && grep -q "^Status:" <<<"$out"; then
       rm -f -- "${err_file}"
       _UFW_STATUS="$out"
       _UFW_STATUS_RC=0
@@ -349,7 +354,7 @@ if ! declare -F ufw_status_text > /dev/null 2>&1; then
       _UFW_STATUS_RC=1
       return 1
     fi
-    if out="$(sudo ufw status 2>/dev/null)" && grep -q "^Status:" <<<"$out"; then
+    if out="$(sudo ufw status verbose 2>/dev/null)" && grep -q "^Status:" <<<"$out"; then
       _UFW_STATUS="$out"
       _UFW_STATUS_RC=0
       printf '%s\n' "${_UFW_STATUS}"
