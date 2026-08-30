@@ -10,11 +10,16 @@
 #
 # SUBCOMMANDS:
 #   apply    Run all enabled setup scripts
-#   status   Show which scripts are enabled/disabled
+#   status   Show which scripts are enabled/disabled (read-only, never installs)
 #
 # USAGE:
-#   ./run-setup.sh apply
-#   ./run-setup.sh status
+#   ./run-setup.sh [options] <subcommand>
+#   ./run-setup.sh <subcommand> [options]
+#
+# Options may appear before OR after the subcommand:
+#   -c/--config <file>, --non-interactive, --interactive, -h/--help
+#
+# Run without arguments (or with -h/--help) for the full usage text.
 #
 # =============================================================================
 
@@ -31,23 +36,32 @@ TASKS_DIR="${SCRIPT_DIR}/tasks"
 CONFIG_FILE="${DEFAULT_CONFIG_FILE}"
 LOG_PREFIX="[RUN-SETUP]"
 
-# Colors (default to empty for non-interactive terminals)
-readonly BOLD="${BOLD:-}"
-readonly RESET="${RESET:-}"
-readonly RED="${RED:-}"
-readonly GREEN="${GREEN:-}"
-readonly YELLOW="${YELLOW:-}"
-readonly CYAN="${CYAN:-}"
+# Prompt policy for all child tasks. Tasks default to INTERACTIVE=false (see
+# specification/project/conventions.md); the orchestrator makes the intent explicit
+# and strips stdin from children in non-interactive mode, so a stray 'read' fails
+# immediately instead of hanging an unattended run.
+: "${INTERACTIVE:=false}"
+NON_INTERACTIVE=false      # set by --non-interactive; --interactive clears it
+
+# Colour only when stdout is a terminal and NO_COLOR is not set (https://no-color.org).
+# NO_COLOR=1 or a pipe/redirect (e.g. the VM harness capturing logs) gives plain text.
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+  BOLD=$'\e[1m'; RESET=$'\e[0m'; RED=$'\e[0;31m'; GREEN=$'\e[0;32m'
+  YELLOW=$'\e[1;33m'; CYAN=$'\e[0;36m'
+else
+  BOLD=; RESET=; RED=; GREEN=; YELLOW=; CYAN=
+fi
+readonly BOLD RESET RED GREEN YELLOW CYAN
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper Functions
 # ─────────────────────────────────────────────────────────────────────────────
 
-log_info()    { printf '%b %b %b  %s\n' "${LOG_PREFIX}" "${CYAN}[INFO]${RESET}" "" "$*"; }
-log_success() { printf '%b %b %b    %s\n' "${LOG_PREFIX}" "${GREEN}[OK]${RESET}" "" "$*"; }
-log_warn()    { printf '%b %b %b  %s\n' "${LOG_PREFIX}" "${YELLOW}[WARN]${RESET}" "" "$*"; }
-log_error()   { printf '%b %b %b %s\n' "${LOG_PREFIX}" "${RED}[ERROR]${RESET}" "" "$*" >&2; }
-log_step()    { printf '\n%b %b %s\n' "${BOLD}${LOG_PREFIX} ▶" "" "$*${RESET}"; }
+log_info()    { printf '%b %b %s\n' "${LOG_PREFIX}" "${CYAN}[INFO]${RESET}   " "$*"; }
+log_success() { printf '%b %b %s\n' "${LOG_PREFIX}" "${GREEN}[OK]${RESET}     " "$*"; }
+log_warn()    { printf '%b %b %s\n' "${LOG_PREFIX}" "${YELLOW}[WARN]${RESET}  " "$*"; }
+log_error()   { printf '%b %b %s\n' "${LOG_PREFIX}" "${RED}[ERROR]${RESET}" "$*" >&2; }
+log_step()    { printf '\n%b %s\n'  "${BOLD}${LOG_PREFIX} ▶${RESET}" "$*"; }
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Dependency Checks
@@ -67,6 +81,16 @@ ensure_basic_tools() {
 
   if (( ${#missing_tools[@]} == 0 )); then
     return 0
+  fi
+
+  # Unattended runs must not provision the machine: with --non-interactive the
+  # operator asked for prompt-free execution, so fail fast instead of running a
+  # full apt install. ASSUME_SETUP_BASICS=true opts back into the auto-install.
+  if [[ "${NON_INTERACTIVE}" == "true" && "${ASSUME_SETUP_BASICS:-false}" != "true" ]]; then
+    log_error "Missing required tool(s): ${missing_tools[*]}."
+    log_error "Not auto-installing: --non-interactive unattended runs must not provision the machine."
+    log_error "Install them manually (e.g. 'bash tasks/setup-basics.sh'), or re-run with ASSUME_SETUP_BASICS=true."
+    return 1
   fi
 
   log_warn "Missing required tool(s): ${missing_tools[*]}. Running setup-basics.sh to install them..."
@@ -94,17 +118,39 @@ ensure_basic_tools() {
   log_success "Required tool(s) installed: ${missing_tools[*]}"
 }
 
+# check_dependencies <mode>
+#   mode = "apply"  -> auto-install missing yq/jq via tasks/setup-basics.sh
+#   mode = "status" -> read-only: require yq/jq, never install anything
 check_dependencies() {
+  local mode="${1:-apply}"
   local missing=0
-  
-  if ! ensure_basic_tools; then
+
+  if [[ "$mode" == "apply" ]]; then
+    if ! ensure_basic_tools; then
+      missing=1
+    fi
+  elif ! command -v yq &>/dev/null || ! command -v jq &>/dev/null; then
+    log_error "yq/jq are required but not installed."
+    log_error "Install them (e.g. './run-setup.sh apply' or 'tasks/setup-basics.sh'), then re-run status."
     missing=1
   fi
-  
+
   if [[ ! -f "$CONFIG_FILE" ]]; then
     log_error "Configuration file not found: $CONFIG_FILE"
     log_error "Hint: copy machine-config.yml.example to machine-config.yml"
     missing=1
+  elif command -v yq &>/dev/null; then
+    # The rest of the run treats .scripts as a mapping; fail early with a clean
+    # message for a config that does not parse or has the wrong type (otherwise
+    # a later yq error would abort the script under set -e).
+    local scripts_type
+    if ! scripts_type=$(yq -r '.scripts | type' "$CONFIG_FILE" 2>/dev/null); then
+      log_error "Configuration file could not be parsed: $CONFIG_FILE"
+      missing=1
+    elif [[ -n "$scripts_type" && "$scripts_type" != "object" && "$scripts_type" != "null" ]]; then
+      log_error "Invalid configuration: '.scripts' must be a mapping (got ${scripts_type}): $CONFIG_FILE"
+      missing=1
+    fi
   fi
 
   if [[ ! -d "$TASKS_DIR" ]]; then
@@ -217,7 +263,7 @@ get_script_description() {
 # ─────────────────────────────────────────────────────────────────────────────
 
 cmd_status() {
-  check_dependencies
+  check_dependencies status
 
   log_step "Checking configuration"
   echo
@@ -238,15 +284,23 @@ cmd_status() {
   echo
 
   local enabled_count=0
-  enabled_count=$(yq '.scripts | to_entries | map(select(.value.enabled == true)) | length' "$CONFIG_FILE")
-  if [[ "$enabled_count" =~ ^[0-9]+$ ]] && (( enabled_count > 0 )); then
+  if ! enabled_count=$(yq '.scripts | to_entries | map(select(.value.enabled == true)) | length' "$CONFIG_FILE" 2>/dev/null); then
+    log_error "Could not compute the enabled-script count from configuration: $CONFIG_FILE"
+    exit 1
+  fi
+  # Normalise BEFORE any arithmetic: a non-numeric yq result must not reach $(( )).
+  [[ "$enabled_count" =~ ^[0-9]+$ ]] || enabled_count=0
+  if (( enabled_count > 0 )); then
     printf 'Enabled: %b%s%b\n' "${GREEN}" "$enabled_count" "${RESET}"
   else
     printf 'Enabled: %b%s%b\n' "${YELLOW}" "0" "${RESET}"
   fi
 
   local disabled_count=$((script_count - enabled_count))
-  if [[ "$disabled_count" =~ ^[0-9]+$ ]] && (( disabled_count > 0 )); then
+  if (( disabled_count < 0 )); then
+    disabled_count=0
+  fi
+  if (( disabled_count > 0 )); then
     printf 'Disabled: %b%s%b\n' "${CYAN}" "$disabled_count" "${RESET}"
   else
     printf 'Disabled: %b%s%b\n' "${CYAN}" "0" "${RESET}"
@@ -290,7 +344,6 @@ cmd_status() {
     fi
   done
 
-  local line
   line=$(printf '%.0s─' $(seq 1 $((max_len + 30))))
 
   echo "$line"
@@ -389,11 +442,24 @@ run_script() {
     [[ -n "$arg" ]] && args+=("$arg")
   done < <(get_script_args "$script_name")
 
-  # Run the script with environment variables
-  if [[ ${#env_args[@]} -gt 0 ]]; then
-    env "${env_args[@]}" "$script_path" "${args[@]}"
+  # Run the script with the prompt policy and its configured environment.
+  # The INTERACTIVE value is placed BEFORE the config env entries so a
+  # per-script `env:` entry for INTERACTIVE in the config wins (in `env` the
+  # last assignment takes effect) — the config is the more specific declaration.
+  # In non-interactive mode stdin is /dev/null, so a stray 'read' fails fast
+  # instead of hanging an unattended run.
+  if [[ "${INTERACTIVE}" == "true" ]]; then
+    if [[ ${#env_args[@]} -gt 0 ]]; then
+      env "INTERACTIVE=true" "${env_args[@]}" "$script_path" "${args[@]}"
+    else
+      env "INTERACTIVE=true" "$script_path" "${args[@]}"
+    fi
   else
-    "$script_path" "${args[@]}"
+    if [[ ${#env_args[@]} -gt 0 ]]; then
+      env "INTERACTIVE=false" "${env_args[@]}" "$script_path" "${args[@]}" < /dev/null
+    else
+      env "INTERACTIVE=false" "$script_path" "${args[@]}" < /dev/null
+    fi
   fi
 }
 
@@ -405,7 +471,7 @@ run_script() {
 cmd_apply() {
   log_step "Applying configuration"
 
-  check_dependencies
+  check_dependencies apply
 
   echo
   log_info "Reading configuration from: $CONFIG_FILE"
@@ -414,9 +480,14 @@ cmd_apply() {
 
   # Check if any scripts are enabled
   local enabled_count=0
-  enabled_count=$(yq '.scripts | to_entries | map(select(.value.enabled == true)) | length' "$CONFIG_FILE")
+  if ! enabled_count=$(yq '.scripts | to_entries | map(select(.value.enabled == true)) | length' "$CONFIG_FILE" 2>/dev/null); then
+    log_error "Could not compute the enabled-script count from configuration: $CONFIG_FILE"
+    exit 1
+  fi
+  # Normalise BEFORE any arithmetic: a non-numeric yq result must not reach $(( )).
+  [[ "$enabled_count" =~ ^[0-9]+$ ]] || enabled_count=0
 
-  if [[ ! "$enabled_count" =~ ^[0-9]+$ ]] || (( enabled_count == 0 )); then
+  if (( enabled_count == 0 )); then
     exit 0
   fi
 
@@ -497,24 +568,53 @@ cmd_help() {
 
   Machine Setup Automation Runner
 
-  Usage: ./run-setup.sh <subcommand> [options]
+  Usage:
+    ./run-setup.sh [options] <subcommand>
+    ./run-setup.sh <subcommand> [options]
+
+  Options may appear before OR after the subcommand.
 
   Subcommands:
     apply    Run all enabled setup scripts
-    status   Show which scripts are enabled/disabled
+    status   Show which scripts are enabled/disabled (read-only: never installs)
 
   Options:
     -c, --config <file>  Path to configuration file (default: machine-config.yml)
-    -h, --help           Show this help message
+    -h, --help           Show this help message and exit
+    --non-interactive    Run children with INTERACTIVE=false and stdin from
+                         /dev/null so a stray prompt fails fast instead of
+                         hanging an unattended run (this is the default)
+    --interactive        Run children with INTERACTIVE=true on an inherited tty
+                         (the only opt-in to prompts)
+                         (mutually exclusive with --non-interactive)
 
-  Note:
-    If yq or jq are not installed, run-setup.sh automatically runs
-    tasks/setup-basics.sh first to install them.
+  Prompt policy (INTERACTIVE contract):
+    Every child is run with INTERACTIVE set explicitly (true or false). In
+    non-interactive mode the child's stdin is /dev/null, so a stray 'read'
+    fails immediately instead of hanging an unattended run. A per-script
+    `env:` entry INTERACTIVE=true in the config overrides the global default
+    for that script (config wins).
+    Note: --yes / ASSUME_YES is deliberately NOT implemented — auto-answering
+    prompts per question is not something the docker tasks can express today.
+    --interactive is the only opt-in to prompts.
+
+  Dependencies:
+    status is read-only: it never installs anything and exits with a hint if
+    yq/jq are missing. apply auto-installs missing yq/jq by running
+    tasks/setup-basics.sh — except under --non-interactive, where yq/jq must
+    already be installed (unattended runs fail fast and do not provision the
+    machine; set ASSUME_SETUP_BASICS=true to allow the auto-install).
+
+  Deliberately unimplemented:
+    --only <a,b>  (use tests/run-vm-tests.sh --scripts for a subset)
+    --dry-run     (apply has no dry-run semantics worth faking)
 
   Examples:
     ./run-setup.sh status
     ./run-setup.sh apply
+    ./run-setup.sh apply --config my-config.yml
     ./run-setup.sh --config my-config.yml apply
+    ./run-setup.sh apply --non-interactive
 
   Configuration:
     Edit machine-config.yml to enable/disable scripts and configure
@@ -528,24 +628,56 @@ EOF
 # ─────────────────────────────────────────────────────────────────────────────
 
 main() {
-  # Parse options
+  # Two-pass scan: known global options are consumed wherever they appear,
+  # exactly one subcommand is taken, and anything else is a hard usage error
+  # (exit 2) — never silently dropped.
   local config_file=""
+  local subcommand=""
+  local saw_interactive=0 saw_non_interactive=0
+  local -a positional=()
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
       -c|--config)
         if [[ -z "${2:-}" ]]; then
           log_error "--config requires a value"
-          exit 1
+          exit 2
         fi
-        config_file="$2"
-        shift 2
-        ;;
+        if [[ -n "$config_file" ]]; then
+          log_error "--config given more than once"
+          exit 2
+        fi
+        config_file="$2"; shift 2 ;;
+      -h|--help)
+        subcommand="${subcommand:-help}"; shift ;;
+      --non-interactive)
+        saw_non_interactive=$((saw_non_interactive + 1))
+        NON_INTERACTIVE=true; INTERACTIVE=false; shift ;;
+      --interactive)
+        saw_interactive=$((saw_interactive + 1))
+        INTERACTIVE=true; NON_INTERACTIVE=false; shift ;;
+      -*)
+        log_error "Unknown option: $1"
+        cmd_help >&2
+        exit 2 ;;
       *)
-        break
-        ;;
+        positional+=("$1"); shift ;;
     esac
   done
+
+  if (( saw_interactive > 0 && saw_non_interactive > 0 )); then
+    log_error "--interactive and --non-interactive are mutually exclusive"
+    cmd_help >&2
+    exit 2
+  fi
+
+  if (( ${#positional[@]} > 1 )); then
+    log_error "Unexpected argument: ${positional[1]}"
+    cmd_help >&2
+    exit 2
+  fi
+
+  subcommand="${subcommand:-${positional[0]:-help}}"
 
   # Resolve config file
   if [[ -n "$config_file" ]]; then
@@ -558,25 +690,21 @@ main() {
     CONFIG_FILE="${DEFAULT_CONFIG_FILE}"
   fi
 
-  # Parse subcommand from remaining args
-  local subcommand="${1:-}"
   case "$subcommand" in
     apply)
-      shift
-      cmd_apply "$@"
+      cmd_apply
       ;;
     status)
-      shift
-      cmd_status "$@"
+      cmd_status
       ;;
-    help|--help|-h|"")
+    help)
       cmd_help
       exit 0
       ;;
     *)
-      printf '%b %b %b %s\n' "${RED}[ERROR]${RESET}" "${RED}[ERROR]${RESET}" "" "Unknown subcommand: $subcommand" >&2
+      log_error "Unknown subcommand: $subcommand"
       echo
-      cmd_help
+      cmd_help >&2
       exit 1
       ;;
   esac

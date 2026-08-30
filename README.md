@@ -73,7 +73,7 @@ The agent will read the README and discover available scripts on its own, then g
 ---
 
 ## How It Works
-- **Orchestrator** - `run-setup.sh` reads a YAML configuration file to determine which services to install, then runs them in order. Use `./run-setup.sh status` to preview and `./run-setup.sh apply` to execute. The default config file is `machine-config.yml` in the repository root, or pass a different file with `--config`.
+- **Orchestrator** - `run-setup.sh` reads a YAML configuration file to determine which services to install, then runs them in order. Use `./run-setup.sh status` to preview and `./run-setup.sh apply` to execute. The default config file is `machine-config.yml` in the repository root, or pass a different file with `--config` (before or after the subcommand).
 - **Modular task scripts** - Each `tasks/setup-*.sh` script is self-contained and idempotent; it can be run individually or through the orchestrator.
 - **Configuration via YAML** - `machine-config.yml` declares which scripts to run, their environment variables, and command-line arguments. All tunable values have sensible defaults and can be overridden.
 
@@ -133,11 +133,15 @@ keep it when copying to `machine-config.yml`.)
 ```bash
 ./run-setup.sh status   # Show which scripts are enabled/disabled
 ./run-setup.sh apply    # Install or update all enabled services
-./run-setup.sh --config path/to/other-config.yml apply  # Use a custom config file
+./run-setup.sh apply --config path/to/other-config.yml  # Use a custom config file
 ```
 
-**Options:**
+**Options** (may appear before or after the subcommand):
 - `--config <file>` / `-c <file>` — Path to a YAML configuration file (default: `machine-config.yml` in the repository root)
+- `--non-interactive` — Run all tasks with `INTERACTIVE=false` and `stdin=/dev/null` so a stray prompt fails fast instead of hanging an unattended run (this is the default behaviour)
+- `--interactive` — Run all tasks with `INTERACTIVE=true` on an inherited tty (the only opt-in to prompts; mutually exclusive with `--non-interactive`)
+
+`status` is read-only: it never installs anything and exits with a hint if `yq`/`jq` are missing. `apply` auto-installs missing `yq`/`jq` by running `tasks/setup-basics.sh`, except under `--non-interactive`, where they must already be installed (unattended runs fail fast and do not provision the machine; set `ASSUME_SETUP_BASICS=true` to allow the auto-install). A per-script `env:` entry `INTERACTIVE: "true"` in the config overrides the global default for that script (config wins).
 
 When run without any arguments, `run-setup.sh` prints usage instructions.
 
