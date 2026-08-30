@@ -84,14 +84,27 @@ set -euo pipefail
 # CLEANUP TRAP — handles partial failures
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Set to 1 immediately BEFORE 'up -d' and reset to 0 once the stack is proven
+# healthy. The trap tears the stack down only while this flag is set, so a late
+# failure (health gate, ufw, .env write) cannot stop a stack that was already
+# running before this script was invoked.
+STACK_CREATED_THIS_RUN=0
+
 cleanup_on_failure() {
   local exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    echo ""
-    warn "Setup failed (exit code: ${exit_code})! Cleaning up..."
-    if [[ -f "${COMPOSE_FILE:-}" ]] && docker compose -f "$COMPOSE_FILE" ps &>/dev/null; then
+  (( exit_code == 0 )) && return 0
+  if (( STACK_CREATED_THIS_RUN != 1 )); then
+    warn "Setup failed (exit code: ${exit_code}). No stack was started by this run — nothing torn down."
+    return 0
+  fi
+  echo ""
+  warn "Setup failed (exit code: ${exit_code})! Removing the stack created by this run..."
+  if [[ -f "${COMPOSE_FILE:-}" ]] && docker compose -f "$COMPOSE_FILE" ps &>/dev/null; then
+    if [[ -n "$(docker compose -f "$COMPOSE_FILE" ps -q 2>/dev/null || true)" ]]; then
       docker compose -f "$COMPOSE_FILE" down --remove-orphans 2>/dev/null || true
       info "Removed partially created stack."
+    else
+      info "Stack from this run is already stopped — data in ${PROMETHEUS_HOME} and ${GRAFANA_HOME} is preserved."
     fi
   fi
 }
@@ -308,6 +321,11 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   fi
 
   info "Stopping the existing stack (data preserved)."
+  # The operator explicitly accepted the re-create (MONITORING_FORCE or the
+  # interactive confirm above): the cleanup trap must cover this re-create,
+  # so a failure before 'up -d' or a half-created re-create is still cleaned
+  # up — and the trap must not claim "nothing torn down".
+  STACK_CREATED_THIS_RUN=1
   docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
 fi
 
@@ -446,12 +464,14 @@ success "Images pulled."
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Starting monitoring stack (detached)"
+STACK_CREATED_THIS_RUN=1
 docker compose -f "$COMPOSE_FILE" up -d
 
 # Health gate: prove the containers are actually up before reporting success.
 mapfile -t _ids < <(docker compose -f "$COMPOSE_FILE" ps -q)
 wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
   || error "Monitoring stack did not come up — see the status output above"
+STACK_CREATED_THIS_RUN=0     # proven healthy -> a later failure must not tear it down
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HEALTH CHECK

@@ -173,14 +173,27 @@ POSTGRES_DB="${POSTGRES_DB:-omnigent}"                      # Postgres database 
 # CLEANUP TRAP — handles partial failures
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Set to 1 immediately BEFORE 'up -d' and reset to 0 once the stack is proven
+# healthy. The trap tears the stack down only while this flag is set, so a late
+# failure (health gate, ufw, .env write) cannot stop a stack that was already
+# running before this script was invoked.
+STACK_CREATED_THIS_RUN=0
+
 cleanup_on_failure() {
   local exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    echo ""
-    warn "Setup failed (exit code: ${exit_code})! Cleaning up..."
-    if [[ -d "$OMNIGENT_HOME" ]] && (cd "$OMNIGENT_HOME" && docker compose ps) &>/dev/null; then
+  (( exit_code == 0 )) && return 0
+  if (( STACK_CREATED_THIS_RUN != 1 )); then
+    warn "Setup failed (exit code: ${exit_code}). No stack was started by this run — nothing torn down."
+    return 0
+  fi
+  echo ""
+  warn "Setup failed (exit code: ${exit_code})! Removing the stack created by this run..."
+  if [[ -d "$OMNIGENT_HOME" ]] && (cd "$OMNIGENT_HOME" && docker compose ps) &>/dev/null; then
+    if [[ -n "$(cd "$OMNIGENT_HOME" && docker compose ps -q 2>/dev/null || true)" ]]; then
       (cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
       info "Removed partially created stack."
+    else
+      info "Stack from this run is already stopped — data volumes (postgres-data, artifact-data) are preserved."
     fi
   fi
 }
@@ -221,6 +234,10 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   if [[ "$INTERACTIVE" == "true" ]]; then
     read -rp "    Tear down existing stack and re-create? [y/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
+      # The operator confirmed the re-create: the cleanup trap must cover it,
+      # so a failure before 'up -d' or a half-created re-create is still
+      # cleaned up — and the trap must not claim "nothing torn down".
+      STACK_CREATED_THIS_RUN=1
       info "Stopping and removing existing stack..."
       (cd "$OMNIGENT_HOME" && docker compose down 2>/dev/null) || true
       success "Old stack removed. Data volumes preserved."
@@ -402,17 +419,28 @@ fi
 # TEARDOWN & START
 # ─────────────────────────────────────────────────────────────────────────────
 
+# NOTE: unconditional teardown in the normal flow (no-op on a fresh install).
+# Whether a re-run tears down / converges / skips is a re-run POLICY decision
+# (ticket 12-existing-stack-rerun-policy); this script currently always
+# re-creates. The STACK_CREATED_THIS_RUN flag set before 'up -d' marks the
+# stack (re)created by THIS run for the cleanup trap.
 step "Tearing down existing Omnigent stack"
 (cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
 success "Old stack removed. Data volumes preserved."
 
 step "Starting Omnigent stack (detached)"
+STACK_CREATED_THIS_RUN=1
 (cd "$OMNIGENT_HOME" && docker compose up -d --pull always)
 
 # Health gate: prove the containers are actually up before reporting success.
+# This also replaces the old ad-hoc "container running? / restart loop?"
+# checks: they were dead code (error() exited before them) and the gate
+# covers not-running, unhealthy and restart-loop states.
 mapfile -t _ids < <(cd "$OMNIGENT_HOME" && docker compose ps -q)
 wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
-  || error "Omnigent stack did not come up — see the status output above"
+  || { (cd "$OMNIGENT_HOME" && docker compose logs --tail=50) 2>/dev/null || true
+       error "Omnigent stack did not come up"; }
+STACK_CREATED_THIS_RUN=0     # proven healthy -> a later failure must not tear it down
 
 # ─────────────────────────────────────────────────────────────────────────────
 # ENSURE POSTGRES PASSWORD MATCHES .ENV
@@ -455,45 +483,6 @@ if [[ -n "$PG_PASSWORD_FROM_ENV" && -n "$PG_USER_FROM_ENV" ]]; then
 else
   warn "POSTGRES_PASSWORD or POSTGRES_USER not found in .env, skipping password sync."
 fi
-
-# ─────────────────────────────────────────────────────────────────────────────
-# VERIFY BOTH CONTAINERS ARE RUNNING
-# ─────────────────────────────────────────────────────────────────────────────
-
-step "Verifying container status"
-
-# Check that both containers are in running state
-if ! docker ps --format '{{.Names}}' | grep -q 'omnigent-postgres'; then
-  error "omnigent-postgres container is not running."
-  (cd "$OMNIGENT_HOME" && docker compose logs --tail=50 postgres) 2>/dev/null || true
-  (cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
-  exit 1
-fi
-
-if ! docker ps --format '{{.Names}}' | grep -q 'omnigent-omnigent'; then
-  error "omnigent-omnigent container is not running."
-  (cd "$OMNIGENT_HOME" && docker compose logs --tail=50 omnigent) 2>/dev/null || true
-  (cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
-  exit 1
-fi
-
-# Check if the omnigent container is in a restart loop
-omnigent_restart_count="$(docker inspect omnigent-omnigent-1 --format '{{.RestartCount}}' 2>/dev/null || echo "0")"
-if [[ "$omnigent_restart_count" -gt 0 ]]; then
-  warn "omnigent-omnigent-1 has restarted ${omnigent_restart_count} time(s)."
-  # Give it a moment to stabilize, then check again
-  sleep 5
-  omnigent_restart_count_after="$(docker inspect omnigent-omnigent-1 --format '{{.RestartCount}}' 2>/dev/null || echo "0")"
-  if [[ "$omnigent_restart_count_after" -gt "$omnigent_restart_count" ]]; then
-    error "omnigent-omnigent-1 is in a restart loop (restarts: ${omnigent_restart_count} -> ${omnigent_restart_count_after})."
-    (cd "$OMNIGENT_HOME" && docker compose logs --tail=50 omnigent) 2>/dev/null || true
-    (cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
-    exit 1
-  fi
-  info "Container stabilized after ${omnigent_restart_count} restart(s)."
-fi
-
-success "Both containers are running."
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HEALTH CHECK
@@ -542,14 +531,14 @@ else
     if docker ps --format '{{.Names}}' | grep -q 'omnigent-omnigent'; then
       success "Omnigent container is running (Traefik mode)."
     else
+      # error() exits here; the stack (already proven healthy by the gate)
+      # must NOT be torn down — it is up, just not reachable via HTTP.
       error "Omnigent container is not running."
-      (cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
-      exit 1
     fi
   else
+    # error() exits here; the stack (already proven healthy by the gate)
+    # must NOT be torn down — it is up, just not answering yet.
     error "Omnigent server did not respond within 120s."
-    (cd "$OMNIGENT_HOME" && docker compose down --remove-orphans 2>/dev/null) || true
-    exit 1
   fi
 fi
 

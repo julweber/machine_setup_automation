@@ -99,6 +99,37 @@ maybe_generate_password() {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# CLEANUP TRAP — handles partial failures (docker mode)
+# ─────────────────────────────────────────────────────────────────────────────
+
+# Set to 1 immediately BEFORE 'up -d' and reset to 0 once the stack is proven
+# healthy. The trap tears the stack down only while this flag is set, so a late
+# failure (health gate, ufw, .env write) cannot stop a stack that was already
+# running before this script was invoked.
+STACK_CREATED_THIS_RUN=0
+
+cleanup_on_failure() {
+    local exit_code=$?
+    (( exit_code == 0 )) && return 0
+    if (( STACK_CREATED_THIS_RUN != 1 )); then
+        warn "Setup failed (exit code: ${exit_code}). No stack was started by this run — nothing torn down."
+        return 0
+    fi
+    echo ""
+    warn "Setup failed (exit code: ${exit_code})! Removing the stack created by this run..."
+    if [[ -d "${DATA_DIR:-}" ]] && cd "$DATA_DIR" 2>/dev/null; then
+        if [[ -n "$(sudo docker compose ps -q 2>/dev/null || true)" ]]; then
+            sudo docker compose down --remove-orphans 2>/dev/null || true
+            info "Removed partially created stack."
+        else
+            info "Stack from this run is already stopped — data volume (opencode_data) is preserved."
+        fi
+    fi
+}
+
+trap cleanup_on_failure EXIT
+
+# ─────────────────────────────────────────────────────────────────────────────
 # PRE-FLIGHT CHECKS
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -273,8 +304,6 @@ _configure_ufw_docker() {
 setup_docker() {
     local compose_file="${DATA_DIR}/docker-compose.yml"
 
-    trap 'warn "Setup failed (exit code: $?)! Cleaning up..."; cd "$DATA_DIR" && sudo docker compose down --remove-orphans 2>/dev/null || true' EXIT
-
     sudo mkdir -p "$DATA_DIR"
 
     step "Generating ${compose_file}"
@@ -293,13 +322,16 @@ setup_docker() {
     success "Images pulled."
 
     step "Starting Opencode stack (detached)"
+    STACK_CREATED_THIS_RUN=1
     sudo docker compose up -d
 
     # Health gate: prove the containers are actually up before reporting
-    # success (on failure the EXIT trap above tears the stack down).
+    # success (on failure the EXIT trap tears the stack down while the
+    # STACK_CREATED_THIS_RUN flag is set).
     mapfile -t _ids < <(sudo docker compose ps -q)
     wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
       || error "Opencode stack did not come up — see the status output above"
+    STACK_CREATED_THIS_RUN=0     # proven healthy -> a later failure must not tear it down
 
     _wait_for_opencode_docker
     _configure_ufw_docker

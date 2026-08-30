@@ -237,8 +237,18 @@ if ! declare -F _mktemp_arm_exit_trap > /dev/null 2>&1; then
     if [[ -n "$_prev" ]]; then
       # Expand now on purpose: the handler is composed from the existing
       # handler string extracted above.
+      # ORDER MATTERS: the previous handler runs FIRST so it still sees the
+      # script's real exit status in $? — the task cleanup handlers capture
+      # `local exit_code=$?` on entry, and any command running before them
+      # would clobber the code (a _mktemp_cleanup that runs first always
+      # returns 0, which silently disabled every failure cleanup that was
+      # chained this way; found by ticket improvements-2/09 on a live VM).
+      # The current handlers (cleanup_on_failure) return 0 on all paths, so
+      # _mktemp_cleanup still runs afterwards. A hypothetical handler that
+      # exits itself would skip the temp-file cleanup (no current handler
+      # does that).
       # shellcheck disable=SC2064
-      trap "_mktemp_cleanup; ${_prev}" EXIT
+      trap "${_prev}; _mktemp_cleanup" EXIT
     else
       trap "_mktemp_cleanup" EXIT
     fi

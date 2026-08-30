@@ -95,14 +95,27 @@ set -euo pipefail
 # CLEANUP TRAP — handles partial failures
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Set to 1 immediately BEFORE 'up -d' and reset to 0 once the stack is proven
+# healthy. The trap tears the stack down only while this flag is set, so a late
+# failure (health gate, ufw, .env write) cannot stop a stack that was already
+# running before this script was invoked.
+STACK_CREATED_THIS_RUN=0
+
 cleanup_on_failure() {
   local exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    echo ""
-    warn "Setup failed (exit code: ${exit_code})! Cleaning up..."
-    if [[ -f "${NEXTCLOUD_HOME}/docker-compose.yml" ]]; then
+  (( exit_code == 0 )) && return 0
+  if (( STACK_CREATED_THIS_RUN != 1 )); then
+    warn "Setup failed (exit code: ${exit_code}). No stack was started by this run — nothing torn down."
+    return 0
+  fi
+  echo ""
+  warn "Setup failed (exit code: ${exit_code})! Removing the stack created by this run..."
+  if [[ -f "${NEXTCLOUD_HOME}/docker-compose.yml" ]]; then
+    if [[ -n "$(sudo docker compose -f "${NEXTCLOUD_HOME}/docker-compose.yml" ps -q 2>/dev/null || true)" ]]; then
       sudo docker compose -f "${NEXTCLOUD_HOME}/docker-compose.yml" down --remove-orphans 2>/dev/null || true
       info "Removed partially created stack."
+    else
+      info "Stack from this run is already stopped — data in ${NEXTCLOUD_HOME}/html and ${NEXTCLOUD_HOME}/data is preserved."
     fi
   fi
 }
@@ -316,6 +329,10 @@ if [[ -f "$COMPOSE_FILE" ]]; then
   if [[ "$INTERACTIVE" == "true" ]]; then
     read -rp "    Tear down existing stack and re-create? [y/N] " answer
     if [[ "${answer,,}" == "y" ]]; then
+      # The operator confirmed the re-create: the cleanup trap must cover it,
+      # so a failure before 'up -d' or a half-created re-create is still
+      # cleaned up — and the trap must not claim "nothing torn down".
+      STACK_CREATED_THIS_RUN=1
       info "Stopping and removing existing stack..."
       sudo docker compose -f "$COMPOSE_FILE" down 2>/dev/null || true
       success "Old stack removed."
@@ -617,12 +634,14 @@ success "Images pulled."
 # ─────────────────────────────────────────────────────────────────────────────
 
 step "Starting Nextcloud stack (detached)"
+STACK_CREATED_THIS_RUN=1
 sudo docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" up -d
 
 # Health gate: prove the containers are actually up before reporting success.
 mapfile -t _ids < <(sudo docker compose -f "$COMPOSE_FILE" --env-file "$ENV_FILE" ps -q)
 wait_for_healthy "${WAIT_TIMEOUT:-180}" "${_ids[@]}" \
   || error "Nextcloud stack did not come up — see the status output above"
+STACK_CREATED_THIS_RUN=0     # proven healthy -> a later failure must not tear it down
 
 # ─────────────────────────────────────────────────────────────────────────────
 # WAIT FOR NEXTCLOUD TO BECOME AVAILABLE

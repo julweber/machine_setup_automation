@@ -58,18 +58,32 @@ set -euo pipefail
 # CLEANUP TRAP — handles partial failures
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Set to 1 immediately BEFORE this run stops/disables or enables/starts the
+# llama-swap unit, and reset to 0 once the service is proven healthy. The trap
+# touches the unit only while this flag is set, so a late failure (download,
+# config write, ufw) cannot stop a unit that was running before this script
+# was invoked.
+SERVICE_TOUCHED_THIS_RUN=0
+
 cleanup_on_failure() {
   local exit_code=$?
-  if [[ $exit_code -ne 0 ]]; then
-    echo ""
-    warn "Setup failed (exit code: ${exit_code})! Cleaning up..."
-    # If service was partially installed, disable and stop it
-    if sudo systemctl cat llama-swap &>/dev/null 2>&1; then
+  (( exit_code == 0 )) && return 0
+  if (( SERVICE_TOUCHED_THIS_RUN != 1 )); then
+    warn "Setup failed (exit code: ${exit_code}). The llama-swap service was not touched by this run — nothing stopped or disabled."
+    return 0
+  fi
+  echo ""
+  warn "Setup failed (exit code: ${exit_code})! Cleaning up the service state from this run..."
+  # If service was partially installed, disable and stop it
+  if sudo systemctl cat llama-swap &>/dev/null 2>&1; then
+    if sudo systemctl is-active llama-swap &>/dev/null; then
       info "Disabling and stopping partially installed service..."
       sudo systemctl stop llama-swap 2>/dev/null || true
       sudo systemctl disable llama-swap 2>/dev/null || true
       sudo systemctl daemon-reload 2>/dev/null || true
       success "Partial service removed."
+    else
+      info "Service from this run is already stopped — config and data in ${LLAMA_SWAP_DIR} are preserved."
     fi
   fi
 }
@@ -240,6 +254,9 @@ if [[ -f "$SERVICE_FILE" ]]; then
   fi
   # Stop and disable existing service before re-install
   info "Stopping existing service..."
+  # The operator accepted the re-install: from here on the unit is owned by
+  # this run, so a later failure must not leave it half-configured running.
+  SERVICE_TOUCHED_THIS_RUN=1
   sudo systemctl stop llama-swap 2>/dev/null || true
   sudo systemctl disable llama-swap 2>/dev/null || true
   success "Old service stopped and disabled."
@@ -389,6 +406,8 @@ success "Daemon reloaded."
 
 step "Starting llama-swap service"
 
+# This run now owns the unit: a failure from here on may stop/disable it.
+SERVICE_TOUCHED_THIS_RUN=1
 sudo systemctl enable llama-swap
 sudo systemctl start llama-swap
 success "Service started and enabled."
@@ -421,6 +440,7 @@ echo ""
 
 if [[ "$READY" == "true" ]]; then
   success "llama-swap is up and responding!"
+  SERVICE_TOUCHED_THIS_RUN=0   # proven healthy -> a later failure must not stop the service
 else
   warn "llama-swap did not respond within ${MAX_WAIT}s."
   warn "Check service status and logs:"
