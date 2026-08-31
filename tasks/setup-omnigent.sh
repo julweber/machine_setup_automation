@@ -28,6 +28,9 @@
 #   OMNIGENT_HOME                    - Host directory for persistent data (default: /srv/omnigent)
 #   OMNIGENT_IMAGE                   - Docker image tag to use (default: ghcr.io/omnigent-ai/omnigent-server)
 #   OMNIGENT_IMAGE_TAG               - Docker image tag (default: latest)
+#   POSTGRES_IMAGE                   - Postgres image for the bundled db service
+#                                      (default: postgres:16-alpine, pinned;
+#                                      resolved by compose from the template)
 #   OMNIGENT_PORT                    - Host port for direct web UI access (default: 8008)
 #   OMNIGENT_TRAEFIK                 - Set to "true" to enable Traefik routing (default: false)
 #   OMNIGENT_DOMAIN                  - Domain for Traefik access (required when Traefik=true)
@@ -101,6 +104,9 @@ Environment Variables:
   OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD  Pre-seed admin password for headless deploys
   POSTGRES_USER                    Postgres user (default: omnigent)
   POSTGRES_DB                      Postgres database name (default: omnigent)
+  POSTGRES_IMAGE                   Postgres image for the bundled db service
+                                   (default: postgres:16-alpine — pinned so a
+                                   re-run cannot silently major-bump the db)
   WAIT_TIMEOUT                     Max seconds to wait for the stack to come up
                                    and become healthy after 'docker compose up -d'
                                    (default: 180)

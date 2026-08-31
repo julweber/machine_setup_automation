@@ -9,7 +9,7 @@ networks:
 
 services:
   opencode:
-    image: ghcr.io/anomalyco/opencode:latest
+    image: ${OPENCODE_IMAGE}
     container_name: opencode-agent
     restart: unless-stopped
     env_file:

@@ -152,12 +152,14 @@ When run without any arguments, `run-setup.sh` prints usage instructions.
 
 All service setup scripts are located in the `tasks/` directory. Below is a complete list of available services organized by category.
 
+**Image pinning.** Every container image is rendered from a `*_IMAGE` environment variable whose default in the task script is a *specific* tag (never `:latest`, `:main` or an untagged reference). Templates hold `${...}` placeholders; the script substitutes only the image variables and leaves everything else for Compose to resolve from `/srv/<service>/.env`. `warn_moving_image` (in `lib/helpers.sh`) warns if an override reintroduces a moving tag. Upstream installers are downloaded with `fetch_and_run`, which logs the SHA-256 and executes the file only after a pinned digest (if set) matches — see `*_INSTALL_SHA256` below.
+
 ### System & Infrastructure
 
 #### `setup-basics.sh`
 Installs common system packages (curl, git, python3, etc.), **uv** Python package manager, **herdr** CLI tool, Node.js/npm, and the **huggingface-cli**.
 
-**Environment variables:** None
+**Environment variables:** `NVM_VERSION` (default `0.40.4`), `NVM_DIR` (default `$HOME/.nvm`), `HF_CLI_INSTALL_SHA256` / `HERDR_INSTALL_SHA256` (default unset — the installer digest is logged on every run; set to enforce a reviewed checksum)
 
 #### `setup-docker.sh`
 Installs Docker Engine from the official Docker repository, adds the current user to the `docker` group and verifies the installation.
@@ -247,17 +249,17 @@ Installs **fail2ban** (including the Python 3.12 `pyasynchat` compatibility fix)
 #### `setup-lm-studio.sh`
 Downloads the specified LM Studio AppImage, creates a desktop entry, an optional start script, and optionally installs the **llmster** CLI (`lms`).
 
-**Environment variables:** `LM_STUDIO_VERSION` (default `0.4.2-2`), `INSTALL_LLMSTER_ENABLED` (default `true`)
+**Environment variables:** `LM_STUDIO_VERSION` (default `0.4.2-2`), `INSTALL_LLMSTER_ENABLED` (default `true`), `LMSTUDIO_INSTALL_SHA256` (default unset — the llmster installer digest is logged on every run; set to enforce a reviewed checksum)
 
 #### `setup-llama-cpp.sh`
 Builds and installs llama.cpp from source with auto or manual GPU backend selection. Skips install if binaries are already present.
 
-**Environment variables:** `INSTALL_DIR` (default `$HOME/llama.cpp`), `BACKEND` (`nvidia`, `amd`, `cpu`, auto-detected if empty), `FORCE` (default `0`), `JOBS` (default `nproc`)
+**Environment variables:** `INSTALL_DIR` (default `$HOME/llama.cpp`), `BACKEND` (`nvidia`, `amd`, `cpu`, auto-detected if empty), `FORCE` (default `0`), `JOBS` (default `nproc`), `LLAMA_CPP_REF` (default `v0.3.0` — the tag/branch that gets built, pinned so re-runs are reproducible; the built ref is printed in the summary)
 
 #### `setup-openwebui.sh`
 Deploys Open WebUI using Docker Compose, connecting to an external LM Studio instance for AI model inference. Supports both direct access mode and Traefik reverse-proxy integration.
 
-**Environment variables:** `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `/srv/openwebui`), `WEBUI_SECRET_KEY` (generated on first run if not set; stored in `.env` and reused on re-runs — set explicitly to override), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
+**Environment variables:** `OPENWEBUI_IMAGE` (default `ghcr.io/open-webui/open-webui:v0.11.1`), `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `/srv/openwebui`), `WEBUI_SECRET_KEY` (generated on first run if not set; stored in `.env` and reused on re-runs — set explicitly to override), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
 
 **Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
 
@@ -272,7 +274,7 @@ Deploys Open WebUI using Docker Compose, connecting to an external LM Studio ins
 #### `setup-opencode-server.sh`
 Installs and configures the Opencode AI coding agent server with systemd integration.
 
-**Environment variables:** `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`)
+**Environment variables:** `OPENCODE_IMAGE` (default `ghcr.io/anomalyco/opencode:1.18.25`), `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`)
 
 #### `setup-llama-swap.sh`
 Deploys llama-swap, a multi-model LLM proxy with hot-swap support, as a native systemd service. Downloads the Go binary from GitHub releases and generates a comprehensive `config.yaml` with all available options documented.
@@ -358,7 +360,7 @@ Clones the Nanobot agent repository, builds the Docker image, and runs the onboa
 #### `setup-hermes.sh`
 Sets up the Hermes Agent environment using the official prebuilt Docker image. Creates configuration files and provides convenience scripts for management.
 
-**Environment variables:** `HERMES_TARGET_REPO_DIRECTORY` (default `/srv/hermes`), `BUILD_ONLY` flag via command line (`--build-only`)
+**Environment variables:** `HERMES_TARGET_REPO_DIRECTORY` (default `/srv/hermes`), `HERMES_IMAGE` (default `nousresearch/hermes-agent:v2026.8.27`), `BUILD_ONLY` flag via command line (`--build-only`)
 
 **Features:**
 - Official Hermes Agent MCP gateway
@@ -400,7 +402,7 @@ Installs Forgejo (a Gitea fork) as a Docker container. Supports optional Traefik
 #### `setup-planka.sh`
 Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL. Auto-generates a secret key and supports interactive or headless admin user creation.
 
-**Environment variables:** `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD`, `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME`
+**Environment variables:** `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `POSTGRES_IMAGE` (default `postgres:16-alpine`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD`, `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME`
 
 **Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting; without `ADMIN_EMAIL`/`ADMIN_PASSWORD` the admin-user creation command is printed instead of prompting)
 
@@ -411,7 +413,7 @@ Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL.
 #### `setup-concourse.sh`
 Deploys **Concourse CI** (web, TSA, worker, PostgreSQL) with Docker Compose, generates TSA/session/worker keys, and configures a `fly` CLI target. Supports direct port exposure or Traefik reverse-proxy integration.
 
-**Environment variables:** `CONCOURSE_HOME` (default `/srv/concourse`), `CONCOURSE_WEB_PORT` (default `8089`), `CONCOURSE_ADMIN_USER` (default `admin`), `CONCOURSE_ADMIN_PASSWORD` (auto-generated), `CONCOURSE_DB_PASSWORD` (auto-generated), `CONCOURSE_CLUSTER_NAME` (default `denkfabrik`), `CONCOURSE_DNS_SERVER` (default `8.8.8.8`), `CONCOURSE_EXTERNAL_URL` (auto-detected), `CONCOURSE_FLY_TARGET` (default `concourse`), `CONCOURSE_TRAEFIK` (default `false`), `CONCOURSE_DOMAIN` (required when `CONCOURSE_TRAEFIK=true`), `PROXY_NETWORK` (default `proxy`)
+**Environment variables:** `CONCOURSE_HOME` (default `/srv/concourse`), `CONCOURSE_IMAGE` (default `concourse/concourse:8.3.0`), `POSTGRES_IMAGE` (default `postgres:15`), `CONCOURSE_WEB_PORT` (default `8089`), `CONCOURSE_ADMIN_USER` (default `admin`), `CONCOURSE_ADMIN_PASSWORD` (auto-generated), `CONCOURSE_DB_PASSWORD` (auto-generated), `CONCOURSE_CLUSTER_NAME` (default `denkfabrik`), `CONCOURSE_DNS_SERVER` (default `8.8.8.8`), `CONCOURSE_EXTERNAL_URL` (auto-detected), `CONCOURSE_FLY_TARGET` (default `concourse`), `CONCOURSE_TRAEFIK` (default `false`), `CONCOURSE_DOMAIN` (required when `CONCOURSE_TRAEFIK=true`), `PROXY_NETWORK` (default `proxy`)
 
 **Flags:** `--interactive` — prompt for confirmation on risky conditions (default: non-interactive; errors out instead of prompting)
 
@@ -429,7 +431,7 @@ Deploys NextCloud cloud storage platform via Docker Compose with MariaDB backend
 #### `setup-n8n.sh`
 Deploys n8n, a workflow automation platform, via Docker Compose with PostgreSQL backend. Supports optional Traefik reverse-proxy integration for secure HTTPS access.
 
-**Environment variables:** `N8N_DIR` (default `/srv/n8n`), `TRAEFIK_ENABLED` (default `false`), `DOMAIN_NAME`, `SUBDOMAIN`, `N8N_PORT` (default 5678), `GENERIC_TIMEZONE`, `SSL_EMAIL`
+**Environment variables:** `N8N_DIR` (default `/srv/n8n`), `N8N_IMAGE` (default `docker.n8n.io/n8nio/n8n:2.37.4`), `N8N_TRAEFIK_IMAGE` (default `traefik:v3.7.12`, the sidecar the Traefik variant runs next to the shared proxy), `POSTGRES_IMAGE` (default `postgres:15-alpine`), `TRAEFIK_ENABLED` (default `false`), `DOMAIN_NAME`, `SUBDOMAIN`, `N8N_PORT` (default 5678), `GENERIC_TIMEZONE`, `SSL_EMAIL`
 
 **Features:**
 - Visual workflow builder with 200+ integrations

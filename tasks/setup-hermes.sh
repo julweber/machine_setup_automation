@@ -17,6 +17,7 @@
 #
 # Environment Variables (optional):
 #   HERMES_TARGET_REPO_DIRECTORY - Directory to set up Hermes (default: /srv/hermes)
+#   HERMES_IMAGE                 - Hermes image (default: nousresearch/hermes-agent:v2026.8.27, pinned)
 #
 # Options:
 #   --build-only - Only pull the Docker image, don't configure files
@@ -45,7 +46,29 @@ HERMES_TARGET_REPO_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY:-/srv/hermes}"
 HERMES_DATA_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY}/.hermes"
 HERMES_WORKSPACE_DIRECTORY="${HERMES_TARGET_REPO_DIRECTORY}/workspace"
 TEMPLATES_DIR="${SCRIPT_DIR}/../templates/hermes"
-HERMES_IMAGE="nousresearch/hermes-agent:latest"
+# Pinned on purpose (ticket improvements-2/17): `:latest` made every generated
+# docker-compose.yml pull a moving reference. Default looked up 2026-08-31 from
+# https://hub.docker.com/r/nousresearch/hermes-agent/tags (most recent release
+# tag). Update deliberately: docker buildx imagetools inspect nousresearch/hermes-agent
+: "${HERMES_IMAGE:=nousresearch/hermes-agent:v2026.8.27}"
+# Warn (never fail) if an override moved the image off a version tag.
+warn_moving_image "${HERMES_IMAGE}" "HERMES_IMAGE"
+
+# Render docker-compose.yml from the template: the image reference is substituted
+# from the pinned default above (ticket improvements-2/17), so the template stays
+# free of hard-coded tags. ${GITHUB_TOKEN}/${OPENROUTER_API_KEY} are left literal
+# and resolved at runtime from ${HERMES_TARGET_REPO_DIRECTORY}/.env.
+_render_hermes_compose() {
+  local dest="$1" tmp
+  command -v envsubst >/dev/null 2>&1 \
+    || error "envsubst is not installed. Required for template rendering. Install with: sudo apt-get install gettext-base"
+  tmp="$(mktempfile docker-compose.yml)"
+  export HERMES_IMAGE
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${HERMES_IMAGE}' < "${TEMPLATES_DIR}/docker-compose.yml" > "${tmp}"
+  sudo install -m 0644 "${tmp}" "${dest}"
+  rm -f "${tmp}"
+}
 
 # =============================================================================
 # USAGE / HELP
@@ -66,6 +89,8 @@ ${BOLD}Options:${RESET}
 
 ${BOLD}Environment variables${RESET} (all optional):
   HERMES_TARGET_REPO_DIRECTORY  Directory to set up Hermes (default: /srv/hermes)
+  HERMES_IMAGE                  Hermes image (default: nousresearch/hermes-agent:v2026.8.27,
+                                pinned — override with an explicit version tag)
   WAIT_TIMEOUT                  Max seconds to wait for the gateway container
                                 to come up after 'docker compose up -d'
                                 (default: 180)
@@ -187,8 +212,8 @@ if [[ "${HERMES_CONFIG_EXISTS}" == true ]] || [[ "${HERMES_ENV_EXISTS}" == true 
   # Copy docker-compose.yml if needed
   if [[ -f "${TEMPLATES_DIR}/docker-compose.yml" ]]; then
     if [[ ! -f "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml" ]]; then
-      sudo cp "${TEMPLATES_DIR}/docker-compose.yml" "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml"
-      info "Copied docker-compose.yml"
+      _render_hermes_compose "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml"
+      info "Rendered docker-compose.yml"
     else
       info "docker-compose.yml already exists, keeping existing"
     fi
@@ -258,8 +283,8 @@ info "This is a fresh installation"
 step "Copying configuration files from templates"
 
 if [[ -f "${TEMPLATES_DIR}/docker-compose.yml" ]]; then
-  sudo cp "${TEMPLATES_DIR}/docker-compose.yml" "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml"
-  info "Copied docker-compose.yml (local terminal backend)"
+  _render_hermes_compose "${HERMES_TARGET_REPO_DIRECTORY}/docker-compose.yml"
+  info "Rendered docker-compose.yml (local terminal backend)"
 else
   warn "Template not found: ${TEMPLATES_DIR}/docker-compose.yml"
 fi

@@ -18,6 +18,10 @@
 #   --check           Check installation status and exit
 #   --help            Show help
 #
+# Environment Variables (optional):
+#   LLAMA_CPP_REF - source ref to build: a release tag or branch name
+#                   (default: v0.3.0, pinned — see the default below)
+#
 # Usage:
 #   ./setup-llama-cpp.sh              # auto-detect GPU, skip if installed
 #   ./setup-llama-cpp.sh --check      # check status
@@ -38,6 +42,22 @@ source "${LIB_PATH}" || {
 
 # Configuration
 INSTALL_DIR="${INSTALL_DIR:-/opt/llama.cpp}"
+# Source ref to build — pinned on purpose (ticket improvements-2/17). The clone
+# used to land on "whichever tag is newest at run time" (and the existing-clone
+# path pulled the remote default branch first), so two runs of this script did
+# not build the same thing.
+# Default looked up 2026-08-31 from the releases of the clone target below
+# (github.com/ggerganov/llama.cpp, which redirects to ggml-org/llama.cpp):
+# v0.3.0, published 2026-08-25 — the latest NON-prerelease. Everything newer is a
+# b107xx per-build pre-release published several times a day, i.e. exactly the
+# moving target that must not decide what gets built here.
+# Update deliberately: git ls-remote --tags https://github.com/ggerganov/llama.cpp
+: "${LLAMA_CPP_REF:=v0.3.0}"
+# Refs reach git as --branch/checkout arguments — keep them ref-shaped so a stray
+# option (a leading '-') or shell metacharacter can never reach git.
+if [[ ! "${LLAMA_CPP_REF}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
+  error "LLAMA_CPP_REF '${LLAMA_CPP_REF}' is not a valid tag/branch name (letters, digits, dot, underscore, slash, hyphen; must not start with '-')"
+fi
 BACKEND=""          # nvidia | amd | cpu
 FORCE=0
 CHECK_ONLY=0
@@ -57,6 +77,11 @@ ${BOLD}Options:${RESET}
   --force           Reinstall even if llama.cpp is already present
   --check           Check installation status and exit
   --help            Show this help
+
+${BOLD}Environment variables${RESET} (all optional):
+  LLAMA_CPP_REF     Source ref to build: release tag or branch name.
+                    Pinned so re-runs are reproducible.
+                    (default: v0.3.0)
 EOF
   exit 0
 }
@@ -293,22 +318,23 @@ case "${BACKEND}" in
     ;;
 esac
 
-# Clone / update repo — always checkout the latest tag
-step "Fetching llama.cpp source"
+# Clone / update repo — build the pinned LLAMA_CPP_REF, never "whatever is newest"
+step "Fetching llama.cpp source (ref: ${LLAMA_CPP_REF})"
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   # Fix dubious ownership for existing repos
   if [[ "${INSTALL_DIR}" != "${HOME}"* ]]; then
     git config --global --add safe.directory "${INSTALL_DIR}"
   fi
-  info "Existing repo found at ${INSTALL_DIR} – pulling latest & fetching tags…"
-  # Ensure we're on a branch before pulling (detached HEAD from previous tag checkout fails)
-  DEFAULT_BRANCH=$(git -C "${INSTALL_DIR}" remote show origin | grep 'HEAD branch' | awk '{print $NF}')
-  git -C "${INSTALL_DIR}" checkout "${DEFAULT_BRANCH}"
-  git -C "${INSTALL_DIR}" pull --ff-only
-  git -C "${INSTALL_DIR}" fetch --tags --force
+  info "Existing repo found at ${INSTALL_DIR} – fetching refs and tags…"
 else
-  info "Cloning into ${INSTALL_DIR}…"
-  git clone https://github.com/ggerganov/llama.cpp "${INSTALL_DIR}"
+  info "Cloning into ${INSTALL_DIR} at ${LLAMA_CPP_REF}…"
+  # --branch pins the starting point; --depth 1 is deliberately NOT used: a
+  # shallow clone of a single ref rewrites the fetch refspec to just that ref
+  # (verified: remote.origin.fetch becomes
+  # +refs/tags/<ref>:refs/tags/<ref>), so a later change of LLAMA_CPP_REF could
+  # never be fetched. A full --branch clone keeps every branch and tag.
+  git clone --branch "${LLAMA_CPP_REF}" \
+    https://github.com/ggerganov/llama.cpp "${INSTALL_DIR}"
 fi
 
 # Fix dubious ownership when directory was created with sudo
@@ -318,13 +344,21 @@ fi
 
 git -C "${INSTALL_DIR}" fetch --tags --force
 
-# Checkout the latest tag (ensures we always build from the most recent release)
-LATEST_TAG=$(git -C "${INSTALL_DIR}" describe --tags --abbrev=0)
-info "Latest tag: ${LATEST_TAG} – checking out…"
-git -C "${INSTALL_DIR}" checkout "${LATEST_TAG}" --
+# Checkout the pinned ref. There is deliberately no default-branch checkout +
+# pull in front of this: the ref is the build input, and drifting to the branch
+# tip / to "newest tag at run time" is what made two runs build different binaries
+# (ticket improvements-2/17).
+info "Checking out ${LLAMA_CPP_REF}…"
+if ! git -C "${INSTALL_DIR}" checkout "${LLAMA_CPP_REF}"; then
+  # A branch ref may exist only as a remote-tracking ref (no local copy yet).
+  if ! git -C "${INSTALL_DIR}" checkout -B "${LLAMA_CPP_REF}" "origin/${LLAMA_CPP_REF}"; then
+    error "LLAMA_CPP_REF '${LLAMA_CPP_REF}' not found in ${INSTALL_DIR} — list refs with: git -C ${INSTALL_DIR} ls-remote --tags origin, or point LLAMA_CPP_REF at an existing tag/branch"
+  fi
+fi
 git -C "${INSTALL_DIR}" clean -fd
 git -C "${INSTALL_DIR}" submodule update --init --recursive
-success "Source ready at ${INSTALL_DIR} (tag: ${LATEST_TAG})."
+BUILT_REF="$(git -C "${INSTALL_DIR}" describe --tags --always --dirty)"
+success "Source ready at ${INSTALL_DIR} (ref: ${LLAMA_CPP_REF}, describe: ${BUILT_REF})."
 
 # Configure & build
 step "Configuring CMake (backend: ${BACKEND^^})"
@@ -385,6 +419,7 @@ echo -e "${BOLD}${GREEN}╚═════════════════�
 echo ""
 echo -e "  ${BOLD}Backend:${RESET}    ${GREEN}${BACKEND^^}${RESET}"
 echo -e "  ${BOLD}Source:${RESET}     ${INSTALL_DIR}"
+echo -e "  ${BOLD}Built ref:${RESET}  ${LLAMA_CPP_REF} (${BUILT_REF})"
 echo -e "  ${BOLD}Binaries:${RESET}   /usr/local/bin"
 echo ""
 echo -e "  ${BOLD}Key binaries:${RESET}"

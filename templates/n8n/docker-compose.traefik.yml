@@ -1,6 +1,6 @@
 services:
   n8n:
-    image: docker.n8n.io/n8nio/n8n
+    image: ${N8N_IMAGE}
     restart: unless-stopped
     ports:
       - "127.0.0.1:5678:5678"
@@ -24,8 +24,14 @@ services:
       - n8n_data:/home/node/.n8n
       - ./local-files:/files
 
+  # Second, stack-private reverse proxy, alongside the shared Traefik from
+  # setup-traefik.sh. It binds 80/443 on the host (so it collides with the shared
+  # proxy) and mounts the Docker socket read-only. Left in place because removing
+  # it changes what this stack is — that decision belongs to tickets 19 (compose
+  # variants) / 23 (repo hygiene). Pinned here (ticket improvements-2/17): it used
+  # to be an untagged `image: "traefik"`, i.e. an unpinned `:latest`.
   traefik:
-    image: "traefik"
+    image: ${N8N_TRAEFIK_IMAGE}
     restart: always
     command:
       - "--api.insecure=true"
@@ -40,7 +46,7 @@ services:
       - traefik_data:/letsencrypt
       - /var/run/docker.sock:/var/run/docker.sock:ro
   postgres:
-    image: postgres:15-alpine
+    image: ${POSTGRES_IMAGE}
     container_name: n8n-postgres
     restart: unless-stopped
     environment:

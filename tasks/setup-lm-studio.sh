@@ -11,6 +11,8 @@
 # Environment Variables (optional):
 #   LM_STUDIO_VERSION       - Specific version (default: auto-detect latest)
 #   INSTALL_LLMSTER_ENABLED - Install llmster CLI (default: true)
+#   LMSTUDIO_INSTALL_SHA256 - expected SHA-256 of https://lmstudio.ai/install.sh
+#                             (optional; the digest is always logged)
 #
 # Usage:
 #   ./setup-lm-studio.sh
@@ -50,6 +52,8 @@ ${BOLD}Options:${RESET}
 ${BOLD}Environment variables${RESET} (all optional):
   LM_STUDIO_VERSION       Specific version (default: auto-detect latest)
   INSTALL_LLMSTER_ENABLED Install llmster CLI (default: true)
+  LMSTUDIO_INSTALL_SHA256 Pin the SHA-256 of the llmster installer
+                          (default: unset — the digest is logged every run)
   DESKTOP_LINK_TARGET_PATH  Desktop shortcut location
                             (default: $HOME/Desktop/LM-Studio.desktop)
   START_SCRIPT_TARGET_PATH  Start script location (default: $HOME/lmstudio)
@@ -79,6 +83,17 @@ done
 
 # Configuration
 : "${INSTALL_LLMSTER_ENABLED:=true}"
+
+# Checksum of the llmster installer (ticket improvements-2/17): it is downloaded
+# to a file, its SHA-256 logged, and only then executed — never piped from curl
+# into bash. Upstream publishes a .sha512 next to the AppImage the installer
+# fetches, but no digest for the installer script itself (verified 2026-08-31:
+# https://lmstudio.ai/install.sh.sha256 serves the website HTML, not a digest),
+# so the default stays empty and the run log records the digest. Review the
+# installer and pin it deliberately if you want it enforced:
+#   LMSTUDIO_INSTALL_SHA256=<64 hex> ./setup-lm-studio.sh
+: "${LMSTUDIO_INSTALL_SHA256:=}"
+
 DEFAULT_LM_STUDIO_VERSION="0.4.6-1"
 : "${LM_STUDIO_VERSION:=${DEFAULT_LM_STUDIO_VERSION}}"
 
@@ -202,7 +217,8 @@ if [[ "${INSTALL_LLMSTER_ENABLED}" == "true" ]]; then
     step "Installing llmster CLI"
     # Don't fail script on errors for this command
     set +e
-    curl -fsSL https://lmstudio.ai/install.sh | bash
+    fetch_and_run "https://lmstudio.ai/install.sh" "${LMSTUDIO_INSTALL_SHA256}" \
+      || warn "llmster installer did not run — see the download/checksum messages above"
     if command -v lms &>/dev/null; then
       info "lms version: $(lms --version 2>/dev/null || echo 'unknown')"
     fi

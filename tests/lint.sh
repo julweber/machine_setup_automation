@@ -11,11 +11,11 @@
 #      exception is the concourse worker: it runs a containerd runtime
 #      *inside* the container, which requires privileged mode (a functional
 #      requirement, not an escape surface).
-#   2. No floating `:latest` image in the traefik templates — the socket
-#      proxy image is pinned to tag + digest by tasks/setup-traefik.sh
-#      (SOCKET_PROXY_IMAGE). Pinning the remaining non-traefik `:latest`
-#      images (concourse, hermes, opencode) is ticket 17; once it lands,
-#      widen check 2 to all of templates/.
+#   2. No floating/untagged image reference in templates/. Every `image:` line
+#      is a `${...}` placeholder that the task script substitutes from a pinned
+#      default (ticket 07 for SOCKET_PROXY_IMAGE, ticket 17 for the rest), so a
+#      literal `:latest`/`:main` or an untagged `image: foo` in a template means
+#      the pinning regressed.
 #
 # The full lint gate (shellcheck / yamllint / config-sync / CI) is planned in
 # ticket 20 (lint-gate-and-ci) and will extend this script in place.
@@ -41,14 +41,28 @@ else
   echo "ok: no privileged containers in templates/"
 fi
 
-# ── Guard 2: no floating :latest images in the traefik templates
-latest_hits="$(grep -rn "image: .*:latest" templates/traefik/ || true)"
+# ── Guard 2: no floating :latest/:main images anywhere in templates/
+latest_hits="$(grep -rnE "image: [^$]\S*:(latest|main)[[:space:]]*$" templates/ || true)"
 if [[ -n "${latest_hits}" ]]; then
-  echo "FAIL: floating :latest image in templates/traefik/:"
+  echo "FAIL: floating :latest/:main image in templates/ (render the image from a"
+  echo "      script-level *_IMAGE default instead — see ticket improvements-2/17):"
   echo "${latest_hits}"
   fail=1
 else
-  echo "ok: no floating :latest images in templates/traefik/"
+  echo "ok: no floating :latest/:main images in templates/"
+fi
+
+# ── Guard 3: no untagged image pulls. An `image:` value without `${`, a `:` tag
+# or a `@digest` resolves to `:latest`. Locally BUILT images are not pulls, so
+# the nanobot stack (image + build: in the same service) is allowlisted.
+untagged_hits="$(grep -rnE '^[[:space:]]*image:[[:space:]]+"?[A-Za-z0-9][A-Za-z0-9._/-]*"?[[:space:]]*$' templates/ \
+  | grep -v '^templates/nanobot/' || true)"
+if [[ -n "${untagged_hits}" ]]; then
+  echo "FAIL: untagged image pull in templates/ (implicitly :latest):"
+  echo "${untagged_hits}"
+  fail=1
+else
+  echo "ok: no untagged image pulls in templates/ (nanobot builds locally)"
 fi
 
 if [[ "${fail}" -ne 0 ]]; then

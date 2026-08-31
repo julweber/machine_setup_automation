@@ -24,6 +24,7 @@
 #   OPENWEBUI_PORT     - Host port for direct web UI access (default: 3333)
 #   LM_STUDIO_PORT     - Port where LM Studio API is listening (default: 1234)
 #   PROJECT_DIR        - Installation directory (default: /srv/openwebui)
+#   OPENWEBUI_IMAGE    - Open WebUI image (default: ghcr.io/open-webui/open-webui:v0.11.1, pinned)
 #   WEBUI_SECRET_KEY   - Custom secret key (generated on first run if not set;
 #                        re-runs reuse the value stored in .env — never rotated)
 #
@@ -108,6 +109,14 @@ OPENWEBUI_PORT="${OPENWEBUI_PORT:-3333}"          # Host port for web UI (direct
 LM_STUDIO_PORT="${LM_STUDIO_PORT:-1234}"          # LM Studio API port
 PROJECT_DIR="${PROJECT_DIR:-/srv/openwebui}"       # Installation directory
 
+# Image for the generated docker-compose.yml. Pinned on purpose (ticket
+# improvements-2/17) — the template used to hard-code the moving `:main` branch
+# tag. Default looked up 2026-08-31 from
+# https://github.com/open-webui/open-webui/releases (latest release v0.11.1,
+# published as that exact tag on ghcr.io).
+# Update deliberately: docker buildx imagetools inspect ghcr.io/open-webui/open-webui
+OPENWEBUI_IMAGE="${OPENWEBUI_IMAGE:-ghcr.io/open-webui/open-webui:v0.11.1}"
+
 # Secret key for Open WebUI authentication (auto-generated if not set)
 WEBUI_SECRET_KEY="${WEBUI_SECRET_KEY:-}"
 
@@ -132,6 +141,9 @@ step()    { echo -e "\n${BOLD}▶ $*${RESET}"; }
 # Shared helpers (env_file_get, ensure_proxy_network). Sourced after the
 # colour/logging definitions above, so this script's versions are kept.
 source "${SCRIPT_DIR}/../lib/helpers.sh"
+
+# Warn (never fail) if an operator override moved the image off a version tag.
+warn_moving_image "${OPENWEBUI_IMAGE}" "OPENWEBUI_IMAGE"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # USAGE / HELP
@@ -161,6 +173,9 @@ Environment variables (all optional):
   OPENWEBUI_TRAEFIK  Set to "true" to enable Traefik routing (default: false)
   OPENWEBUI_DOMAIN   Domain for Traefik access (required when OPENWEBUI_TRAEFIK=true)
   PROXY_NETWORK      Traefik's external Docker network name (default: proxy)
+  OPENWEBUI_IMAGE    Open WebUI image (default:
+                     ghcr.io/open-webui/open-webui:v0.11.1, pinned — override
+                     with an explicit version tag, not :main/:latest)
   WAIT_TIMEOUT       Max seconds to wait for the stack to come up and become
                      healthy after 'docker compose up -d' (default: 180)
 
@@ -325,10 +340,10 @@ _generate_compose_file() {
   fi
 
   GENERATED_DATE="$(date -Iseconds)"
-  export GENERATED_DATE OPENWEBUI_PORT LM_STUDIO_PORT PROXY_NETWORK OPENWEBUI_DOMAIN
+  export GENERATED_DATE OPENWEBUI_PORT LM_STUDIO_PORT PROXY_NETWORK OPENWEBUI_DOMAIN OPENWEBUI_IMAGE
   # shellcheck disable=SC2016  # envsubst expects the literal variable list;
   # WEBUI_SECRET_KEY stays LITERAL on purpose — Compose resolves it from ${PROJECT_DIR}/.env
-  envsubst '${GENERATED_DATE} ${OPENWEBUI_PORT} ${LM_STUDIO_PORT} ${PROXY_NETWORK} ${OPENWEBUI_DOMAIN}' \
+  envsubst '${GENERATED_DATE} ${OPENWEBUI_PORT} ${LM_STUDIO_PORT} ${PROXY_NETWORK} ${OPENWEBUI_DOMAIN} ${OPENWEBUI_IMAGE}' \
     < "$compose_template" > "$compose_file"
 }
 

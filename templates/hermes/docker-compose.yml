@@ -1,7 +1,7 @@
 ---
 services:
   hermes-gateway:
-    image: nousresearch/hermes-agent:latest
+    image: ${HERMES_IMAGE}
     container_name: hermes-gateway
     working_dir: /workspace
     volumes:
@@ -26,7 +26,7 @@ services:
     command: ["gateway"]
 
   hermes-chat:
-    image: nousresearch/hermes-agent:latest
+    image: ${HERMES_IMAGE}
     profiles:
       - manual
     container_name: hermes-chat
@@ -46,7 +46,7 @@ services:
     command: ["chat"]
 
   hermes-setup:
-    image: nousresearch/hermes-agent:latest
+    image: ${HERMES_IMAGE}
     profiles:
       - manual
     container_name: hermes-setup

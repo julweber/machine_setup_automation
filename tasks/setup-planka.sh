@@ -52,6 +52,7 @@ ${BOLD}Environment variables${RESET} (all optional):
   Application:
     PLANKA_HOME             Data directory (default: /srv/planka)
     PLANKA_IMAGE            Container image (default: ghcr.io/plankanban/planka:latest)
+    POSTGRES_IMAGE          Database image (default: postgres:16-alpine, pinned)
     CONTAINER_NAME          Container name (default: planka)
     BASE_URL                Base URL for Planka, and the allowlist of origins Planka
                             accepts socket.io (WebSocket) connections from.
@@ -138,6 +139,10 @@ done
 
 PLANKA_HOME="${PLANKA_HOME:-/srv/planka}"
 PLANKA_IMAGE="${PLANKA_IMAGE:-ghcr.io/plankanban/planka:latest}"
+# Database image — pinned per stack (ticket improvements-2/17): the tag is the one
+# these templates already used, now overridable instead of hard-coded.
+# Update deliberately: docker buildx imagetools inspect library/postgres
+POSTGRES_IMAGE="${POSTGRES_IMAGE:-postgres:16-alpine}"
 CONTAINER_NAME="${CONTAINER_NAME:-planka}"
 
 HTTP_PORT="${HTTP_PORT:-1337}"
@@ -452,17 +457,17 @@ _planka_lan_suffix="${LAN_IP:+, http://${LAN_IP}:${HTTP_PORT}}"
 # Layout values ONLY — secrets (SECRET_KEY, POSTGRES_PASSWORD, DATABASE_URL,
 # PG_AUTH_METHOD) are never substituted: they stay ${VAR}-literal in the
 # rendered file and are resolved at runtime from ${ENV_FILE} via --env-file.
-export PLANKA_IMAGE CONTAINER_NAME PLANKA_HOME BASE_URL \
+export PLANKA_IMAGE POSTGRES_IMAGE CONTAINER_NAME PLANKA_HOME BASE_URL \
   POSTGRES_DB POSTGRES_USER
 if [[ "$PLANKA_TRAEFIK" == "true" ]]; then
   export PROXY_NETWORK PLANKA_DOMAIN
   # shellcheck disable=SC2016  # envsubst expects the literal variable list
-  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${PLANKA_HOME} ${BASE_URL} ${PROXY_NETWORK} ${PLANKA_DOMAIN} ${POSTGRES_DB} ${POSTGRES_USER}' \
+  envsubst '${PLANKA_IMAGE} ${POSTGRES_IMAGE} ${CONTAINER_NAME} ${PLANKA_HOME} ${BASE_URL} ${PROXY_NETWORK} ${PLANKA_DOMAIN} ${POSTGRES_DB} ${POSTGRES_USER}' \
     < "${TEMPLATE_FILE}" > "$COMPOSE_FILE"
 else
   export HTTP_PORT _planka_lan_suffix
   # shellcheck disable=SC2016  # envsubst expects the literal variable list
-  envsubst '${PLANKA_IMAGE} ${CONTAINER_NAME} ${HTTP_PORT} ${_planka_lan_suffix} ${PLANKA_HOME} ${BASE_URL} ${POSTGRES_DB} ${POSTGRES_USER}' \
+  envsubst '${PLANKA_IMAGE} ${POSTGRES_IMAGE} ${CONTAINER_NAME} ${HTTP_PORT} ${_planka_lan_suffix} ${PLANKA_HOME} ${BASE_URL} ${POSTGRES_DB} ${POSTGRES_USER}' \
     < "${TEMPLATE_FILE}" > "$COMPOSE_FILE"
 fi
 

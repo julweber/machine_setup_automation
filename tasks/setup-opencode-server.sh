@@ -15,6 +15,7 @@
 #   USE_DOCKER               - Use Docker mode (default: false)
 #   OPENCODE_DATA_DIR        - Data directory (default: /srv/opencode)
 #   OPENCODE_TRAEFIK         - Enable Traefik (default: false)
+#   OPENCODE_IMAGE           - Opencode image (default: ghcr.io/anomalyco/opencode:1.18.25, pinned)
 #
 # Usage:
 #   ./setup-opencode-server.sh
@@ -54,6 +55,13 @@ load_config() {
     OPENCODE_TRAEFIK="${OPENCODE_TRAEFIK:-false}"
     PROXY_NETWORK="${PROXY_NETWORK:-proxy}"
     OPENCODE_DOMAIN="${OPENCODE_DOMAIN:-}"
+    # Pinned on purpose (ticket improvements-2/17): `:latest` made the generated
+    # docker-compose.yml pull a moving reference. Default looked up 2026-08-31
+    # from https://github.com/anomalyco/opencode/releases (latest release
+    # v1.18.25; the GHCR tag carries no leading 'v').
+    # Update deliberately: docker buildx imagetools inspect ghcr.io/anomalyco/opencode
+    OPENCODE_IMAGE="${OPENCODE_IMAGE:-ghcr.io/anomalyco/opencode:1.18.25}"
+    warn_moving_image "${OPENCODE_IMAGE}" "OPENCODE_IMAGE"
     SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 }
 
@@ -232,9 +240,9 @@ _generate_compose_file() {
     fi
 
     GENERATED_DATE="$(date -Iseconds)"
-    export GENERATED_DATE OPENCODE_PORT PROXY_NETWORK OPENCODE_DOMAIN
+    export GENERATED_DATE OPENCODE_PORT PROXY_NETWORK OPENCODE_DOMAIN OPENCODE_IMAGE
     # shellcheck disable=SC2016  # envsubst expects the literal variable list
-    envsubst '${GENERATED_DATE} ${OPENCODE_PORT} ${PROXY_NETWORK} ${OPENCODE_DOMAIN}' \
+    envsubst '${GENERATED_DATE} ${OPENCODE_PORT} ${PROXY_NETWORK} ${OPENCODE_DOMAIN} ${OPENCODE_IMAGE}' \
         < "$compose_template" | sudo tee "$compose_file" > /dev/null
 }
 
@@ -583,6 +591,10 @@ DEPLOYMENT MODE
 DOCKER MODE OPTIONS            (only used when USE_DOCKER=true)
   OPENCODE_DATA_DIR            Host directory for Docker Compose files and .env.
                                Default: /srv/opencode
+  OPENCODE_IMAGE               Image used by the generated docker-compose.yml.
+                               Pinned by default; override with an explicit
+                               version tag, not a moving tag.
+                               Default: ghcr.io/anomalyco/opencode:1.18.25
   WAIT_TIMEOUT                 Max seconds to wait for the stack to come up and
                                become healthy after 'docker compose up -d'.
                                Default: 180

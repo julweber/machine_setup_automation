@@ -8,7 +8,7 @@ networks:
 
 services:
   concourse-db:
-    image: postgres:15
+    image: ${POSTGRES_IMAGE}
     container_name: concourse-db
     restart: unless-stopped
     environment:
@@ -31,7 +31,7 @@ services:
         max-file: "5"
 
   concourse-web:
-    image: concourse/concourse:latest
+    image: ${CONCOURSE_IMAGE}
     command: web
     container_name: concourse-web
     restart: unless-stopped
@@ -65,7 +65,7 @@ services:
 
 
   concourse-worker:
-    image: concourse/concourse:latest
+    image: ${CONCOURSE_IMAGE}
     command: worker
     container_name: concourse-worker
     restart: unless-stopped

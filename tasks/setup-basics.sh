@@ -8,8 +8,12 @@
 #   Installs essential system packages and tools for development environment.
 #
 # Environment Variables (optional):
-#   NVM_VERSION - NVM version to install (default: 0.40.4)
-#   NVM_DIR     - NVM installation directory (default: $HOME/.nvm)
+#   NVM_VERSION        - NVM version to install (default: 0.40.4)
+#   NVM_DIR            - NVM installation directory (default: $HOME/.nvm)
+#   HF_CLI_INSTALL_SHA256   - expected SHA-256 of https://hf.co/cli/install.sh
+#                             (optional; the digest is always logged)
+#   HERDR_INSTALL_SHA256    - expected SHA-256 of https://herdr.dev/install.sh
+#                             (optional; the digest is always logged)
 #
 # Usage:
 #   ./setup-basics.sh
@@ -45,6 +49,10 @@ ${BOLD}Options:${RESET}
 ${BOLD}Environment variables${RESET} (all optional):
   NVM_VERSION     NVM version to install (default: 0.40.4)
   NVM_DIR         NVM installation directory (default: $HOME/.nvm)
+  HF_CLI_INSTALL_SHA256   Pin the SHA-256 of the huggingface-cli installer
+                          (default: unset — the digest is logged every run)
+  HERDR_INSTALL_SHA256    Pin the SHA-256 of the herdr installer
+                          (default: unset — the digest is logged every run)
 EOF
 }
 
@@ -64,6 +72,24 @@ done
 # Configuration
 : "${NVM_VERSION:=0.40.4}"
 NVM_DIR="${NVM_DIR:-$HOME/.nvm}"
+
+# Installer checksums (ticket improvements-2/17). Each installer is downloaded to
+# a file, its SHA-256 logged, and only then executed (lib fetch_and_run) — never
+# piped straight from curl into bash.
+#
+# Both upstreams publish a checksum for the *release artifact* their installer
+# downloads (herdr: a sha256 in its release manifest; lmstudio: a .sha512 next to
+# the AppImage), but no digest for the installer script itself — verified
+# 2026-08-31: https://hf.co/cli/install.sh.sha256 -> 404, and the .sha256 paths
+# below serve the site's HTML, not a digest:
+#   https://hf.co/cli/install.sh            (pip/venv based, no published digest)
+#   https://herdr.dev/install.sh            (no published digest)
+# So the defaults stay empty (the run log records the digest every run) and an
+# operator who has reviewed an installer can pin it, e.g.
+#   HF_CLI_INSTALL_SHA256=<64 hex> ./setup-basics.sh
+# Update deliberately: re-download the installer and compare the logged digest.
+: "${HF_CLI_INSTALL_SHA256:=}"
+: "${HERDR_INSTALL_SHA256:=}"
 
 # Packages to install
 declare -a APT_PACKAGES=(
@@ -124,6 +150,11 @@ if [[ -s "${NVM_DIR}/nvm.sh" ]]; then
   success "NVM already installed at ${NVM_DIR}"
 else
   info "Installing NVM..."
+  # Deliberately still a download-piped-into-a-shell here (ticket
+  # improvements-2/17): the URL is pinned to an exact nvm release tag
+  # (NVM_VERSION), so the bytes are immutable and changing them requires an
+  # explicit version bump — the property the hf.co/cli, herdr.dev and
+  # lmstudio.ai installers did NOT have, and which fetch_and_run now provides.
   curl -o- "https://raw.githubusercontent.com/nvm-sh/nvm/v${NVM_VERSION}/install.sh" | bash
 fi
 
@@ -163,7 +194,7 @@ if command -v hf &>/dev/null; then
   success "huggingface-cli already installed"
 else
   info "Installing huggingface-cli..."
-  curl -LsSf https://hf.co/cli/install.sh | bash
+  fetch_and_run "https://hf.co/cli/install.sh" "${HF_CLI_INSTALL_SHA256}"
 fi
 
 # Install herdr
@@ -173,7 +204,7 @@ if command -v herdr &>/dev/null; then
   herdr update
 else
   info "Installing herdr..."
-  curl -LsSf https://herdr.dev/install.sh | bash
+  fetch_and_run "https://herdr.dev/install.sh" "${HERDR_INSTALL_SHA256}"
 fi
 
 # Install hunk

@@ -9,7 +9,7 @@ networks:
 
 services:
   openwebui:
-    image: ghcr.io/open-webui/open-webui:main
+    image: ${OPENWEBUI_IMAGE}
     container_name: openwebui
     restart: unless-stopped
     ports:

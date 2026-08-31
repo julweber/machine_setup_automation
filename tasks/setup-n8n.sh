@@ -10,6 +10,10 @@
 # Environment Variables (optional):
 #   N8N_DIR           - Installation directory (default: /srv/n8n)
 #   TRAEFIK_ENABLED   - Enable Traefik integration (default: false)
+#   N8N_IMAGE         - n8n image (default: docker.n8n.io/n8nio/n8n:2.37.4, pinned)
+#   N8N_TRAEFIK_IMAGE - Private sidecar Traefik, Traefik variant only
+#                       (default: traefik:v3.7.12, pinned)
+#   POSTGRES_IMAGE    - Database image (default: postgres:15-alpine, pinned)
 #
 # Usage:
 #   ./setup-n8n.sh
@@ -46,6 +50,11 @@ ${BOLD}Options:${RESET}
 ${BOLD}Environment variables${RESET} (all optional):
   N8N_DIR           Installation directory (default: /srv/n8n)
   TRAEFIK_ENABLED   Enable Traefik integration (default: false)
+  N8N_IMAGE         n8n image (default: docker.n8n.io/n8nio/n8n:2.37.4,
+                    pinned — override with an explicit version tag)
+  N8N_TRAEFIK_IMAGE Private sidecar Traefik, written by the Traefik variant
+                    only (default: traefik:v3.7.12, pinned)
+  POSTGRES_IMAGE    Database image (default: postgres:15-alpine, pinned)
   WAIT_TIMEOUT      Max seconds to wait for the stack to come up and become
                     healthy after 'docker compose up -d' (default: 180)
 
@@ -76,6 +85,38 @@ done
 : "${TRAEFIK_ENABLED:=false}"
 COMPOSE_FILE="${N8N_DIR}/docker-compose.yml"
 
+# Container images — pinned on purpose (ticket improvements-2/17): the templates
+# used to carry an untagged n8n reference (i.e. `:latest`), an untagged Traefik
+# sidecar and a hard-coded postgres tag.
+# Defaults looked up 2026-08-31 from https://docker.n8n.io (n8nio/n8n, newest
+# stable release; same content as the Docker Hub library mirror) and from the
+# tags already in use in templates/n8n/. The Traefik sidecar tracks the shared
+# proxy's major (setup-traefik.sh uses traefik:v3).
+# Update deliberately: docker buildx imagetools inspect docker.n8n.io/n8nio/n8n
+: "${N8N_IMAGE:=docker.n8n.io/n8nio/n8n:2.37.4}"
+: "${N8N_TRAEFIK_IMAGE:=traefik:v3.7.12}"
+: "${POSTGRES_IMAGE:=postgres:15-alpine}"
+warn_moving_image "${N8N_IMAGE}" "N8N_IMAGE"
+warn_moving_image "${N8N_TRAEFIK_IMAGE}" "N8N_TRAEFIK_IMAGE"
+warn_moving_image "${POSTGRES_IMAGE}" "POSTGRES_IMAGE"
+
+command -v envsubst >/dev/null 2>&1 \
+  || error "envsubst is not installed. Required for template rendering. Install with: sudo apt-get install gettext-base"
+
+# Render docker-compose.yml from the matching template variant. Only the image
+# references are substituted here; ${SUBDOMAIN}/${DOMAIN_NAME}/${GENERIC_TIMEZONE}
+# stay literal in the generated file and are resolved at runtime from
+# ${N8N_DIR}/.env (see AGENTS.md, "Secrets and templating").
+_render_n8n_compose() {
+  local template="$1" dest="$2" tmp
+  tmp="$(mktempfile docker-compose.yml)"
+  export N8N_IMAGE N8N_TRAEFIK_IMAGE POSTGRES_IMAGE
+  # shellcheck disable=SC2016  # envsubst expects the literal variable list
+  envsubst '${N8N_IMAGE} ${N8N_TRAEFIK_IMAGE} ${POSTGRES_IMAGE}' < "${template}" > "${tmp}"
+  sudo install -m 0644 "${tmp}" "${dest}"
+  rm -f "${tmp}"
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -100,12 +141,13 @@ sudo cp "${TEMPLATE_DIR}/env.template" "${N8N_DIR}/.env"
 
 info ".env written – review values before starting n8n"
 
-# Render docker-compose.yml from template (static quoted heredocs → plain cp)
+# Render docker-compose.yml from template (images envsubst'ed from the pinned
+# defaults above; everything else stays literal for compose/.env)
 step "Creating docker-compose.yml"
 if [[ "${TRAEFIK_ENABLED}" == "true" ]]; then
-  sudo cp "${TEMPLATE_DIR}/docker-compose.traefik.yml" "${COMPOSE_FILE}"
+  _render_n8n_compose "${TEMPLATE_DIR}/docker-compose.traefik.yml" "${COMPOSE_FILE}"
 else
-  sudo cp "${TEMPLATE_DIR}/docker-compose.local.yml" "${COMPOSE_FILE}"
+  _render_n8n_compose "${TEMPLATE_DIR}/docker-compose.local.yml" "${COMPOSE_FILE}"
 fi
 
 success "docker-compose.yml written"

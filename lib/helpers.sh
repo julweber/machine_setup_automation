@@ -285,6 +285,73 @@ fi
 # operator-edited values.
 # ---------------------------------------------------------------------------
 
+# ---------------------------------------------------------------------------
+# warn_moving_image <image-ref> <var-name>
+#   Warn-only moving-tag check for a docker image reference (does not modify
+#   it, never exits). A ref is considered reproducible when it carries a
+#   version tag or a digest; `:latest`/`:main`/untagged refs are not.
+#
+#   Rationale: templates render their image from a script-level `*_IMAGE`
+#   default, so a moving *default* makes every generated compose file pull an
+#   unpinned reference (ticket improvements-2/17). An operator override that
+#   still moves is a decision, not a bug, so this warns instead of failing.
+# ---------------------------------------------------------------------------
+if ! declare -F warn_moving_image > /dev/null 2>&1; then
+  warn_moving_image() {
+    local img="${1:-}" name="${2:-image}"
+    [[ -n "$img" ]] || return 0
+    if [[ "$img" == *:latest || "$img" == *:main || ( "$img" != *:* && "$img" != *@* ) ]]; then
+      warn "${name} '${img}' is a moving tag — pulls are not reproducible; pin a release tag (see ticket improvements-2/17)"
+    fi
+    return 0
+  }
+fi
+
+# ---------------------------------------------------------------------------
+# fetch_and_run <url> <expected_sha256_or_empty>
+#   Downloads <url> to a temp file, logs its SHA-256, verifies it against
+#   <expected_sha256> when one is given, then runs the file with bash. The
+#   download is removed on function return (RETURN trap) *and* on script exit
+#   (via mktempfile), so a failed run leaves no half-written installer.
+#
+#   Why not `curl … | bash`: the pipe executes bytes nobody looked at, with no
+#   artifact to re-check and no way to pin content (ticket improvements-2/17).
+#   Call sites pass an expected hash when upstream publishes one; where it
+#   publishes nothing, pass "" and the digest at least lands in the run log
+#   (and can be pinned later via the caller's env-var override).
+#
+#   Returns non-zero on download/checksum failure so the caller decides how to
+#   report it; the installer's own exit status is passed through.
+# ---------------------------------------------------------------------------
+if ! declare -F fetch_and_run > /dev/null 2>&1; then
+  fetch_and_run() {
+    local url="${1:-}" sha="${2:-}" tmp actual
+    [[ -n "$url" ]] || { err_msg "fetch_and_run: no URL given"; return 1; }
+
+    tmp="$(mktempfile "$(basename "${url%%\?*}").sh")" \
+      || { err_msg "fetch_and_run: mktemp failed"; return 1; }
+    # shellcheck disable=SC2064  # expand tmp now: it is a local of this function
+    trap "rm -f -- '${tmp}'" RETURN
+
+    info "Downloading ${url}"
+    if ! curl -fsSL "${url}" -o "${tmp}"; then
+      err_msg "download failed: ${url}"
+      return 1
+    fi
+
+    actual="$(sha256sum "${tmp}" | cut -d' ' -f1)" \
+      || { err_msg "fetch_and_run: sha256sum failed for ${tmp}"; return 1; }
+    info "Downloaded ${url} sha256=${actual}"
+
+    if [[ -n "${sha}" && "${sha}" != "${actual}" ]]; then
+      err_msg "checksum mismatch for ${url}: expected ${sha}, got ${actual} — refusing to execute (update the *_SHA256 constant only after reviewing the new installer)"
+      return 1
+    fi
+
+    bash "${tmp}"
+  }
+fi
+
 # env_file_get <file> <KEY>
 #   Prints the value of KEY=<value> from an env file (last occurrence wins),
 #   or nothing. Values are read literally — no shell evaluation.

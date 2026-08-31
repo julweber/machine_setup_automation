@@ -1,6 +1,6 @@
 services:
   n8n:
-    image: docker.n8n.io/n8nio/n8n
+    image: ${N8N_IMAGE}
     restart: unless-stopped
     ports:
       - "127.0.0.1:5678:5678"
@@ -17,7 +17,7 @@ services:
       - n8n_data:/home/node/.n8n
       - ./local-files:/files
   postgres:
-    image: postgres:15-alpine
+    image: ${POSTGRES_IMAGE}
     container_name: n8n-postgres
     restart: unless-stopped
     environment:
