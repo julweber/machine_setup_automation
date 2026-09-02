@@ -34,11 +34,17 @@ source "${SCRIPT_DIR}/../lib/helpers.sh"
 # ── Pinned default image tags (verified: amd64 + arm64) ──────────────────────
 # Nightly/:latest tags move — deployments should be reproducible. Override
 # with --image / VLLM_IMAGE (e.g. nvcr.io/nvidia/vllm, lharillo/..., :gemma).
-# C5: v0.27.x is the first line with the SM121 kernel-less-build fix (#49904).
+# C5/F2: v0.27.x is the first line with the SM121 kernel-less-build fix (#49904).
 # Before bumping to >= 0.28, re-check: default --max-num-batched-tokens
 # 8192->16384 (more reserved memory on a unified-memory box), reasoning_content
 # output removal (#50624, breaks clients that parse thinking traces),
 # KV-tiering metrics renamed block->chunk (#52812, breaks Grafana dashboards).
+# AMD track (vllm/vllm-openai-rocm, pinned to the same tag): v0.27.1 verified
+# present 2026-09-02 (F21 registry probe) — amd64-only single manifest
+# (consistent with the aarch64 guard), Entrypoint=["vllm","serve"] (A1's
+# nvcr.io/*-only prefix is correct for AMD), PYTORCH_ROCM_ARCH includes gfx1151
+# (= AMD Strix Halo / evobox: prebuilt kernels at the pin). Re-run the F21
+# registry probe before bumping either pin.
 VLLM_DEFAULT_TAG="v0.27.1"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
@@ -98,16 +104,17 @@ VLLM_KV_CACHE_DTYPE="${VLLM_KV_CACHE_DTYPE:-}"       # e.g. fp8
 VLLM_ASYNC_SCHEDULING="${VLLM_ASYNC_SCHEDULING:-}"   # true|false
 VLLM_ENABLE_CHUNKED_PREFILL="${VLLM_ENABLE_CHUNKED_PREFILL:-}"  # true|false
 
-# ── Spark / startup options ───────────────────────────────────────────────────
-# Opt-in KEY=VALUE env vars for GB10 (sm_121), space-separated.
-# Version-specific workarounds for specific image tags, e.g.:
-#   VLLM_SPARK_EXTRA_ENV="TORCH_CUDA_ARCH_LIST=12.1a VLLM_MARLIN_USE_ATOMIC_ADD=1"
-# (B3: TORCH_CUDA_ARCH_LIST only steers JIT builds — the shipped image's arch
-# list has no 12.1; VLLM_MARLIN_USE_ATOMIC_ADD=1 is live in 0.27.1 and per
-# research §2 reported required for correct Marlin output on sm_121 [field
-# report]. The old FLASHINFER MXFP4 env var is NOT known to vLLM 0.27.1 —
-# backend selection moved to --moe-backend/--linear-backend ≥ 0.23.)
-VLLM_SPARK_EXTRA_ENV="${VLLM_SPARK_EXTRA_ENV:-}"
+# ── Operator-injected container env (F3 — any backend) ────────────────────
+# Opt-in KEY=VALUE pairs, space-separated inside the one value. Injected into
+# the container via extra-vars.env. Version-specific workarounds, e.g.:
+#   VLLM_EXTRA_ENV="TORCH_CUDA_ARCH_LIST=12.1a VLLM_MARLIN_USE_ATOMIC_ADD=1"
+#     (NVIDIA: TORCH_CUDA_ARCH_LIST only steers JIT builds — the shipped image's
+#      arch list has no 12.1; VLLM_MARLIN_USE_ATOMIC_ADD is live in 0.27.1 and
+#      per research §2 reported required for correct Marlin output on sm_121
+#      [field report]. The old FLASHINFER MXFP4 env var is NOT known to 0.27.1.)
+#   VLLM_EXTRA_ENV="HSA_OVERRIDE_GFX_VERSION=11.0.0"  (AMD ROCm escape hatches)
+VLLM_EXTRA_ENV="${VLLM_EXTRA_ENV:-}"
+VLLM_SPARK_EXTRA_ENV="${VLLM_SPARK_EXTRA_ENV:-}"  # deprecated alias (F3): mapped to VLLM_EXTRA_ENV after arg parsing, warns once
 VLLM_HEALTH_TIMEOUT="${VLLM_HEALTH_TIMEOUT:-}"  # empty = 900s (GPU) / 120s (CPU)
 WARMUP=1                                          # post-health warmup request (--no-warmup to skip)
 
@@ -230,12 +237,12 @@ validate_ident_opt() {
   fi
 }
 
-validate_spark_extra_env() {
+validate_extra_env() {
   local kv
   if [[ -z "$1" ]]; then return 0; fi
   for kv in $1; do
     if [[ ! "$kv" =~ ^[A-Za-z_][A-Za-z0-9_]*=[A-Za-z0-9_./:@+-]+$ ]]; then
-      error "VLLM_SPARK_EXTRA_ENV entry '${kv}' is not a valid KEY=VALUE pair (no spaces, no shell characters)."
+      error "VLLM_EXTRA_ENV entry '${kv}' is not a valid KEY=VALUE pair (no spaces, no shell characters)."
     fi
   done
 }
@@ -268,7 +275,7 @@ validate_ident_opt "VLLM_ATTENTION_BACKEND" "${VLLM_ATTENTION_BACKEND}"
 validate_ident_opt "VLLM_KV_CACHE_DTYPE" "${VLLM_KV_CACHE_DTYPE}"
 validate_bool_opt "VLLM_ASYNC_SCHEDULING" "${VLLM_ASYNC_SCHEDULING}"
 validate_bool_opt "VLLM_ENABLE_CHUNKED_PREFILL" "${VLLM_ENABLE_CHUNKED_PREFILL}"
-validate_spark_extra_env "${VLLM_SPARK_EXTRA_ENV}"
+validate_extra_env "${VLLM_EXTRA_ENV}"
 if [[ -n "${VLLM_HEALTH_TIMEOUT}" && (! "${VLLM_HEALTH_TIMEOUT}" =~ ^[0-9]+$ || "${VLLM_HEALTH_TIMEOUT}" -lt 1) ]]; then
   error "VLLM_HEALTH_TIMEOUT must be a positive integer (seconds)."
 fi
@@ -279,7 +286,9 @@ usage() {
   echo ""
   echo -e "${BOLD}Options:${RESET}"
   echo "  --nvidia              Force NVIDIA CUDA backend"
-  echo "  --amd                 Force AMD ROCm backend  (amd64 only)"
+  echo "  --amd                 Force AMD ROCm backend  (amd64 only; ROCm image"
+  echo "                        vllm/vllm-openai-rocm pinned at the same tag — registry-verified"
+  echo "                        amd64-only with prebuilt gfx1151 (Strix Halo) kernels)"
   echo "  --cpu                 Force CPU-only backend"
   echo "  --port <n>            API port  (default: 8000)"
   echo "  --hf-token <token>    HuggingFace token for gated models"
@@ -313,7 +322,10 @@ usage() {
   echo "  --kv-cache-dtype <dtype>    KV cache dtype fp8 (repetition-loop risk; never with DFlash)"
   echo "  --async-scheduling          Enable asynchronous scheduling"
   echo "  --enable-chunked-prefill    Enable chunked prefill (up to ~9x slower on Mamba-dominant MoE)"
-  echo "  --spark-env <KEY=V ...>    Extra env vars for DGX Spark (version-specific workarounds)"
+  echo "  --extra-env <KEY=VALUE>    Extra container env vars, any backend — version-specific"
+  echo "                             workarounds; one KEY=VALUE per invocation, several"
+  echo "                             vars = space-separated inside the one value"
+  echo "  --spark-env <KEY=VALUE>    Deprecated alias for --extra-env (warns once)"
   echo "  --health-timeout <s>  Seconds to wait for the stack to come up and for /health (default: 900 GPU / 120 CPU)."
   echo "                        Also drives the compose healthcheck start_period (C1): cold start —"
   echo "                        JIT + weight load — can exceed 7 min on DGX Spark (sm_121)."
@@ -335,7 +347,7 @@ usage() {
   echo "  VLLM_ENABLE_CHUNKED_PREFILL,"
   echo "  VLLM_SERVED_MODEL_NAME, VLLM_TRUST_REMOTE_CODE, VLLM_LOAD_FORMAT,"
   echo "  VLLM_REASONING_PARSER, VLLM_TOOL_CALL_PARSER,"
-  echo "  VLLM_ENABLE_AUTO_TOOL_CHOICE, VLLM_SPARK_EXTRA_ENV, VLLM_HEALTH_TIMEOUT,"
+  echo "  VLLM_ENABLE_AUTO_TOOL_CHOICE, VLLM_EXTRA_ENV (VLLM_SPARK_EXTRA_ENV deprecated), VLLM_HEALTH_TIMEOUT,"
   echo "  VLLM_UNIFIED_MEMORY (true|false forces the unified-memory verdict;"
   echo "                       empty = auto-detect: DGX Spark or AMD Strix Halo)"
   echo ""
@@ -407,7 +419,8 @@ while [[ $# -gt 0 ]]; do
     --kv-cache-dtype)   shift; VLLM_KV_CACHE_DTYPE="$1" ;;
     --async-scheduling) VLLM_ASYNC_SCHEDULING="true" ;;
     --enable-chunked-prefill) VLLM_ENABLE_CHUNKED_PREFILL="true" ;;
-    --spark-env)        shift; VLLM_SPARK_EXTRA_ENV="$1" ;;
+    --extra-env)        shift; VLLM_EXTRA_ENV="$1" ;;
+    --spark-env)        shift; VLLM_SPARK_EXTRA_ENV="$1" ;;  # deprecated alias, mapped below
     --health-timeout)   shift; VLLM_HEALTH_TIMEOUT="$1" ;;
     --no-warmup)        WARMUP=0 ;;
     --dir)              shift; PROJECT_DIR="$1" ;;
@@ -422,6 +435,16 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+# F3: map the deprecated VLLM_SPARK_EXTRA_ENV / --spark-env to VLLM_EXTRA_ENV
+# (single site → warns exactly once). Explicit VLLM_EXTRA_ENV wins.
+if [[ -n "${VLLM_SPARK_EXTRA_ENV}" && -z "${VLLM_EXTRA_ENV}" ]]; then
+  warn "VLLM_SPARK_EXTRA_ENV / --spark-env is deprecated — use VLLM_EXTRA_ENV (works on every backend)."
+  VLLM_EXTRA_ENV="${VLLM_SPARK_EXTRA_ENV}"
+elif [[ -n "${VLLM_SPARK_EXTRA_ENV}" ]]; then
+  warn "VLLM_SPARK_EXTRA_ENV / --spark-env is deprecated — both it and VLLM_EXTRA_ENV are set; using VLLM_EXTRA_ENV."
+fi
+validate_extra_env "${VLLM_EXTRA_ENV}"
 
 # ── Guard: ROCm on arm64 is not supported ─────────────────────────────────────
 if [[ "$ARCH" == "aarch64" && "$BACKEND" == "amd" ]]; then
@@ -890,10 +913,11 @@ success ".env written (mode 600): ${ENV_FILE}"
 EXTRA_VARS_FILE="${PROJECT_DIR}/extra-vars.env"
 {
   echo "# Generated by setup-vllm.sh — re-rendered on --force, safe to delete."
-  if [[ "$BACKEND" == "nvidia" && -n "$VLLM_SPARK_EXTRA_ENV" ]]; then
-    echo "# DGX Spark (sm_121) env vars — version-specific workarounds for the image tag"
-    for _kv in $VLLM_SPARK_EXTRA_ENV; do
-      echo "$_kv"
+  # F3: VLLM_EXTRA_ENV works on every backend (ROCm needs the same escape hatch).
+  if [[ -n "${VLLM_EXTRA_ENV}" ]]; then
+    echo "# Operator-injected env vars (VLLM_EXTRA_ENV) — version-specific workarounds"
+    for _kv in ${VLLM_EXTRA_ENV}; do
+      echo "${_kv}"
     done
   fi
 } > "$EXTRA_VARS_FILE"
