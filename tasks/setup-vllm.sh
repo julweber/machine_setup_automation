@@ -83,10 +83,6 @@ FORCE=0
 CHECK_ONLY=0
 INTERACTIVE=false   # re-run policy (ticket 12): offer tear-down/re-create of an existing stack
 
-VLLM_TRAEFIK="${VLLM_TRAEFIK:-false}"
-VLLM_DOMAIN="${VLLM_DOMAIN:-}"
-PROXY_NETWORK="${PROXY_NETWORK:-proxy}"
-
 ARCH=$(uname -m)  # x86_64 | aarch64
 
 # ── Input validation ──────────────────────────────────────────────────────────
@@ -110,14 +106,6 @@ validate_extra_args() {
     if [[ "$args" =~ $dangerous_pattern ]]; then
       error "VLLM_EXTRA_ARGS contains disallowed characters (backtick, \$, \;, \|, \&, \<, \>)."
     fi
-  fi
-}
-
-validate_domain() {
-  local domain="$1"
-  # Basic hostname/domain validation
-  if [[ -n "$domain" && ! "$domain" =~ ^[a-zA-Z0-9][a-zA-Z0-9.-]*[a-zA-Z0-9]$ ]]; then
-    error "VLLM_DOMAIN is not a valid domain name."
   fi
 }
 
@@ -212,7 +200,6 @@ validate_spark_extra_env() {
 # Apply validations (only for non-empty values)
 validate_model_id "${VLLM_MODEL}"
 validate_extra_args "${VLLM_EXTRA_ARGS}"
-validate_domain "${VLLM_DOMAIN}"
 validate_port "${VLLM_PORT}"
 validate_gpu_util "${VLLM_GPU_UTIL}"
 validate_image "${VLLM_IMAGE}"
@@ -262,8 +249,6 @@ usage() {
   echo "  --health-timeout <s>  Seconds to wait for the stack to come up and for /health (default: 900 GPU / 120 CPU)"
   echo "  --no-warmup           Skip the post-health warmup request"
   echo "  --dir <path>          Installation directory  (default: /srv/vllm)"
-  echo "  --traefik             Enable Traefik reverse-proxy integration"
-  echo "  --domain <host>       Domain for Traefik  (required with --traefik)"
   echo "  --force               Re-create stack even if already present"
   echo "  --interactive         Offer tear-down/re-create of an existing stack (default: converge)"
   echo "  --check               Check installation status and exit"
@@ -272,8 +257,7 @@ usage() {
   echo -e "${BOLD}Environment variables${RESET} (all flags above have env-var equivalents):"
   echo "  PROJECT_DIR, HF_CACHE_DIR, VLLM_PORT, HF_TOKEN, VLLM_IMAGE,"
   echo "  VLLM_GPU_UTIL, VLLM_TENSOR_PARALLEL, VLLM_MAX_MODEL_LEN,"
-  echo "  VLLM_DTYPE, VLLM_SHM_SIZE, VLLM_TRAEFIK, VLLM_DOMAIN,"
-  echo "  PROXY_NETWORK, VLLM_EXTRA_ARGS,"
+  echo "  VLLM_DTYPE, VLLM_SHM_SIZE, VLLM_EXTRA_ARGS,"
   echo "  VLLM_MAX_NUM_SEQS, VLLM_MAX_NUM_BATCHED_TOKENS,"
   echo "  VLLM_SERVED_MODEL_NAME, VLLM_TRUST_REMOTE_CODE, VLLM_LOAD_FORMAT,"
   echo "  VLLM_REASONING_PARSER, VLLM_TOOL_CALL_PARSER,"
@@ -294,7 +278,7 @@ usage() {
   echo "  $0 --nvidia --port 8001             # CUDA on port 8001"
   echo "  $0 --amd                            # ROCm  (amd64 only)"
   echo "  $0 --cpu                            # CPU-only"
-  echo "  $0 --traefik --domain vllm.example.com"
+  echo "  $0 --port 8000                       # published on the LAN; restrict with ufw"
   echo "  $0 --image nvcr.io/nvidia/vllm:26.05-py3   # NGC image (needs: docker login nvcr.io)"
   echo "  $0 --check                          # show stack status"
   echo "  $0 --force --nvidia                 # re-create CUDA stack"
@@ -305,6 +289,12 @@ usage() {
   echo "  only what changed. Model args that diverge from the running stack are"
   echo "  printed with the exact re-create command. --force (or interactive 'y')"
   echo "  tears down and re-creates."
+  echo ""
+  echo -e "${BOLD}Exposure${RESET} (direct, local network — no reverse proxy):"
+  echo "  vLLM is published on VLLM_PORT and consumed from the LAN only. A proxy"
+  echo "  front was deliberately removed (operator decision, 2026-09-01; no in-repo"
+  echo "  consumer needs the proxy network). This is a deliberate divergence from"
+  echo "  research §12.9 — access control is ufw + LAN trust, not a proxy front."
   exit 0
 }
 
@@ -334,8 +324,9 @@ while [[ $# -gt 0 ]]; do
     --health-timeout)   shift; VLLM_HEALTH_TIMEOUT="$1" ;;
     --no-warmup)        WARMUP=0 ;;
     --dir)              shift; PROJECT_DIR="$1" ;;
-    --traefik)          VLLM_TRAEFIK="true" ;;
-    --domain)           shift; VLLM_DOMAIN="$1" ;;
+    --traefik|--domain)
+      error "Traefik integration was removed from setup-vllm.sh: the vLLM endpoint is always published directly on VLLM_PORT for the local network. Use --port to pick the port and tasks/configure-firewall.sh (ufw) to restrict which networks may reach it."
+      ;;
     --force)            FORCE=1 ;;
     --interactive)      INTERACTIVE=true ;;
     --check)            CHECK_ONLY=1 ;;
@@ -523,19 +514,10 @@ if [[ "$COMPOSE_MAJOR" -lt 2 ]]; then
   warn "Docker Compose v2+ recommended. Current: ${COMPOSE_VER}"
 fi
 
-# Port check (direct mode only)
-if [[ "$VLLM_TRAEFIK" != "true" ]]; then
-  if ss -tln 2>/dev/null | grep -q ":${VLLM_PORT} "; then
-    error "Port ${VLLM_PORT} is already in use. Set a different VLLM_PORT."
-  fi
-fi
-
-# Traefik pre-flight
-if [[ "$VLLM_TRAEFIK" == "true" ]]; then
-  ensure_proxy_network
-  if [[ -z "$VLLM_DOMAIN" ]]; then
-    error "VLLM_DOMAIN must be set when --traefik is used."
-  fi
+# Port check — direct exposure is the only mode (E1), so a listener on
+# VLLM_PORT is always a conflict at this point.
+if ss -tln 2>/dev/null | grep -q ":${VLLM_PORT} "; then
+  error "Port ${VLLM_PORT} is already in use. Set a different VLLM_PORT."
 fi
 
 # ── DGX Spark (GB10) detection: compute capability 12.1 (sm_121) ─────────────
@@ -797,23 +779,32 @@ if [[ "${VLLM_ENABLE_AUTO_TOOL_CHOICE}" == "true" ]]; then
   _add_flag "--enable-auto-tool-choice"
 fi
 
-# ── Render docker-compose.yml (from templates/vllm/docker-compose.<backend>.<mode>.yml) ──
+# ── Render docker-compose.yml (from templates/vllm/docker-compose.<backend>.direct.yml) ──
 step "Generating docker-compose.yml"
 
-EXPOSURE_MODE="direct"
-[[ "$VLLM_TRAEFIK" == "true" ]] && EXPOSURE_MODE="traefik"
-COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.${BACKEND}.${EXPOSURE_MODE}.yml"
+# E1 migration: a stack previously rendered in proxy mode switches to direct
+# exposure on this run. Fresh installs have no compose file yet — the -f guard
+# is required (review R7).
+if [[ -f "$COMPOSE_FILE" ]] && grep -q 'traefik.enable' "$COMPOSE_FILE"; then
+  warn "Previous render used Traefik (routed via a domain). vLLM is now direct-only:"
+  warn "  * the container is re-created without traefik labels and leaves the '${PROXY_NETWORK:-proxy}' network"
+  warn "  * clients must use http://<this-host>:${VLLM_PORT}/v1 — the old https:// URL stops working"
+  warn "  * the old router/DNS entry is yours to clean up (traefik keeps no stale router after the labels are gone)"
+  warn "  * restrict the port to your LAN: sudo ufw deny <port> && sudo ufw allow from 192.168.0.0/16 to any port <port>"
+fi
+
+COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.${BACKEND}.direct.yml"
 
 export VLLM_IMAGE VLLM_SHM_SIZE HF_CACHE_DIR PROJECT_DIR LMSTUDIO_MODELS_DIR \
-  VLLM_PORT PROXY_NETWORK VLLM_DOMAIN VLLM_COMMAND_FLAGS GENERATED_DATE
+  VLLM_PORT VLLM_COMMAND_FLAGS GENERATED_DATE
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
 # Note: VLLM_MODEL / VLLM_GPU_UTIL / VLLM_EXTRA_ARGS are deliberately NOT in
 # the list — the compose file keeps them for runtime substitution from .env.
-envsubst '${VLLM_IMAGE} ${VLLM_SHM_SIZE} ${HF_CACHE_DIR} ${PROJECT_DIR} ${LMSTUDIO_MODELS_DIR} ${VLLM_PORT} ${PROXY_NETWORK} ${VLLM_DOMAIN} ${VLLM_COMMAND_FLAGS} ${GENERATED_DATE}' \
+envsubst '${VLLM_IMAGE} ${VLLM_SHM_SIZE} ${HF_CACHE_DIR} ${PROJECT_DIR} ${LMSTUDIO_MODELS_DIR} ${VLLM_PORT} ${VLLM_COMMAND_FLAGS} ${GENERATED_DATE}' \
   < "$COMPOSE_TEMPLATE" > "$COMPOSE_FILE"
 # An empty VLLM_COMMAND_FLAGS leaves a whitespace-only line — strip for clean YAML
 sed -i 's/[[:space:]]*$//' "$COMPOSE_FILE"
-success "docker-compose.yml created: ${COMPOSE_FILE} (backend: ${BACKEND}, exposure: ${EXPOSURE_MODE})"
+success "docker-compose.yml created: ${COMPOSE_FILE} (backend: ${BACKEND}, exposure: direct)"
 
 # ── Re-run policy (ticket 12): model args cannot converge a running stack ──
 # Model args are baked into the container command at create time (rendered
@@ -881,45 +872,41 @@ else
   step "Waiting for vLLM to respond (timeout: ${VLLM_HEALTH_TIMEOUT}s)"
   info "Large models (NVFP4 100B+) can take 10–15 min to load weights."
 
-  if [[ "$VLLM_TRAEFIK" == "true" ]]; then
-    info "Traefik mode: skipping direct health check (access via https://${VLLM_DOMAIN})."
-  else
-    INTERVAL=10
-    ELAPSED=0
-    READY=false
+  INTERVAL=10
+  ELAPSED=0
+  READY=false
 
-    while [[ $ELAPSED -lt $VLLM_HEALTH_TIMEOUT ]]; do
-      if curl -sf "http://localhost:${VLLM_PORT}/health" &>/dev/null; then
-        READY=true; break
-      fi
-      echo -ne "\r    Waited ${ELAPSED}s / ${VLLM_HEALTH_TIMEOUT}s …"
-      sleep $INTERVAL
-      ELAPSED=$((ELAPSED + INTERVAL))
-    done
-    echo ""
-
-    if [[ "$READY" == "true" ]]; then
-      success "vLLM is up and healthy!"
-
-      # ── Warmup: absorb the JIT cold-start (Inductor/FlashInfer ~25 s)
-      # so the first real user request is fast.
-      if [[ "$WARMUP" -eq 1 ]]; then
-        WARMUP_MODEL="${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL}}"
-        info "Sending warmup request (first request triggers JIT compilation, ~25 s)…"
-        if curl -sf --max-time 600 -X POST "http://localhost:${VLLM_PORT}/v1/chat/completions" \
-          -H "Content-Type: application/json" \
-          -d "$(printf '{"model":"%s","max_tokens":3,"messages":[{"role":"user","content":"ping"}]}' "${WARMUP_MODEL}")" \
-          &>/dev/null; then
-          success "Warmup complete — the server is ready for real requests."
-        else
-          warn "Warmup request failed or timed out — the server may still be warming up."
-          warn "Follow logs: cd ${PROJECT_DIR} && docker compose logs -f"
-        fi
-      fi
-    else
-      warn "vLLM did not respond within ${VLLM_HEALTH_TIMEOUT}s – it may still be loading the model."
-      warn "Follow logs: cd ${PROJECT_DIR} && docker compose logs -f"
+  while [[ $ELAPSED -lt $VLLM_HEALTH_TIMEOUT ]]; do
+    if curl -sf "http://localhost:${VLLM_PORT}/health" &>/dev/null; then
+      READY=true; break
     fi
+    echo -ne "\r    Waited ${ELAPSED}s / ${VLLM_HEALTH_TIMEOUT}s …"
+    sleep $INTERVAL
+    ELAPSED=$((ELAPSED + INTERVAL))
+  done
+  echo ""
+
+  if [[ "$READY" == "true" ]]; then
+    success "vLLM is up and healthy!"
+
+    # ── Warmup: absorb the JIT cold-start (Inductor/FlashInfer ~25 s)
+    # so the first real user request is fast.
+    if [[ "$WARMUP" -eq 1 ]]; then
+      WARMUP_MODEL="${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL}}"
+      info "Sending warmup request (first request triggers JIT compilation, ~25 s)…"
+      if curl -sf --max-time 600 -X POST "http://localhost:${VLLM_PORT}/v1/chat/completions" \
+        -H "Content-Type: application/json" \
+        -d "$(printf '{"model":"%s","max_tokens":3,"messages":[{"role":"user","content":"ping"}]}' "${WARMUP_MODEL}")" \
+        &>/dev/null; then
+        success "Warmup complete — the server is ready for real requests."
+      else
+        warn "Warmup request failed or timed out — the server may still be warming up."
+        warn "Follow logs: cd ${PROJECT_DIR} && docker compose logs -f"
+      fi
+    fi
+  else
+    warn "vLLM did not respond within ${VLLM_HEALTH_TIMEOUT}s – it may still be loading the model."
+    warn "Follow logs: cd ${PROJECT_DIR} && docker compose logs -f"
   fi
 fi
 
@@ -961,11 +948,7 @@ fi
 echo -e "  ${BOLD}LM Studio:${RESET}     ${LMSTUDIO_MODELS_DIR}  →  /lmstudio-models (in container)"
 echo -e "  ${BOLD}Config:${RESET}        ${ENV_FILE}"
 echo ""
-if [[ "$VLLM_TRAEFIK" == "true" ]]; then
-  echo -e "  ${BOLD}API (Traefik):${RESET} https://${VLLM_DOMAIN}/v1"
-else
-  echo -e "  ${BOLD}API:${RESET}           http://localhost:${VLLM_PORT}/v1"
-fi
+echo -e "  ${BOLD}API:${RESET}           http://localhost:${VLLM_PORT}/v1"
 
 if [[ -n "$VLLM_MODEL" ]]; then
   echo -e "  ${BOLD}Model:${RESET}         ${VLLM_MODEL}"
