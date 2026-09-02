@@ -50,6 +50,10 @@ VLLM_IMAGE="${VLLM_IMAGE:-}"           # full image override (default: pinned vl
 #   0.80 on DGX Spark (sm_121, unified memory), 0.90 other GPU backends
 VLLM_GPU_UTIL="${VLLM_GPU_UTIL:-}"
 VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"  # additional vLLM server arguments
+# Unified-memory override (F1): DGX Spark GB10 and AMD Strix Halo share one DRAM
+# pool between CPU, GPU, OS and page cache. Empty = auto-detect (Spark via
+# compute capability 12.1, Strix Halo via rocminfo/lspci); true|false forces it.
+VLLM_UNIFIED_MEMORY="${VLLM_UNIFIED_MEMORY:-}"
 # Command-prefix asymmetry (A1): "vllm serve" is prepended for nvcr.io/* images
 # only; resolved after the image is pinned. Empty = upstream/ROCm entrypoint is
 # already ["vllm","serve"].
@@ -218,6 +222,7 @@ validate_ident_opt "VLLM_LOAD_FORMAT" "${VLLM_LOAD_FORMAT}"
 validate_ident_opt "VLLM_REASONING_PARSER" "${VLLM_REASONING_PARSER}"
 validate_ident_opt "VLLM_TOOL_CALL_PARSER" "${VLLM_TOOL_CALL_PARSER}"
 validate_bool_opt "VLLM_ENABLE_AUTO_TOOL_CHOICE" "${VLLM_ENABLE_AUTO_TOOL_CHOICE}"
+validate_bool_opt "VLLM_UNIFIED_MEMORY" "${VLLM_UNIFIED_MEMORY}"
 validate_spark_extra_env "${VLLM_SPARK_EXTRA_ENV}"
 if [[ -n "${VLLM_HEALTH_TIMEOUT}" && (! "${VLLM_HEALTH_TIMEOUT}" =~ ^[0-9]+$ || "${VLLM_HEALTH_TIMEOUT}" -lt 1) ]]; then
   error "VLLM_HEALTH_TIMEOUT must be a positive integer (seconds)."
@@ -267,6 +272,8 @@ usage() {
   echo "  VLLM_SERVED_MODEL_NAME, VLLM_TRUST_REMOTE_CODE, VLLM_LOAD_FORMAT,"
   echo "  VLLM_REASONING_PARSER, VLLM_TOOL_CALL_PARSER,"
   echo "  VLLM_ENABLE_AUTO_TOOL_CHOICE, VLLM_SPARK_EXTRA_ENV, VLLM_HEALTH_TIMEOUT,"
+  echo "  VLLM_UNIFIED_MEMORY (true|false forces the unified-memory verdict;"
+  echo "                       empty = auto-detect: DGX Spark or AMD Strix Halo)"
   echo ""
   echo -e "${BOLD}Model selection${RESET} (set after install, in ${PROJECT_DIR}/.env):"
   echo "  VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct            # HF model ID (auto-downloaded)"
@@ -532,6 +539,26 @@ is_spark() {
   nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | grep -qi "12\.1"
 }
 
+# Unified-memory hosts: CPU, GPU, OS and page cache share one DRAM pool (DGX Spark GB10, AMD Strix
+# Halo). Memory queries are misleading there and vLLM's KV pre-allocation competes with the page
+# cache — see research §5.1 and F12.
+is_strix_halco() {
+  if command -v rocminfo &>/dev/null; then
+    rocminfo 2>/dev/null | grep -qi "gfx1151" && return 0
+  fi
+  lspci -n 2>/dev/null | grep -q "1002:1586" && return 0   # Radeon 8060S (Strix Halo iGPU), works without ROCm userspace
+  return 1
+}
+
+# VLLM_UNIFIED_MEMORY=true|false forces the verdict; empty = auto-detect.
+is_unified_memory() {
+  [[ "${VLLM_UNIFIED_MEMORY}" == "true" ]]  && return 0
+  [[ "${VLLM_UNIFIED_MEMORY}" == "false" ]] && return 1
+  is_spark && return 0
+  [[ "$BACKEND" == "amd" ]] && is_strix_halco && return 0
+  return 1
+}
+
 # ── Auto-detect GPU backend ────────────────────────────────────────────────────
 detect_gpu() {
   step "Auto-detecting GPU"
@@ -638,9 +665,11 @@ case "$BACKEND" in
 esac
 info "Docker image: ${VLLM_IMAGE}"
 
-# ── Resolve defaults that depend on the backend ───────────────────────────────
+# ── Resolve defaults that depend on the backend ─────────────────────────────
 if [[ -z "$VLLM_GPU_UTIL" && "$BACKEND" != "cpu" ]]; then
-  if [[ "$BACKEND" == "nvidia" ]] && is_spark; then
+  # F1: unified memory (DGX Spark AND AMD Strix Halo) defaults lower — the KV
+  # pool competes with OS/page cache for the same DRAM.
+  if is_unified_memory; then
     VLLM_GPU_UTIL="0.80"
   else
     VLLM_GPU_UTIL="0.90"
@@ -688,8 +717,8 @@ success "Project dir: ${PROJECT_DIR}"
 success "HF cache dir: ${HF_CACHE_DIR}"
 success "vLLM cache dir: ${VLLM_CACHE_DIR}"
 
-# ── Spark-conditional guidance (for .env comments) ────────────────────────────
-if [[ "$BACKEND" == "nvidia" ]] && is_spark; then
+# ── Backend-conditional guidance (for .env comments) ──────────────────────────
+if is_spark; then
   VLLM_GPU_UTIL_NOTE='# On DGX Spark this fraction applies to the 128 GB *unified* pool shared'
   VLLM_GPU_UTIL_NOTE="${VLLM_GPU_UTIL_NOTE}"$'\n'"# with the OS, page cache and the container runtime — leave headroom."
   VLLM_GPU_UTIL_NOTE="${VLLM_GPU_UTIL_NOTE}"$'\n'"# If the box shows memory pressure:  sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'"
@@ -697,6 +726,13 @@ if [[ "$BACKEND" == "nvidia" ]] && is_spark; then
   VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   max-num-seqs 4–8 is the right scale — above ~4 concurrent decode streams"
   VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   the bandwidth tax outweighs batching and TTFT spikes. (datacenter: 128–256)"
   VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   max-num-batched-tokens: 8192 is the NVIDIA Spark recipe value."
+elif is_unified_memory; then
+  # Generic unified-memory fallback for non-Spark UMA hosts (AMD Strix Halo, F1)
+  VLLM_GPU_UTIL_NOTE='# Unified memory: this fraction applies to the one shared DRAM pool'
+  VLLM_GPU_UTIL_NOTE="${VLLM_GPU_UTIL_NOTE}"$'\n'"# (CPU, GPU, OS, page cache) — leave headroom."
+  VLLM_CONCURRENCY_NOTE='# Bandwidth-bound APU with one shared memory pool — keep max-num-seqs low'
+  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   (4–8), leave several GB host headroom, flush the page cache when memory"
+  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   pressure appears (sync; echo 3 > /proc/sys/vm/drop_caches)."
 else
   VLLM_GPU_UTIL_NOTE='# Fraction of GPU memory vLLM may use. Higher = more KV cache, less headroom.'
   VLLM_CONCURRENCY_NOTE='# Higher max-num-seqs = more throughput, higher latency.'
@@ -957,6 +993,11 @@ echo -e "${BOLD}${GREEN}║        vLLM installation complete!           ║${RE
 echo -e "${BOLD}${GREEN}╚══════════════════════════════════════════════╝${RESET}"
 echo ""
 echo -e "  ${BOLD}Backend:${RESET}       ${GREEN}${BACKEND^^}${RESET}  (${ARCH})"
+if is_unified_memory; then
+  echo -e "  ${BOLD}Unified memory:${RESET} yes"
+else
+  echo -e "  ${BOLD}Unified memory:${RESET} no"
+fi
 echo -e "  ${BOLD}Image:${RESET}         ${VLLM_IMAGE}"
 echo -e "  ${BOLD}Project dir:${RESET}   ${PROJECT_DIR}"
 echo -e "  ${BOLD}HF cache:${RESET}      ${HF_CACHE_DIR}  →  /root/.cache/huggingface (in container)"
