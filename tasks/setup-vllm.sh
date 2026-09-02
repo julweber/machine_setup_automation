@@ -126,11 +126,14 @@ validate_port() {
 
 validate_gpu_util() {
   local util="$1"
-  if [[ -n "$util" && (! "$util" =~ ^[0-9]+\.?[0-9]*$ || "$util" == *"."* && "${#util}" -gt 4) ]]; then
-    if (($(echo "$util < 0 || $util > 1" | bc -l 2>/dev/null || echo 1))); then
-      error "VLLM_GPU_UTIL must be a number between 0.0 and 1.0."
-    fi
+  [[ -z "$util" ]] && return 0
+  # A2: strict number check first (the old bc-based range check was unreachable
+  # for short values and evaluated non-numeric junk to 0, accepting 'abc').
+  if [[ ! "$util" =~ ^[0-9]*\.?[0-9]+$ ]]; then
+    error "VLLM_GPU_UTIL must be a number between 0.0 and 1.0 (got: ${util})."
   fi
+  awk -v u="$util" 'BEGIN { exit (u > 0 && u <= 1) ? 0 : 1 }' \
+    || error "VLLM_GPU_UTIL must be > 0.0 and <= 1.0 (got: ${util})."
 }
 
 validate_tensor_parallel() {
@@ -699,6 +702,15 @@ fi
 # the script-level /health poll — cold start (JIT + weight load) is the slow part.
 VLLM_HEALTH_START_PERIOD="${VLLM_HEALTH_TIMEOUT}s"
 validate_gpu_util "${VLLM_GPU_UTIL}"
+
+# A2 unified-memory band (gates on is_unified_memory — Spark AND Strix Halo, F1):
+# NVIDIA documents --gpu-memory-utilization≈1.0 OOMs on unified memory (F12).
+if is_unified_memory && [[ -n "$VLLM_GPU_UTIL" ]]; then
+  awk -v u="$VLLM_GPU_UTIL" 'BEGIN { exit (u <= 0.90) ? 0 : 1 }' \
+    || error "VLLM_GPU_UTIL=${VLLM_GPU_UTIL} exceeds the unified-memory ceiling (0.90): CPU, OS, page cache and the runtime share one pool with the KV pre-allocation (DGX Spark field data, F12)."
+  awk -v u="$VLLM_GPU_UTIL" 'BEGIN { exit (u <= 0.85) ? 0 : 1 }' \
+    || warn "VLLM_GPU_UTIL=${VLLM_GPU_UTIL} is above the 0.85 practical range on unified memory — watch for OOM/Xid 43 under load (same budget logic on DGX Spark and Strix Halo)."
+fi
 
 if [[ "${VLLM_TENSOR_PARALLEL}" -gt 1 && "$BACKEND" == "nvidia" ]]; then
   GPU_COUNT=$(nvidia-smi --query-gpu=count --format=csv,noheader 2>/dev/null | head -1 || true)
