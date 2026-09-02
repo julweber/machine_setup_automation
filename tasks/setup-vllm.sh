@@ -10,7 +10,7 @@
 # DGX Spark (GB10, sm_121) is auto-detected and gets Spark-appropriate
 # defaults (lower gpu-memory-utilization, tuning guidance).
 #
-# HuggingFace models downloaded via huggingface-cli are automatically
+# HuggingFace models downloaded via 'hf download' are automatically
 # available inside the container (HF cache dir is mounted).
 #
 # Usage:
@@ -38,7 +38,7 @@ VLLM_DEFAULT_TAG="v0.27.1"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 PROJECT_DIR="${PROJECT_DIR:-/srv/vllm}"
-# HF cache dir on the host — models downloaded via huggingface-cli live here.
+# HF cache dir on the host — models downloaded via 'hf download' live here.
 # Mounted into the container so vLLM can serve them by HF model ID or path.
 HF_CACHE_DIR="${HF_CACHE_DIR:-${HOME}/.cache/huggingface}"
 
@@ -86,7 +86,12 @@ VLLM_SPEC_TOKENS="${VLLM_SPEC_TOKENS:-}"   # num_speculative_tokens (positive in
 # ── Spark / startup options ───────────────────────────────────────────────────
 # Opt-in KEY=VALUE env vars for GB10 (sm_121), space-separated.
 # Version-specific workarounds for specific image tags, e.g.:
-#   VLLM_SPARK_EXTRA_ENV="TORCH_CUDA_ARCH_LIST=12.1a VLLM_USE_FLASHINFER_MXFP4_MOE=1"
+#   VLLM_SPARK_EXTRA_ENV="TORCH_CUDA_ARCH_LIST=12.1a VLLM_MARLIN_USE_ATOMIC_ADD=1"
+# (B3: TORCH_CUDA_ARCH_LIST only steers JIT builds — the shipped image's arch
+# list has no 12.1; VLLM_MARLIN_USE_ATOMIC_ADD=1 is live in 0.27.1 and per
+# research §2 reported required for correct Marlin output on sm_121 [field
+# report]. The old FLASHINFER MXFP4 env var is NOT known to vLLM 0.27.1 —
+# backend selection moved to --moe-backend/--linear-backend ≥ 0.23.)
 VLLM_SPARK_EXTRA_ENV="${VLLM_SPARK_EXTRA_ENV:-}"
 VLLM_HEALTH_TIMEOUT="${VLLM_HEALTH_TIMEOUT:-}"  # empty = 900s (GPU) / 120s (CPU)
 WARMUP=1                                          # post-health warmup request (--no-warmup to skip)
@@ -306,7 +311,8 @@ usage() {
   echo ""
   echo -e "${BOLD}Model fit (DGX Spark, 128 GB unified memory):${RESET}"
   echo "  100–130B MoE NVFP4 (~10–15B active) is the best Spark fit;"
-  echo "  up to ~200B NVFP4 fits the 128 GB pool. Dense models are poorly"
+  echo "  up to ~130B NVFP4 fits the 128 GB pool with usable KV headroom."
+  echo "  Dense models are poorly"
   echo "  matched. See the NVIDIA DGX Spark vLLM model support matrix:"
   echo "  https://github.com/NVIDIA/dgx-spark-playbooks/blob/main/nvidia/vllm/README.md"
   echo ""
@@ -525,6 +531,10 @@ if [[ "$BACKEND" == "nvidia" ]] || [[ -z "$BACKEND" ]]; then
         warn "GPU driver $DRIVER_VER is old; the pinned vLLM image (CUDA 13) needs driver >= 580. Update the driver or override the image with --image."
       else
         info "GPU driver ${DRIVER_VER} detected (CUDA 13 compatible: >= 580)."
+        # B5: community field report (research §3.2), NOT a vendor advisory.
+        if is_spark && [[ "$DRIVER_MAJOR" == "590" ]]; then
+          warn "Driver 590.x is reported to deadlock CUDA graphs on GB10 — community guidance is to stay on 580.x (field report, not a vendor advisory; verify: nvidia-smi --query-gpu=driver_version)."
+        fi
       fi
     fi
     # NVIDIA Container Toolkit must be available to the daemon for --gpus
@@ -546,7 +556,12 @@ fi
 if [[ "$BACKEND" == "nvidia" ]] || [[ -z "$BACKEND" ]]; then
   if nvidia-smi &>/dev/null && nvidia-smi --query-gpu=compute_cap --format=csv,noheader 2>/dev/null | grep -qi "12\.1"; then
     if echo "${VLLM_EXTRA_ARGS}" | grep -qi "int8"; then
-      error "INT8 quantization is NOT supported on Blackwell (GB10). Use --quantization fp8 or --quantization awq instead."
+      error "INT8 quantization is NOT supported on Blackwell (GB10). The Spark path is NVFP4/MXFP4 (research §12):"
+      error "  ModelOpt NVFP4 checkpoints -> --quantization modelopt"
+      error "  openai/gpt-oss-* (MXFP4)   -> --quantization mxfp4"
+      error "  GPTQ checkpoints           -> --quantization gptq_marlin"
+      error "  pre-quantized checkpoints  -> leave --quantization UNSET (vLLM auto-detects)"
+      error "Landmine (research §4.2): --quantization mxfp4 on a BF16 HF checkpoint crashes in fused_moe/layer.py (IndexError)."
     fi
   fi
 fi
@@ -779,8 +794,10 @@ if is_spark; then
   VLLM_GPU_UTIL_NOTE="${VLLM_GPU_UTIL_NOTE}"$'\n'"# with the OS, page cache and the container runtime — leave headroom."
   VLLM_GPU_UTIL_NOTE="${VLLM_GPU_UTIL_NOTE}"$'\n'"# If the box shows memory pressure:  sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'"
   VLLM_CONCURRENCY_NOTE='# DGX Spark is bandwidth-bound, not a large GPU:'
-  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   max-num-seqs 4–8 is the right scale — above ~4 concurrent decode streams"
-  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   the bandwidth tax outweighs batching and TTFT spikes. (datacenter: 128–256)"
+  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   max-num-seqs 4 is REQUIRED for Nemotron Nano/Super V3 NVFP4"
+  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   (NVIDIA vLLM release notes 26.08); other MoE models tolerate more — sweep it."
+  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   Above ~4 concurrent decode streams the bandwidth tax outweighs batching"
+  VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   and TTFT spikes. (datacenter: 128–256)"
   VLLM_CONCURRENCY_NOTE="${VLLM_CONCURRENCY_NOTE}"$'\n'"#   max-num-batched-tokens: 8192 is the NVIDIA Spark recipe value."
 elif is_unified_memory; then
   # Generic unified-memory fallback for non-Spark UMA hosts (AMD Strix Halo, F1)
@@ -823,10 +840,6 @@ success ".env written (mode 600): ${ENV_FILE}"
 EXTRA_VARS_FILE="${PROJECT_DIR}/extra-vars.env"
 {
   echo "# Generated by setup-vllm.sh — re-rendered on --force, safe to delete."
-  if [[ "$BACKEND" == "cpu" && "$ARCH" == "aarch64" ]]; then
-    echo "# AVX-512 is not available on most arm64 hosts"
-    echo "VLLM_CPU_DISABLE_AVX512=1"
-  fi
   if [[ "$BACKEND" == "nvidia" && -n "$VLLM_SPARK_EXTRA_ENV" ]]; then
     echo "# DGX Spark (sm_121) env vars — version-specific workarounds for the image tag"
     for _kv in $VLLM_SPARK_EXTRA_ENV; do
@@ -992,8 +1005,10 @@ if [[ -z "$VLLM_MODEL" ]]; then
   warn "No model configured – skipping container start."
   echo ""
   info "Next steps:"
-  info "  1. Download a model with huggingface-cli, e.g.:"
-  info "       huggingface-cli download Qwen/Qwen2.5-7B-Instruct"
+  info "Next steps:"
+  info "  1. Download a model with the HF CLI, e.g.:"
+  info "       hf download Qwen/Qwen2.5-7B-Instruct"
+  info "       (CLI: pip install -U \"huggingface_hub[cli]\" — huggingface-cli is deprecated)"
   info "  2. Set VLLM_MODEL in ${ENV_FILE}:"
   info "       VLLM_MODEL=Qwen/Qwen2.5-7B-Instruct"
   info "  3. Start the stack:"
@@ -1113,6 +1128,9 @@ echo -e "  ${BOLD}LM Studio:${RESET}     ${LMSTUDIO_MODELS_DIR}  →  /lmstudio-
 echo -e "  ${BOLD}Config:${RESET}        ${ENV_FILE}"
 echo ""
 echo -e "  ${BOLD}API:${RESET}           http://localhost:${VLLM_PORT}/v1"
+echo -e "  ${BOLD}Access:${RESET}         restrict VLLM_PORT to your LAN with ufw (tasks/configure-firewall.sh):"
+echo -e "                  everyone on that network can call the endpoint, enumerate models"
+echo -e "                  and consume the GPU — the firewall is the only real boundary."
 
 if [[ -n "$VLLM_MODEL" ]]; then
   echo -e "  ${BOLD}Model:${RESET}         ${VLLM_MODEL}"
@@ -1125,8 +1143,8 @@ fi
 if [[ "$BACKEND" == "nvidia" ]] && is_spark; then
   echo ""
   echo -e "  ${BOLD}Model fit (DGX Spark, 128 GB unified memory):${RESET}"
-  echo -e "  100–130B MoE NVFP4 (~10–15B active) is the best fit; up to ~200B NVFP4"
-  echo -e "  fits the pool; dense models are poorly matched."
+  echo -e "  100–130B MoE NVFP4 (~10–15B active) is the best fit; up to ~130B NVFP4"
+  echo -e "  fits the pool with usable KV headroom; dense models are poorly matched."
   echo -e "  Matrix: https://github.com/NVIDIA/dgx-spark-playbooks/blob/main/nvidia/vllm/README.md"
 fi
 
@@ -1148,5 +1166,5 @@ echo -e "  ${BOLD}Change the model:${RESET} edit VLLM_MODEL in ${ENV_FILE},"
 echo -e "  then: cd ${PROJECT_DIR} && docker compose up -d"
 echo ""
 echo -e "  ${BOLD}Download a model (on the host):${RESET}"
-echo -e "    huggingface-cli download Qwen/Qwen2.5-7B-Instruct"
+echo -e "    hf download Qwen/Qwen2.5-7B-Instruct"
 echo ""
