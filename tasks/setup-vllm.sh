@@ -1001,6 +1001,19 @@ if [[ -z "$VLLM_MODEL" ]]; then
   echo ""
 else
   step "Starting vLLM stack"
+  # C2 (NVIDIA playbook step, research §5.1/§10): vLLM pre-allocates its KV pool
+  # out of the one DRAM pool a unified-memory host shares with the page cache —
+  # flushing first avoids "OOM with free RAM" at launch. Gates on
+  # is_unified_memory (Spark AND Strix Halo, F1); failure is never fatal.
+  if is_unified_memory; then
+    _um="unified-memory host"; is_spark && _um="DGX Spark"
+    step "Freeing page cache before launch (${_um})"
+    if sudo sh -c 'sync; echo 3 > /proc/sys/vm/drop_caches'; then
+      success "Page cache dropped."
+    else
+      warn "Could not drop the page cache (needs sudo) — ignore if the box has plenty of free RAM."
+    fi
+  fi
   (cd "$PROJECT_DIR" && docker compose up -d)
 
   # Health gate: prove the container is actually up before reporting success.
