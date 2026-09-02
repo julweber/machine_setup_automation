@@ -499,6 +499,15 @@ _env_reuse VLLM_KV_CACHE_DTYPE         VLLM_KV_CACHE_DTYPE
 _env_reuse VLLM_ASYNC_SCHEDULING       VLLM_ASYNC_SCHEDULING
 _env_reuse VLLM_ENABLE_CHUNKED_PREFILL VLLM_ENABLE_CHUNKED_PREFILL
 
+# D1: reused .env values must pass the same validation as fresh input — a
+# hand-edited .env previously bypassed these validators entirely.
+validate_model_id "${VLLM_MODEL}"
+validate_gpu_util "${VLLM_GPU_UTIL}"
+validate_extra_args "${VLLM_EXTRA_ARGS}"
+validate_max_num_seqs "${VLLM_MAX_NUM_SEQS}"
+validate_max_num_batched_tokens "${VLLM_MAX_NUM_BATCHED_TOKENS}"
+validate_dtype "${VLLM_DTYPE}"
+
 print_found_status() {
   echo ""
   echo -e "${BOLD}${GREEN}╔══════════════════════════════════════════════╗${RESET}"
@@ -1146,6 +1155,7 @@ else
   INTERVAL=10
   ELAPSED=0
   READY=false
+  _polls=0
 
   while [[ $ELAPSED -lt $VLLM_HEALTH_TIMEOUT ]]; do
     if curl -sf "http://localhost:${VLLM_PORT}/health" &>/dev/null; then
@@ -1154,6 +1164,19 @@ else
     echo -ne "\r    Waited ${ELAPSED}s / ${VLLM_HEALTH_TIMEOUT}s …"
     sleep $INTERVAL
     ELAPSED=$((ELAPSED + INTERVAL))
+    # D4: the /health poll cannot notice the container dying mid-wait — every
+    # 3rd iteration (~30 s) re-check the state and bail early on a crash loop
+    # instead of burning the whole timeout (mirrors wait_for_healthy hardfail).
+    _polls=$((_polls + 1))
+    if (( _polls % 3 == 0 )); then
+      _state="$(docker inspect --format '{{.State.Status}} {{.State.Health.Status}}' vllm 2>/dev/null || true)"
+      case "$_state" in
+        exited*|dead*|restarting*|*unhealthy*)
+          echo ""
+          error "vLLM container is not coming up (state: ${_state:-uninspectable}) — check the logs: cd ${PROJECT_DIR} && docker compose logs -f"
+          ;;
+      esac
+    fi
   done
   echo ""
 
@@ -1165,7 +1188,7 @@ else
     if [[ "$WARMUP" -eq 1 ]]; then
       WARMUP_MODEL="${VLLM_SERVED_MODEL_NAME:-${VLLM_MODEL}}"
       info "Sending warmup request (first request triggers JIT compilation, ~25 s)…"
-      if curl -sf --max-time 600 -X POST "http://localhost:${VLLM_PORT}/v1/chat/completions" \
+      if curl -sf --max-time "${VLLM_HEALTH_TIMEOUT}" -X POST "http://localhost:${VLLM_PORT}/v1/chat/completions" \
         -H "Content-Type: application/json" \
         -d "$(printf '{"model":"%s","max_tokens":3,"messages":[{"role":"user","content":"ping"}]}' "${WARMUP_MODEL}")" \
         &>/dev/null; then
