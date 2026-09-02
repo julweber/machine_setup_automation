@@ -21,6 +21,8 @@
 # Environment Variables (optional):
 #   LLAMA_CPP_REF - source ref to build: a release tag or branch name
 #                   (default: v0.3.0, pinned — see the default below)
+#   LLAMA_CPP_REPO_URL - upstream git URL to clone/fetch from
+#                        (default: https://github.com/ggml-org/llama.cpp)
 #
 # Usage:
 #   ./setup-llama-cpp.sh              # auto-detect GPU, skip if installed
@@ -46,12 +48,15 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/llama.cpp}"
 # used to land on "whichever tag is newest at run time" (and the existing-clone
 # path pulled the remote default branch first), so two runs of this script did
 # not build the same thing.
-# Default looked up 2026-08-31 from the releases of the clone target below
-# (github.com/ggerganov/llama.cpp, which redirects to ggml-org/llama.cpp):
+# Canonical upstream repo. The project moved from github.com/ggerganov/llama.cpp
+# to ggml-org/llama.cpp (the old URL no longer serves the repo).
+LLAMA_CPP_REPO_URL="${LLAMA_CPP_REPO_URL:-https://github.com/ggml-org/llama.cpp}"
+
+# Default looked up 2026-08-31 from the releases of the clone target above:
 # v0.3.0, published 2026-08-25 — the latest NON-prerelease. Everything newer is a
 # b107xx per-build pre-release published several times a day, i.e. exactly the
 # moving target that must not decide what gets built here.
-# Update deliberately: git ls-remote --tags https://github.com/ggerganov/llama.cpp
+# Update deliberately: git ls-remote --tags https://github.com/ggml-org/llama.cpp
 : "${LLAMA_CPP_REF:=v0.3.0}"
 # Refs reach git as --branch/checkout arguments — keep them ref-shaped so a stray
 # option (a leading '-') or shell metacharacter can never reach git.
@@ -82,6 +87,8 @@ ${BOLD}Environment variables${RESET} (all optional):
   LLAMA_CPP_REF     Source ref to build: release tag or branch name.
                     Pinned so re-runs are reproducible.
                     (default: v0.3.0)
+  LLAMA_CPP_REPO_URL Upstream git URL to clone/fetch from.
+                     (default: https://github.com/ggml-org/llama.cpp)
 EOF
   exit 0
 }
@@ -334,7 +341,7 @@ else
   # +refs/tags/<ref>:refs/tags/<ref>), so a later change of LLAMA_CPP_REF could
   # never be fetched. A full --branch clone keeps every branch and tag.
   git clone --branch "${LLAMA_CPP_REF}" \
-    https://github.com/ggerganov/llama.cpp "${INSTALL_DIR}"
+    "${LLAMA_CPP_REPO_URL}" "${INSTALL_DIR}"
 fi
 
 # Fix dubious ownership when directory was created with sudo
@@ -342,7 +349,10 @@ if [[ "${INSTALL_DIR}" != "${HOME}"* ]]; then
   git config --global --add safe.directory "${INSTALL_DIR}"
 fi
 
-git -C "${INSTALL_DIR}" fetch --tags --force
+if ! git -C "${INSTALL_DIR}" fetch --tags --force; then
+  error "git fetch from ${LLAMA_CPP_REPO_URL} failed."
+  error "If the error mentions authentication (HTTP 401, 'Username for ...'), git needs a GitHub credential for this URL — e.g. 'gh auth setup-git' or a PAT in a git credential helper — then re-run."
+fi
 
 # Checkout the pinned ref. There is deliberately no default-branch checkout +
 # pull in front of this: the ref is the build input, and drifting to the branch
