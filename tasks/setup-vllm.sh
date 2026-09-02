@@ -1033,7 +1033,8 @@ fi
 COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.yml.tmpl"
 
 # ── Backend YAML fragments — anchored here by the E2 render verification ──────
-# One case statement replaces the ${BACKEND}.${EXPOSURE_MODE} template lookup.
+# One case statement replaces the old ${BACKEND}.${EXPOSURE_MODE} template lookup
+# (removed with the Traefik integration — see the E1/E2 ticket sections).
 # Indentation is part of the value: these are YAML lines, not prose. Kept inline
 # on purpose (AGENTS.md forbids inline templates in scripts, but compose -f
 # override files replace — not merge — sequences, ticket 19 §1; these 3–6 fixed
