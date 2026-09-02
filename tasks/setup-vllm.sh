@@ -529,10 +529,15 @@ if [[ "$COMPOSE_MAJOR" -lt 2 ]]; then
   warn "Docker Compose v2+ recommended. Current: ${COMPOSE_VER}"
 fi
 
-# Port check — direct exposure is the only mode (E1), so a listener on
-# VLLM_PORT is always a conflict at this point.
-if ss -tln 2>/dev/null | grep -q ":${VLLM_PORT} "; then
-  error "Port ${VLLM_PORT} is already in use. Set a different VLLM_PORT."
+# Port check — direct exposure is the only mode (E1). A running vllm stack owns
+# its own published port; only a foreign listener is a conflict (A3, F11) —
+# otherwise a converge re-run of a running stack would hard-error.
+_own_ports="$(docker inspect --format \
+  '{{range $p, $b := .NetworkSettings.Ports}}{{range $b}}{{.HostPort}} {{end}}{{end}}' \
+  vllm 2>/dev/null || true)"
+if ss -tln 2>/dev/null | grep -q ":${VLLM_PORT} " \
+   && ! grep -qw "${VLLM_PORT}" <<<"${_own_ports:-}"; then
+  error "Port ${VLLM_PORT} is already in use by another service. Set a different VLLM_PORT."
 fi
 
 # ── DGX Spark (GB10) detection: compute capability 12.1 (sm_121) ─────────────
