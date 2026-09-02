@@ -50,6 +50,10 @@ VLLM_IMAGE="${VLLM_IMAGE:-}"           # full image override (default: pinned vl
 #   0.80 on DGX Spark (sm_121, unified memory), 0.90 other GPU backends
 VLLM_GPU_UTIL="${VLLM_GPU_UTIL:-}"
 VLLM_EXTRA_ARGS="${VLLM_EXTRA_ARGS:-}"  # additional vLLM server arguments
+# Command-prefix asymmetry (A1): "vllm serve" is prepended for nvcr.io/* images
+# only; resolved after the image is pinned. Empty = upstream/ROCm entrypoint is
+# already ["vllm","serve"].
+VLLM_COMMAND_PREFIX=""
 
 # ── Multi-GPU / memory tuning ─────────────────────────────────────────────────
 VLLM_TENSOR_PARALLEL="${VLLM_TENSOR_PARALLEL:-1}"  # tensor-parallel degree (# GPUs)
@@ -236,7 +240,8 @@ usage() {
   echo "  --tensor-parallel <n> Number of GPUs for tensor parallelism  (default: 1)"
   echo "  --max-model-len <n>   Max context length – reduce to save KV memory  (default: model max)"
   echo "  --dtype <dtype>       Model dtype: auto|bfloat16|float16|float32  (default: auto)"
-  echo "  --shm-size <size>     Shared memory size for the container  (default: 8g)"
+  echo "  --shm-size <size>     Container shm size (the CPU backend's mechanism — GPU"
+  echo "                        backends run with ipc: host, which wins at runtime)  (default: 8g)"
   echo "  --max-num-seqs <n>    Max concurrent sequences  (default: vLLM default)"
   echo "  --max-num-batched-tokens <n>  Max batched tokens per iteration  (default: vLLM default)"
   echo "  --served-model-name <name>  Client-facing model ID"
@@ -650,6 +655,9 @@ if [[ -z "$VLLM_HEALTH_TIMEOUT" ]]; then
     VLLM_HEALTH_TIMEOUT=900
   fi
 fi
+# Compose healthcheck start_period (C1): give the container the same budget as
+# the script-level /health poll — cold start (JIT + weight load) is the slow part.
+VLLM_HEALTH_START_PERIOD="${VLLM_HEALTH_TIMEOUT}s"
 validate_gpu_util "${VLLM_GPU_UTIL}"
 
 if [[ "${VLLM_TENSOR_PARALLEL}" -gt 1 && "$BACKEND" == "nvidia" ]]; then
@@ -736,11 +744,13 @@ EXTRA_VARS_FILE="${PROJECT_DIR}/extra-vars.env"
 chmod 600 "$EXTRA_VARS_FILE"
 success "extra-vars.env written: ${EXTRA_VARS_FILE}"
 
-# ── Build optional server flags (one flag group per line; the template's
-#    folded-scalar command block joins them with spaces. Continuation lines
-#    carry the 6-space block-scalar indent. Empty flags collapse safely.) ─────
+# ── Build optional server flags (space-joined flag groups; the template's
+#    one-line folded-scalar command block joins them with spaces. Empty flags
+#    collapse safely. E2 rule 8 / review R1: the join MUST be a single space —
+#    the previous newline+indent join terminated the folded scalar mid-command
+#    whenever ${VLLM_COMMAND_PREFIX} on the first line expanded to nothing.) ─────
 VLLM_COMMAND_FLAGS=""
-_add_flag() { VLLM_COMMAND_FLAGS="${VLLM_COMMAND_FLAGS:+${VLLM_COMMAND_FLAGS}$'\n'      }$1"; }
+_add_flag() { VLLM_COMMAND_FLAGS="${VLLM_COMMAND_FLAGS:+${VLLM_COMMAND_FLAGS} }$1"; }
 
 # tensor-parallel: emit flag only when > 1 (vLLM default is 1)
 if [[ "${VLLM_TENSOR_PARALLEL}" -gt 1 ]]; then
@@ -779,7 +789,7 @@ if [[ "${VLLM_ENABLE_AUTO_TOOL_CHOICE}" == "true" ]]; then
   _add_flag "--enable-auto-tool-choice"
 fi
 
-# ── Render docker-compose.yml (from templates/vllm/docker-compose.<backend>.direct.yml) ──
+# ── Render docker-compose.yml (from templates/vllm/docker-compose.yml.tmpl) ──
 step "Generating docker-compose.yml"
 
 # E1 migration: a stack previously rendered in proxy mode switches to direct
@@ -793,18 +803,48 @@ if [[ -f "$COMPOSE_FILE" ]] && grep -q 'traefik.enable' "$COMPOSE_FILE"; then
   warn "  * restrict the port to your LAN: sudo ufw deny <port> && sudo ufw allow from 192.168.0.0/16 to any port <port>"
 fi
 
-COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.${BACKEND}.direct.yml"
+COMPOSE_TEMPLATE="${TEMPLATE_DIR}/docker-compose.yml.tmpl"
+
+# ── Backend YAML fragments — anchored here by the E2 render verification ──────
+# One case statement replaces the ${BACKEND}.${EXPOSURE_MODE} template lookup.
+# Indentation is part of the value: these are YAML lines, not prose. Kept inline
+# on purpose (AGENTS.md forbids inline templates in scripts, but compose -f
+# override files replace — not merge — sequences, ticket 19 §1; these 3–6 fixed
+# lines are the only remaining option that keeps ONE template file).
+case "$BACKEND" in
+  nvidia)
+    VLLM_IPC_BLOCK='    ipc: "host"'
+    VLLM_VENDOR_BLOCK=$'    deploy:\n      resources:\n        reservations:\n          devices:\n            - driver: nvidia\n              count: all\n              capabilities: [gpu]'
+    # NOTE: ${VLLM_GPU_UTIL} must survive this envsubst (it is non-recursive, F15) so that
+    # compose still resolves the value from /srv/vllm/.env at runtime, exactly as the
+    # per-backend templates did. Do NOT add VLLM_GPU_UTIL to the envsubst list.
+    # shellcheck disable=SC2016  # the ${VLLM_GPU_UTIL} token stays literal for compose
+    VLLM_BACKEND_ARGS='--gpu-memory-utilization ${VLLM_GPU_UTIL}'
+    ;;
+  amd)
+    VLLM_IPC_BLOCK='    ipc: "host"'
+    VLLM_VENDOR_BLOCK=$'    devices:\n      - /dev/kfd\n      - /dev/dri\n    group_add:\n      - video\n    cap_add:\n      - SYS_PTRACE\n    security_opt:\n      - seccomp=unconfined'
+    # shellcheck disable=SC2016  # the ${VLLM_GPU_UTIL} token stays literal for compose
+    VLLM_BACKEND_ARGS='--gpu-memory-utilization ${VLLM_GPU_UTIL}'
+    ;;
+  cpu)
+    VLLM_IPC_BLOCK=""        # no ipc:host, shm_size only (D3)
+    VLLM_VENDOR_BLOCK=""     # no device/reservation block
+    VLLM_BACKEND_ARGS='--device cpu'
+    ;;
+esac
+export VLLM_IPC_BLOCK VLLM_VENDOR_BLOCK VLLM_BACKEND_ARGS VLLM_COMMAND_PREFIX VLLM_HEALTH_START_PERIOD
 
 export VLLM_IMAGE VLLM_SHM_SIZE HF_CACHE_DIR PROJECT_DIR LMSTUDIO_MODELS_DIR \
   VLLM_PORT VLLM_COMMAND_FLAGS GENERATED_DATE
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
 # Note: VLLM_MODEL / VLLM_GPU_UTIL / VLLM_EXTRA_ARGS are deliberately NOT in
 # the list — the compose file keeps them for runtime substitution from .env.
-envsubst '${VLLM_IMAGE} ${VLLM_SHM_SIZE} ${HF_CACHE_DIR} ${PROJECT_DIR} ${LMSTUDIO_MODELS_DIR} ${VLLM_PORT} ${VLLM_COMMAND_FLAGS} ${GENERATED_DATE}' \
+envsubst '${VLLM_IMAGE} ${VLLM_SHM_SIZE} ${HF_CACHE_DIR} ${PROJECT_DIR} ${LMSTUDIO_MODELS_DIR} ${VLLM_PORT} ${VLLM_COMMAND_FLAGS} ${GENERATED_DATE} ${VLLM_IPC_BLOCK} ${VLLM_VENDOR_BLOCK} ${VLLM_BACKEND_ARGS} ${VLLM_COMMAND_PREFIX} ${VLLM_HEALTH_START_PERIOD}' \
   < "$COMPOSE_TEMPLATE" > "$COMPOSE_FILE"
 # An empty VLLM_COMMAND_FLAGS leaves a whitespace-only line — strip for clean YAML
 sed -i 's/[[:space:]]*$//' "$COMPOSE_FILE"
-success "docker-compose.yml created: ${COMPOSE_FILE} (backend: ${BACKEND}, exposure: direct)"
+success "docker-compose.yml created: ${COMPOSE_FILE} (backend: ${BACKEND}, template: docker-compose.yml.tmpl)"
 
 # ── Re-run policy (ticket 12): model args cannot converge a running stack ──
 # Model args are baked into the container command at create time (rendered

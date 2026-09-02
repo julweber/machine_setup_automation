@@ -1,0 +1,47 @@
+---
+# vLLM — single compose template for all backends, rendered by tasks/setup-vllm.sh via envsubst.
+# VLLM_IPC_BLOCK / VLLM_VENDOR_BLOCK expand to complete, already-indented YAML lines
+# (or to nothing at all → blank line, which YAML ignores); compose cannot do this conditionally.
+# This file is therefore NOT valid YAML on its own — keep the .tmpl suffix so yamllint skips it.
+# (The fragment names above are written without \${} on purpose: they are in the render
+# envsubst list, and a placeholder mention inside this comment would be expanded too.)
+# ${VLLM_MODEL}/${VLLM_GPU_UTIL}/${VLLM_EXTRA_ARGS} stay literal here and are resolved by
+# docker compose at runtime from /srv/vllm/.env.
+# Generated: ${GENERATED_DATE}
+name: vllm
+
+services:
+  vllm:
+    image: ${VLLM_IMAGE}
+    container_name: vllm
+    restart: unless-stopped
+    env_file:
+      - .env
+      - extra-vars.env
+    environment:
+      - HF_HOME=/root/.cache/huggingface
+      - VLLM_NO_USAGE_STATS=1
+    volumes:
+      - "${HF_CACHE_DIR}:/root/.cache/huggingface"
+      - "${PROJECT_DIR}/.vllm-cache:/root/.cache/vllm"
+      - "${LMSTUDIO_MODELS_DIR}:/lmstudio-models"
+    shm_size: '${VLLM_SHM_SIZE}'
+${VLLM_IPC_BLOCK}
+${VLLM_VENDOR_BLOCK}
+    ports:
+      - "${VLLM_PORT}:8000"
+    healthcheck:
+      # vLLM cold start on sm_121: JIT + weight load can exceed 7 min.  (C1)
+      test: ["CMD", "python3", "-c", "import urllib.request,sys; sys.exit(0 if urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5).status == 200 else 1)"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: ${VLLM_HEALTH_START_PERIOD}
+    networks:
+      - vllm
+    command: >
+      ${VLLM_COMMAND_PREFIX} --model ${VLLM_MODEL} --host 0.0.0.0 --port 8000 ${VLLM_BACKEND_ARGS} ${VLLM_COMMAND_FLAGS} ${VLLM_EXTRA_ARGS}
+
+networks:
+  vllm:
+    external: false

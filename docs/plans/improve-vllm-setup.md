@@ -174,6 +174,8 @@ The LM Studio models dir (`~/.lmstudio/models`) is `mkdir -p`'d and **always mou
 
 **Why six files instead of fragment vars:** `envsubst` has no conditionals, and PyYAML/yamllint reject bare `${VAR}` placeholder lines in mapping positions (they scan as simple keys without colons); yamllint parser errors can't be suppressed with `# yamllint disable`. Complete per-combination templates keep every template individually `yamllint`-clean (same approach as `templates/openhands/`).
 
+> **Superseded:** the six-template outcome was replaced by ONE `templates/vllm/docker-compose.yml.tmpl` (`.tmpl` suffix load-bearing — column-0 block placeholders are a YAML syntax error, so the file must not carry a `.yml` suffix) with render-time backend fragment injection, and the Traefik integration was removed entirely. See `.tickets/vllm-improvement.md` (sections E1/E2) and `docs/plans/vllm-improvement-plan.md` (SU-1/SU-2).
+
 ### 4.3 New env vars / flags
 
 | Variable / flag | Purpose |
