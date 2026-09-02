@@ -665,6 +665,17 @@ case "$BACKEND" in
 esac
 info "Docker image: ${VLLM_IMAGE}"
 
+# Command-prefix asymmetry (A1, F2/F3): upstream vllm/vllm-openai* images have
+# Entrypoint=["vllm","serve"]; NGC images (nvcr.io/*) do not and need the
+# full subcommand — with args-only the container dies immediately (research
+# §6.1 "the #1 first-run failure"). See dgx-spark-playbooks/nvidia/vllm/README.md.
+# The ROCm image's entrypoint is ["vllm","serve"] as well (F21) — nvcr.io/*-only.
+VLLM_COMMAND_PREFIX=""
+if [[ "$VLLM_IMAGE" == nvcr.io/* ]]; then
+  VLLM_COMMAND_PREFIX="vllm serve"
+  info "NGC image detected — prefixing the container command with 'vllm serve'."
+fi
+
 # ── Resolve defaults that depend on the backend ─────────────────────────────
 if [[ -z "$VLLM_GPU_UTIL" && "$BACKEND" != "cpu" ]]; then
   # F1: unified memory (DGX Spark AND AMD Strix Halo) defaults lower — the KV
