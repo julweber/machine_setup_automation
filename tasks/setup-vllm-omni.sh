@@ -10,6 +10,12 @@
 #   NVIDIA (CUDA): vllm/vllm-omni        (amd64; arm64 via the -aarch64 tag)
 #   AMD (ROCm):    vllm/vllm-omni-rocm   (amd64 only)
 #
+# NOTE: unlike setup-vllm.sh, this script intentionally KEEPS its Traefik
+# integration (proxy-capable) — after the vllm-improvement ticket removed the
+# proxy from setup-vllm.sh, the two vLLM scripts intentionally differ
+# (vLLM: direct/LAN-only; vLLM-Omni: still proxy-capable). Do not copy the
+# direct-only changes back here without reopening that decision.
+#
 # HuggingFace models downloaded via huggingface-cli are available inside the
 # container (the HF cache dir is mounted).
 #

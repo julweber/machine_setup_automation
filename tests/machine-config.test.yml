@@ -105,3 +105,15 @@ scripts:
       # phase exercises the full render + start + health-gate path without
       # forcing a re-create. Set MONITORING_FORCE=true to test re-create.
     args: []
+
+  # Kept out of the default fast suite (heavy CUDA image pull). VMs are
+  # GPU-less: the explicit --cpu arg exercises the CPU guard paths
+  # deliberately (D9); auto-detect would pick cpu anyway. NOTE (D9): the CPU
+  # backend renders the CUDA vllm/vllm-openai image with --device cpu —
+  # best-effort, see --help and .tickets/vllm-cpu-image.md.
+  setup-vllm:
+    enabled: false
+    description: vLLM inference engine (docker) — ad-hoc via --scripts
+    env:
+      VLLM_PORT: "8000"
+    args: ["--cpu"]
