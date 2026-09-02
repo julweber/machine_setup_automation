@@ -78,6 +78,11 @@ VLLM_REASONING_PARSER="${VLLM_REASONING_PARSER:-}"      # e.g. qwen3, nemotron_v
 VLLM_TOOL_CALL_PARSER="${VLLM_TOOL_CALL_PARSER:-}"      # e.g. qwen3, qwen3_xml
 VLLM_ENABLE_AUTO_TOOL_CHOICE="${VLLM_ENABLE_AUTO_TOOL_CHOICE:-}"  # true|false
 
+# ── Speculative decoding (A4: quoting-free shortcuts for --speculative-config) ─
+VLLM_SPEC_METHOD="${VLLM_SPEC_METHOD:-}"   # e.g. mtp (needs an MTP-capable checkpoint)
+VLLM_SPEC_MODEL="${VLLM_SPEC_MODEL:-}"     # draft model for methods that use one
+VLLM_SPEC_TOKENS="${VLLM_SPEC_TOKENS:-}"   # num_speculative_tokens (positive int)
+
 # ── Spark / startup options ───────────────────────────────────────────────────
 # Opt-in KEY=VALUE env vars for GB10 (sm_121), space-separated.
 # Version-specific workarounds for specific image tags, e.g.:
@@ -166,6 +171,13 @@ validate_max_num_batched_tokens() {
   fi
 }
 
+validate_spec_tokens() {
+  local val="$1"
+  if [[ -n "$val" && (! "$val" =~ ^[0-9]+$ || "$val" -lt 1) ]]; then
+    error "VLLM_SPEC_TOKENS must be a positive integer."
+  fi
+}
+
 validate_shm_size() {
   local sz="$1"
   if [[ -n "$sz" && ! "$sz" =~ ^[0-9]+[bBkKmMgG]?$ ]]; then
@@ -226,6 +238,9 @@ validate_ident_opt "VLLM_REASONING_PARSER" "${VLLM_REASONING_PARSER}"
 validate_ident_opt "VLLM_TOOL_CALL_PARSER" "${VLLM_TOOL_CALL_PARSER}"
 validate_bool_opt "VLLM_ENABLE_AUTO_TOOL_CHOICE" "${VLLM_ENABLE_AUTO_TOOL_CHOICE}"
 validate_bool_opt "VLLM_UNIFIED_MEMORY" "${VLLM_UNIFIED_MEMORY}"
+validate_ident_opt "VLLM_SPEC_METHOD" "${VLLM_SPEC_METHOD}"
+validate_ident_opt "VLLM_SPEC_MODEL" "${VLLM_SPEC_MODEL}"
+validate_spec_tokens "${VLLM_SPEC_TOKENS}"
 validate_spark_extra_env "${VLLM_SPARK_EXTRA_ENV}"
 if [[ -n "${VLLM_HEALTH_TIMEOUT}" && (! "${VLLM_HEALTH_TIMEOUT}" =~ ^[0-9]+$ || "${VLLM_HEALTH_TIMEOUT}" -lt 1) ]]; then
   error "VLLM_HEALTH_TIMEOUT must be a positive integer (seconds)."
@@ -258,6 +273,10 @@ usage() {
   echo "  --reasoning-parser <name>  Reasoning parser for agent-ready serving"
   echo "  --tool-call-parser <name>  Tool-call parser for agent-ready serving"
   echo "  --enable-auto-tool-choice  Enable automatic tool choice"
+  echo "  --spec-method <name>  Speculative decoding method (e.g. mtp) — quoting-free"
+  echo "                        shortcut for --speculative-config"
+  echo "  --spec-model <model>  Draft model for speculative decoding"
+  echo "  --spec-tokens <n>     num_speculative_tokens (research: start 6, sweep ±3)"
   echo "  --spark-env <KEY=V ...>    Extra env vars for DGX Spark (version-specific workarounds)"
   echo "  --health-timeout <s>  Seconds to wait for the stack to come up and for /health (default: 900 GPU / 120 CPU)"
   echo "  --no-warmup           Skip the post-health warmup request"
@@ -272,6 +291,7 @@ usage() {
   echo "  VLLM_GPU_UTIL, VLLM_TENSOR_PARALLEL, VLLM_MAX_MODEL_LEN,"
   echo "  VLLM_DTYPE, VLLM_SHM_SIZE, VLLM_EXTRA_ARGS,"
   echo "  VLLM_MAX_NUM_SEQS, VLLM_MAX_NUM_BATCHED_TOKENS,"
+  echo "  VLLM_SPEC_METHOD, VLLM_SPEC_MODEL, VLLM_SPEC_TOKENS,"
   echo "  VLLM_SERVED_MODEL_NAME, VLLM_TRUST_REMOTE_CODE, VLLM_LOAD_FORMAT,"
   echo "  VLLM_REASONING_PARSER, VLLM_TOOL_CALL_PARSER,"
   echo "  VLLM_ENABLE_AUTO_TOOL_CHOICE, VLLM_SPARK_EXTRA_ENV, VLLM_HEALTH_TIMEOUT,"
@@ -335,6 +355,9 @@ while [[ $# -gt 0 ]]; do
     --reasoning-parser) shift; VLLM_REASONING_PARSER="$1" ;;
     --tool-call-parser) shift; VLLM_TOOL_CALL_PARSER="$1" ;;
     --enable-auto-tool-choice) VLLM_ENABLE_AUTO_TOOL_CHOICE="true" ;;
+    --spec-method)      shift; VLLM_SPEC_METHOD="$1" ;;
+    --spec-model)       shift; VLLM_SPEC_MODEL="$1" ;;
+    --spec-tokens)      shift; VLLM_SPEC_TOKENS="$1" ;;
     --spark-env)        shift; VLLM_SPARK_EXTRA_ENV="$1" ;;
     --health-timeout)   shift; VLLM_HEALTH_TIMEOUT="$1" ;;
     --no-warmup)        WARMUP=0 ;;
@@ -393,6 +416,9 @@ _env_reuse VLLM_ENABLE_AUTO_TOOL_CHOICE VLLM_ENABLE_AUTO_TOOL_CHOICE
 _env_reuse VLLM_EXTRA_ARGS             VLLM_EXTRA_ARGS
 _env_reuse VLLM_MAX_NUM_SEQS           VLLM_MAX_NUM_SEQS
 _env_reuse VLLM_MAX_NUM_BATCHED_TOKENS VLLM_MAX_NUM_BATCHED_TOKENS
+_env_reuse VLLM_SPEC_METHOD            VLLM_SPEC_METHOD
+_env_reuse VLLM_SPEC_MODEL             VLLM_SPEC_MODEL
+_env_reuse VLLM_SPEC_TOKENS            VLLM_SPEC_TOKENS
 
 print_found_status() {
   echo ""
@@ -783,9 +809,10 @@ export PROJECT_DIR VLLM_MODEL HF_TOKEN VLLM_GPU_UTIL VLLM_DTYPE VLLM_MAX_MODEL_L
   VLLM_SERVED_MODEL_NAME VLLM_TRUST_REMOTE_CODE VLLM_LOAD_FORMAT \
   VLLM_REASONING_PARSER VLLM_TOOL_CALL_PARSER VLLM_ENABLE_AUTO_TOOL_CHOICE \
   VLLM_EXTRA_ARGS VLLM_MAX_NUM_SEQS VLLM_MAX_NUM_BATCHED_TOKENS \
+  VLLM_SPEC_METHOD VLLM_SPEC_MODEL VLLM_SPEC_TOKENS \
   VLLM_GPU_UTIL_NOTE VLLM_CONCURRENCY_NOTE
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
-envsubst '${PROJECT_DIR} ${VLLM_MODEL} ${HF_TOKEN} ${VLLM_GPU_UTIL} ${VLLM_DTYPE} ${VLLM_MAX_MODEL_LEN} ${VLLM_SERVED_MODEL_NAME} ${VLLM_TRUST_REMOTE_CODE} ${VLLM_LOAD_FORMAT} ${VLLM_REASONING_PARSER} ${VLLM_TOOL_CALL_PARSER} ${VLLM_ENABLE_AUTO_TOOL_CHOICE} ${VLLM_EXTRA_ARGS} ${VLLM_MAX_NUM_SEQS} ${VLLM_MAX_NUM_BATCHED_TOKENS} ${VLLM_GPU_UTIL_NOTE} ${VLLM_CONCURRENCY_NOTE}' \
+envsubst '${PROJECT_DIR} ${VLLM_MODEL} ${HF_TOKEN} ${VLLM_GPU_UTIL} ${VLLM_DTYPE} ${VLLM_MAX_MODEL_LEN} ${VLLM_SERVED_MODEL_NAME} ${VLLM_TRUST_REMOTE_CODE} ${VLLM_LOAD_FORMAT} ${VLLM_REASONING_PARSER} ${VLLM_TOOL_CALL_PARSER} ${VLLM_ENABLE_AUTO_TOOL_CHOICE} ${VLLM_EXTRA_ARGS} ${VLLM_MAX_NUM_SEQS} ${VLLM_MAX_NUM_BATCHED_TOKENS} ${VLLM_SPEC_METHOD} ${VLLM_SPEC_MODEL} ${VLLM_SPEC_TOKENS} ${VLLM_GPU_UTIL_NOTE} ${VLLM_CONCURRENCY_NOTE}' \
   < "${TEMPLATE_DIR}/env.template" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 success ".env written (mode 600): ${ENV_FILE}"
@@ -851,6 +878,19 @@ if [[ -n "${VLLM_TOOL_CALL_PARSER}" ]]; then
 fi
 if [[ "${VLLM_ENABLE_AUTO_TOOL_CHOICE}" == "true" ]]; then
   _add_flag "--enable-auto-tool-choice"
+fi
+
+# ── Speculative decoding (quoting-free: vLLM --spec-* flags) ────────────────
+# These bypass the compose quote-stripping trap of --speculative-config <json>
+# (F9/F10) — no quoting needed.
+if [[ -n "${VLLM_SPEC_METHOD}" ]]; then
+  _add_flag "--spec-method ${VLLM_SPEC_METHOD}"
+fi
+if [[ -n "${VLLM_SPEC_MODEL}" ]]; then
+  _add_flag "--spec-model ${VLLM_SPEC_MODEL}"
+fi
+if [[ -n "${VLLM_SPEC_TOKENS}" ]]; then
+  _add_flag "--spec-tokens ${VLLM_SPEC_TOKENS}"
 fi
 
 # ── Render docker-compose.yml (from templates/vllm/docker-compose.yml.tmpl) ──
