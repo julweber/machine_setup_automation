@@ -34,6 +34,11 @@ source "${SCRIPT_DIR}/../lib/helpers.sh"
 # ── Pinned default image tags (verified: amd64 + arm64) ──────────────────────
 # Nightly/:latest tags move — deployments should be reproducible. Override
 # with --image / VLLM_IMAGE (e.g. nvcr.io/nvidia/vllm, lharillo/..., :gemma).
+# C5: v0.27.x is the first line with the SM121 kernel-less-build fix (#49904).
+# Before bumping to >= 0.28, re-check: default --max-num-batched-tokens
+# 8192->16384 (more reserved memory on a unified-memory box), reasoning_content
+# output removal (#50624, breaks clients that parse thinking traces),
+# KV-tiering metrics renamed block->chunk (#52812, breaks Grafana dashboards).
 VLLM_DEFAULT_TAG="v0.27.1"
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
@@ -82,6 +87,16 @@ VLLM_ENABLE_AUTO_TOOL_CHOICE="${VLLM_ENABLE_AUTO_TOOL_CHOICE:-}"  # true|false
 VLLM_SPEC_METHOD="${VLLM_SPEC_METHOD:-}"   # e.g. mtp (needs an MTP-capable checkpoint)
 VLLM_SPEC_MODEL="${VLLM_SPEC_MODEL:-}"     # draft model for methods that use one
 VLLM_SPEC_TOKENS="${VLLM_SPEC_TOKENS:-}"   # num_speculative_tokens (positive int)
+
+# ── Backend / quantization levers (C3, research §5.3 — all default to auto) ───
+# Contested levers stay opt-in: empty/'auto' emits no flag (vLLM picks).
+VLLM_QUANTIZATION="${VLLM_QUANTIZATION:-}"           # e.g. modelopt | mxfp4 | gptq_marlin
+VLLM_MOE_BACKEND="${VLLM_MOE_BACKEND:-}"             # MoE kernel backend
+VLLM_LINEAR_BACKEND="${VLLM_LINEAR_BACKEND:-}"       # linear-layer kernel backend
+VLLM_ATTENTION_BACKEND="${VLLM_ATTENTION_BACKEND:-}" # attention kernel backend
+VLLM_KV_CACHE_DTYPE="${VLLM_KV_CACHE_DTYPE:-}"       # e.g. fp8
+VLLM_ASYNC_SCHEDULING="${VLLM_ASYNC_SCHEDULING:-}"   # true|false
+VLLM_ENABLE_CHUNKED_PREFILL="${VLLM_ENABLE_CHUNKED_PREFILL:-}"  # true|false
 
 # ── Spark / startup options ───────────────────────────────────────────────────
 # Opt-in KEY=VALUE env vars for GB10 (sm_121), space-separated.
@@ -246,6 +261,13 @@ validate_bool_opt "VLLM_UNIFIED_MEMORY" "${VLLM_UNIFIED_MEMORY}"
 validate_ident_opt "VLLM_SPEC_METHOD" "${VLLM_SPEC_METHOD}"
 validate_ident_opt "VLLM_SPEC_MODEL" "${VLLM_SPEC_MODEL}"
 validate_spec_tokens "${VLLM_SPEC_TOKENS}"
+validate_ident_opt "VLLM_QUANTIZATION" "${VLLM_QUANTIZATION}"
+validate_ident_opt "VLLM_MOE_BACKEND" "${VLLM_MOE_BACKEND}"
+validate_ident_opt "VLLM_LINEAR_BACKEND" "${VLLM_LINEAR_BACKEND}"
+validate_ident_opt "VLLM_ATTENTION_BACKEND" "${VLLM_ATTENTION_BACKEND}"
+validate_ident_opt "VLLM_KV_CACHE_DTYPE" "${VLLM_KV_CACHE_DTYPE}"
+validate_bool_opt "VLLM_ASYNC_SCHEDULING" "${VLLM_ASYNC_SCHEDULING}"
+validate_bool_opt "VLLM_ENABLE_CHUNKED_PREFILL" "${VLLM_ENABLE_CHUNKED_PREFILL}"
 validate_spark_extra_env "${VLLM_SPARK_EXTRA_ENV}"
 if [[ -n "${VLLM_HEALTH_TIMEOUT}" && (! "${VLLM_HEALTH_TIMEOUT}" =~ ^[0-9]+$ || "${VLLM_HEALTH_TIMEOUT}" -lt 1) ]]; then
   error "VLLM_HEALTH_TIMEOUT must be a positive integer (seconds)."
@@ -282,6 +304,15 @@ usage() {
   echo "                        shortcut for --speculative-config"
   echo "  --spec-model <model>  Draft model for speculative decoding"
   echo "  --spec-tokens <n>     num_speculative_tokens (research: start 6, sweep ±3)"
+  echo "  --quantization <name>       Quantization kernel (default: auto; NVFP4 -> modelopt;"
+  echo "                              leave UNSET for pre-quantized checkpoints)"
+  echo "  --moe-backend <name>        MoE kernel backend (default: auto)"
+  echo "  --linear-backend <name>     Linear-layer kernel backend (default: auto)"
+  echo "  --attention-backend <name>  Attention kernel backend (default: auto — forcing one"
+  echo "                              global backend can crash hybrid models at init_device)"
+  echo "  --kv-cache-dtype <dtype>    KV cache dtype fp8 (repetition-loop risk; never with DFlash)"
+  echo "  --async-scheduling          Enable asynchronous scheduling"
+  echo "  --enable-chunked-prefill    Enable chunked prefill (up to ~9x slower on Mamba-dominant MoE)"
   echo "  --spark-env <KEY=V ...>    Extra env vars for DGX Spark (version-specific workarounds)"
   echo "  --health-timeout <s>  Seconds to wait for the stack to come up and for /health (default: 900 GPU / 120 CPU)."
   echo "                        Also drives the compose healthcheck start_period (C1): cold start —"
@@ -299,6 +330,9 @@ usage() {
   echo "  VLLM_DTYPE, VLLM_SHM_SIZE, VLLM_EXTRA_ARGS,"
   echo "  VLLM_MAX_NUM_SEQS, VLLM_MAX_NUM_BATCHED_TOKENS,"
   echo "  VLLM_SPEC_METHOD, VLLM_SPEC_MODEL, VLLM_SPEC_TOKENS,"
+  echo "  VLLM_QUANTIZATION, VLLM_MOE_BACKEND, VLLM_LINEAR_BACKEND,"
+  echo "  VLLM_ATTENTION_BACKEND, VLLM_KV_CACHE_DTYPE, VLLM_ASYNC_SCHEDULING,"
+  echo "  VLLM_ENABLE_CHUNKED_PREFILL,"
   echo "  VLLM_SERVED_MODEL_NAME, VLLM_TRUST_REMOTE_CODE, VLLM_LOAD_FORMAT,"
   echo "  VLLM_REASONING_PARSER, VLLM_TOOL_CALL_PARSER,"
   echo "  VLLM_ENABLE_AUTO_TOOL_CHOICE, VLLM_SPARK_EXTRA_ENV, VLLM_HEALTH_TIMEOUT,"
@@ -366,6 +400,13 @@ while [[ $# -gt 0 ]]; do
     --spec-method)      shift; VLLM_SPEC_METHOD="$1" ;;
     --spec-model)       shift; VLLM_SPEC_MODEL="$1" ;;
     --spec-tokens)      shift; VLLM_SPEC_TOKENS="$1" ;;
+    --quantization)     shift; VLLM_QUANTIZATION="$1" ;;
+    --moe-backend)      shift; VLLM_MOE_BACKEND="$1" ;;
+    --linear-backend)   shift; VLLM_LINEAR_BACKEND="$1" ;;
+    --attention-backend) shift; VLLM_ATTENTION_BACKEND="$1" ;;
+    --kv-cache-dtype)   shift; VLLM_KV_CACHE_DTYPE="$1" ;;
+    --async-scheduling) VLLM_ASYNC_SCHEDULING="true" ;;
+    --enable-chunked-prefill) VLLM_ENABLE_CHUNKED_PREFILL="true" ;;
     --spark-env)        shift; VLLM_SPARK_EXTRA_ENV="$1" ;;
     --health-timeout)   shift; VLLM_HEALTH_TIMEOUT="$1" ;;
     --no-warmup)        WARMUP=0 ;;
@@ -427,6 +468,13 @@ _env_reuse VLLM_MAX_NUM_BATCHED_TOKENS VLLM_MAX_NUM_BATCHED_TOKENS
 _env_reuse VLLM_SPEC_METHOD            VLLM_SPEC_METHOD
 _env_reuse VLLM_SPEC_MODEL             VLLM_SPEC_MODEL
 _env_reuse VLLM_SPEC_TOKENS            VLLM_SPEC_TOKENS
+_env_reuse VLLM_QUANTIZATION           VLLM_QUANTIZATION
+_env_reuse VLLM_MOE_BACKEND            VLLM_MOE_BACKEND
+_env_reuse VLLM_LINEAR_BACKEND         VLLM_LINEAR_BACKEND
+_env_reuse VLLM_ATTENTION_BACKEND      VLLM_ATTENTION_BACKEND
+_env_reuse VLLM_KV_CACHE_DTYPE         VLLM_KV_CACHE_DTYPE
+_env_reuse VLLM_ASYNC_SCHEDULING       VLLM_ASYNC_SCHEDULING
+_env_reuse VLLM_ENABLE_CHUNKED_PREFILL VLLM_ENABLE_CHUNKED_PREFILL
 
 print_found_status() {
   echo ""
@@ -829,9 +877,11 @@ export PROJECT_DIR VLLM_MODEL HF_TOKEN VLLM_GPU_UTIL VLLM_DTYPE VLLM_MAX_MODEL_L
   VLLM_REASONING_PARSER VLLM_TOOL_CALL_PARSER VLLM_ENABLE_AUTO_TOOL_CHOICE \
   VLLM_EXTRA_ARGS VLLM_MAX_NUM_SEQS VLLM_MAX_NUM_BATCHED_TOKENS \
   VLLM_SPEC_METHOD VLLM_SPEC_MODEL VLLM_SPEC_TOKENS \
+  VLLM_QUANTIZATION VLLM_MOE_BACKEND VLLM_LINEAR_BACKEND VLLM_ATTENTION_BACKEND \
+  VLLM_KV_CACHE_DTYPE VLLM_ASYNC_SCHEDULING VLLM_ENABLE_CHUNKED_PREFILL \
   VLLM_GPU_UTIL_NOTE VLLM_CONCURRENCY_NOTE
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
-envsubst '${PROJECT_DIR} ${VLLM_MODEL} ${HF_TOKEN} ${VLLM_GPU_UTIL} ${VLLM_DTYPE} ${VLLM_MAX_MODEL_LEN} ${VLLM_SERVED_MODEL_NAME} ${VLLM_TRUST_REMOTE_CODE} ${VLLM_LOAD_FORMAT} ${VLLM_REASONING_PARSER} ${VLLM_TOOL_CALL_PARSER} ${VLLM_ENABLE_AUTO_TOOL_CHOICE} ${VLLM_EXTRA_ARGS} ${VLLM_MAX_NUM_SEQS} ${VLLM_MAX_NUM_BATCHED_TOKENS} ${VLLM_SPEC_METHOD} ${VLLM_SPEC_MODEL} ${VLLM_SPEC_TOKENS} ${VLLM_GPU_UTIL_NOTE} ${VLLM_CONCURRENCY_NOTE}' \
+envsubst '${PROJECT_DIR} ${VLLM_MODEL} ${HF_TOKEN} ${VLLM_GPU_UTIL} ${VLLM_DTYPE} ${VLLM_MAX_MODEL_LEN} ${VLLM_SERVED_MODEL_NAME} ${VLLM_TRUST_REMOTE_CODE} ${VLLM_LOAD_FORMAT} ${VLLM_REASONING_PARSER} ${VLLM_TOOL_CALL_PARSER} ${VLLM_ENABLE_AUTO_TOOL_CHOICE} ${VLLM_EXTRA_ARGS} ${VLLM_MAX_NUM_SEQS} ${VLLM_MAX_NUM_BATCHED_TOKENS} ${VLLM_SPEC_METHOD} ${VLLM_SPEC_MODEL} ${VLLM_SPEC_TOKENS} ${VLLM_QUANTIZATION} ${VLLM_MOE_BACKEND} ${VLLM_LINEAR_BACKEND} ${VLLM_ATTENTION_BACKEND} ${VLLM_KV_CACHE_DTYPE} ${VLLM_ASYNC_SCHEDULING} ${VLLM_ENABLE_CHUNKED_PREFILL} ${VLLM_GPU_UTIL_NOTE} ${VLLM_CONCURRENCY_NOTE}' \
   < "${TEMPLATE_DIR}/env.template" > "$ENV_FILE"
 chmod 600 "$ENV_FILE"
 success ".env written (mode 600): ${ENV_FILE}"
@@ -906,6 +956,29 @@ if [[ -n "${VLLM_SPEC_MODEL}" ]]; then
 fi
 if [[ -n "${VLLM_SPEC_TOKENS}" ]]; then
   _add_flag "--spec-tokens ${VLLM_SPEC_TOKENS}"
+fi
+
+# ── Backend / quantization levers (C3 — emit only when set, 'auto' never emits) ─
+if [[ -n "${VLLM_QUANTIZATION}" && "${VLLM_QUANTIZATION}" != "auto" ]]; then
+  _add_flag "--quantization ${VLLM_QUANTIZATION}"
+fi
+if [[ -n "${VLLM_MOE_BACKEND}" && "${VLLM_MOE_BACKEND}" != "auto" ]]; then
+  _add_flag "--moe-backend ${VLLM_MOE_BACKEND}"
+fi
+if [[ -n "${VLLM_LINEAR_BACKEND}" && "${VLLM_LINEAR_BACKEND}" != "auto" ]]; then
+  _add_flag "--linear-backend ${VLLM_LINEAR_BACKEND}"
+fi
+if [[ -n "${VLLM_ATTENTION_BACKEND}" && "${VLLM_ATTENTION_BACKEND}" != "auto" ]]; then
+  _add_flag "--attention-backend ${VLLM_ATTENTION_BACKEND}"
+fi
+if [[ -n "${VLLM_KV_CACHE_DTYPE}" && "${VLLM_KV_CACHE_DTYPE}" != "auto" ]]; then
+  _add_flag "--kv-cache-dtype ${VLLM_KV_CACHE_DTYPE}"
+fi
+if [[ "${VLLM_ASYNC_SCHEDULING}" == "true" ]]; then
+  _add_flag "--async-scheduling"
+fi
+if [[ "${VLLM_ENABLE_CHUNKED_PREFILL}" == "true" ]]; then
+  _add_flag "--enable-chunked-prefill"
 fi
 
 # ── Render docker-compose.yml (from templates/vllm/docker-compose.yml.tmpl) ──
@@ -1077,6 +1150,17 @@ else
         warn "Warmup request failed or timed out — the server may still be warming up."
         warn "Follow logs: cd ${PROJECT_DIR} && docker compose logs -f"
       fi
+    fi
+
+    # C4: an unsupported FP4 path can produce silently wrong output — point the
+    # operator at the logs that prove the fast paths actually engaged
+    # (research §2/§7.3). Nested fallback is mandatory (R4): under --no-warmup
+    # WARMUP_MODEL is unset and set -u would abort the summary on this line.
+    if [[ "$BACKEND" == "nvidia" ]] && is_spark; then
+      info "Verify the fast paths actually engaged:"
+      info "  docker logs vllm 2>&1 | grep -Ei 'NvFp4|MoE backend|AttentionBackend|KV cache size|Maximum concurrency'"
+      info "Smoke test (must answer 204):"
+      info "  curl -sS http://localhost:${VLLM_PORT}/v1/chat/completions -H 'Content-Type: application/json' -d '{\"model\":\"${WARMUP_MODEL:-${VLLM_SERVED_MODEL_NAME:-$VLLM_MODEL}}\",\"messages\":[{\"role\":\"user\",\"content\":\"12*17\"}],\"max_tokens\":64}'"
     fi
   else
     warn "vLLM did not respond within ${VLLM_HEALTH_TIMEOUT}s – it may still be loading the model."
