@@ -19,8 +19,9 @@
 #   --help            Show help
 #
 # Environment Variables (optional):
-#   LLAMA_CPP_REF - source ref to build: a release tag or branch name
-#                   (default: v0.3.0, pinned — see the default below)
+#   LLAMA_CPP_REF - source ref to build: "latest" (default) resolves at run
+#                   time to the most recently published tag in the source repo;
+#                   any concrete tag/branch name pins a reproducible build
 #   LLAMA_CPP_REPO_URL - upstream git URL to clone/fetch from
 #                        (default: https://github.com/ggml-org/llama.cpp)
 #
@@ -44,20 +45,17 @@ source "${LIB_PATH}" || {
 
 # Configuration
 INSTALL_DIR="${INSTALL_DIR:-/opt/llama.cpp}"
-# Source ref to build — pinned on purpose (ticket improvements-2/17). The clone
-# used to land on "whichever tag is newest at run time" (and the existing-clone
-# path pulled the remote default branch first), so two runs of this script did
-# not build the same thing.
 # Canonical upstream repo. The project moved from github.com/ggerganov/llama.cpp
 # to ggml-org/llama.cpp (the old URL no longer serves the repo).
 LLAMA_CPP_REPO_URL="${LLAMA_CPP_REPO_URL:-https://github.com/ggml-org/llama.cpp}"
-
-# Default looked up 2026-08-31 from the releases of the clone target above:
-# v0.3.0, published 2026-08-25 — the latest NON-prerelease. Everything newer is a
-# b107xx per-build pre-release published several times a day, i.e. exactly the
-# moving target that must not decide what gets built here.
-# Update deliberately: git ls-remote --tags https://github.com/ggml-org/llama.cpp
-: "${LLAMA_CPP_REF:=v0.3.0}"
+# Source ref to build. Default "latest" resolves at run time to the most
+# recently published tag in the source repo (newest tag-creation date, via
+# `git for-each-ref --sort=-creatordate refs/tags` after the tag fetch), so
+# every run builds the newest available tag. Set LLAMA_CPP_REF to a concrete
+# tag or branch name to pin a reproducible build instead (that was the
+# behaviour pinned by ticket improvements-2/17; it now requires an explicit
+# ref).
+: "${LLAMA_CPP_REF:=latest}"
 # Refs reach git as --branch/checkout arguments — keep them ref-shaped so a stray
 # option (a leading '-') or shell metacharacter can never reach git.
 if [[ ! "${LLAMA_CPP_REF}" =~ ^[A-Za-z0-9][A-Za-z0-9._/-]*$ ]]; then
@@ -84,9 +82,10 @@ ${BOLD}Options:${RESET}
   --help            Show this help
 
 ${BOLD}Environment variables${RESET} (all optional):
-  LLAMA_CPP_REF     Source ref to build: release tag or branch name.
-                    Pinned so re-runs are reproducible.
-                    (default: v0.3.0)
+  LLAMA_CPP_REF     Source ref to build. "latest" (default) builds the most
+                    recently published tag, resolved at run time. Set a
+                    concrete tag or branch name to pin a reproducible build.
+                    (default: latest)
   LLAMA_CPP_REPO_URL Upstream git URL to clone/fetch from.
                      (default: https://github.com/ggml-org/llama.cpp)
 EOF
@@ -325,8 +324,11 @@ case "${BACKEND}" in
     ;;
 esac
 
-# Clone / update repo — build the pinned LLAMA_CPP_REF, never "whatever is newest"
+# Clone / update repo. LLAMA_CPP_REF=latest (the default) builds the most
+# recently published tag, resolved after the tag fetch below; a concrete
+# tag/branch name is built as-is.
 step "Fetching llama.cpp source (ref: ${LLAMA_CPP_REF})"
+REQUESTED_REF="${LLAMA_CPP_REF}"
 if [[ -d "${INSTALL_DIR}/.git" ]]; then
   # Fix dubious ownership for existing repos
   if [[ "${INSTALL_DIR}" != "${HOME}"* ]]; then
@@ -334,14 +336,19 @@ if [[ -d "${INSTALL_DIR}/.git" ]]; then
   fi
   info "Existing repo found at ${INSTALL_DIR} – fetching refs and tags…"
 else
-  info "Cloning into ${INSTALL_DIR} at ${LLAMA_CPP_REF}…"
-  # --branch pins the starting point; --depth 1 is deliberately NOT used: a
-  # shallow clone of a single ref rewrites the fetch refspec to just that ref
-  # (verified: remote.origin.fetch becomes
-  # +refs/tags/<ref>:refs/tags/<ref>), so a later change of LLAMA_CPP_REF could
-  # never be fetched. A full --branch clone keeps every branch and tag.
-  git clone --branch "${LLAMA_CPP_REF}" \
-    "${LLAMA_CPP_REPO_URL}" "${INSTALL_DIR}"
+  if [[ "${LLAMA_CPP_REF}" == "latest" ]]; then
+    info "Cloning into ${INSTALL_DIR} (newest tag is resolved after the tag fetch)…"
+    git clone "${LLAMA_CPP_REPO_URL}" "${INSTALL_DIR}"
+  else
+    info "Cloning into ${INSTALL_DIR} at ${LLAMA_CPP_REF}…"
+    # --branch pins the starting point; --depth 1 is deliberately NOT used: a
+    # shallow clone of a single ref rewrites the fetch refspec to just that ref
+    # (verified: remote.origin.fetch becomes
+    # +refs/tags/<ref>:refs/tags/<ref>), so a later change of LLAMA_CPP_REF could
+    # never be fetched. A full --branch clone keeps every branch and tag.
+    git clone --branch "${LLAMA_CPP_REF}" \
+      "${LLAMA_CPP_REPO_URL}" "${INSTALL_DIR}"
+  fi
 fi
 
 # Fix dubious ownership when directory was created with sudo
@@ -354,10 +361,20 @@ if ! git -C "${INSTALL_DIR}" fetch --tags --force; then
   error "If the error mentions authentication (HTTP 401, 'Username for ...'), git needs a GitHub credential for this URL — e.g. 'gh auth setup-git' or a PAT in a git credential helper — then re-run."
 fi
 
-# Checkout the pinned ref. There is deliberately no default-branch checkout +
-# pull in front of this: the ref is the build input, and drifting to the branch
-# tip / to "newest tag at run time" is what made two runs build different binaries
-# (ticket improvements-2/17).
+# Resolve "latest" to the most recently published tag: the newest tag-creation
+# date among the fetched refs (annotated tag = tagger date, lightweight tag =
+# commit date). Resolved AFTER the fetch so tags reachable only via non-default
+# branches are included too.
+if [[ "${LLAMA_CPP_REF}" == "latest" ]]; then
+  LATEST_TAG="$(git -C "${INSTALL_DIR}" for-each-ref --sort=-creatordate --count=1 --format='%(refname:short)' refs/tags)"
+  if [[ -z "${LATEST_TAG}" ]]; then
+    error "LLAMA_CPP_REF=latest but no tags were found in ${LLAMA_CPP_REPO_URL} — pin a concrete tag/branch via LLAMA_CPP_REF instead"
+  fi
+  info "'latest' resolved to most recently published tag: ${LATEST_TAG}"
+  LLAMA_CPP_REF="${LATEST_TAG}"
+fi
+
+# Checkout the resolved ref (tag → detached HEAD, branch → local branch).
 info "Checking out ${LLAMA_CPP_REF}…"
 if ! git -C "${INSTALL_DIR}" checkout "${LLAMA_CPP_REF}"; then
   # A branch ref may exist only as a remote-tracking ref (no local copy yet).
@@ -429,7 +446,9 @@ echo -e "${BOLD}${GREEN}╚═════════════════�
 echo ""
 echo -e "  ${BOLD}Backend:${RESET}    ${GREEN}${BACKEND^^}${RESET}"
 echo -e "  ${BOLD}Source:${RESET}     ${INSTALL_DIR}"
-echo -e "  ${BOLD}Built ref:${RESET}  ${LLAMA_CPP_REF} (${BUILT_REF})"
+BUILT_REF_LABEL="${LLAMA_CPP_REF}"
+[[ "${REQUESTED_REF}" == "latest" ]] && BUILT_REF_LABEL="${LLAMA_CPP_REF} (requested: latest)"
+echo -e "  ${BOLD}Built ref:${RESET}  ${BUILT_REF_LABEL} (${BUILT_REF})"
 echo -e "  ${BOLD}Binaries:${RESET}   /usr/local/bin"
 echo ""
 echo -e "  ${BOLD}Key binaries:${RESET}"

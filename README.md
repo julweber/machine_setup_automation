@@ -254,7 +254,7 @@ Downloads the specified LM Studio AppImage, creates a desktop entry, an optional
 #### `setup-llama-cpp.sh`
 Builds and installs llama.cpp from source with auto or manual GPU backend selection. Skips install if binaries are already present.
 
-**Environment variables:** `INSTALL_DIR` (default `$HOME/llama.cpp`), `BACKEND` (`nvidia`, `amd`, `cpu`, auto-detected if empty), `FORCE` (default `0`), `JOBS` (default `nproc`), `LLAMA_CPP_REF` (default `v0.3.0` — the tag/branch that gets built, pinned so re-runs are reproducible; the built ref is printed in the summary)
+**Environment variables:** `INSTALL_DIR` (default `$HOME/llama.cpp`), `BACKEND` (`nvidia`, `amd`, `cpu`, auto-detected if empty), `FORCE` (default `0`), `JOBS` (default `nproc`), `LLAMA_CPP_REF` (default `latest` — the most recently published tag in the source repo, resolved at run time; set a concrete tag/branch name to pin a reproducible build; the built ref is printed in the summary)
 
 #### `setup-openwebui.sh`
 Deploys Open WebUI using Docker Compose, connecting to an external LM Studio instance for AI model inference. Supports both direct access mode and Traefik reverse-proxy integration.
