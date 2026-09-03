@@ -9,11 +9,11 @@
 #   (see specification/project/test-strategy.md and
 #   docs/plans/vm-integration-tests.md):
 #
-#     1. Spin up a fresh Ubuntu VM via virt-runner (vm-create)
+#     1. Spin up a fresh Ubuntu VM via virt-runner (virt-runner create)
 #     2. Copy this repository to the VM (scp)
 #     3. Run every enabled script from the test config twice:
 #        phase 1 "integration" (clean VM), phase 2 "idempotency" (re-run)
-#     4. Destroy the test VM (vm-destroy) — unless --keep-vm
+#     4. Destroy the test VM (virt-runner destroy) — unless --keep-vm
 #     5. Write a Markdown test report to tests/reports/vmtest-<ts>/report.md
 #
 # USAGE:
@@ -34,10 +34,8 @@
 #   -h, --help         Show this help
 #
 # ENVIRONMENT:
-#   VM_TOOLS_DIR  Directory containing vm-create/vm-destroy
-#                 (default: $HOME/dev/os_projects/virt-runner/bin)
-#   VM_CREATE     Full path to vm-create (overrides VM_TOOLS_DIR)
-#   VM_DESTROY    Full path to vm-destroy (overrides VM_TOOLS_DIR)
+#   VIRT_RUNNER   Command to invoke virt-runner
+#                 (default: virt-runner, must be on PATH)
 #   VM_SSH_KEY    Public SSH key to inject into the VM
 #                 (default: $HOME/.ssh/id_ed25519.pub)
 #
@@ -60,9 +58,7 @@ readonly REPO_ROOT
 
 TS="$(date +%Y%m%d-%H%M%S)"
 VM_NAME="mas-vmtest-${TS}"
-VM_TOOLS_DIR="${VM_TOOLS_DIR:-$HOME/dev/os_projects/virt-runner/bin}"
-VM_CREATE="${VM_CREATE:-${VM_TOOLS_DIR}/vm-create}"
-VM_DESTROY="${VM_DESTROY:-${VM_TOOLS_DIR}/vm-destroy}"
+VIRT_RUNNER="${VIRT_RUNNER:-virt-runner}"
 CONFIG="${SCRIPT_DIR}/machine-config.test.yml"
 RELEASE="resolute"
 RAM=4
@@ -119,19 +115,19 @@ Host *
 EOF
 SSH_OPTS=(-F "${REPORT_DIR}/ssh_config")
 
-# vm-create invokes `ssh` internally for its own verification, and the
-# default known_hosts collides with stale entries for IPs the NAT network
+# virt-runner create invokes `ssh` internally for its own verification, and
+# the default known_hosts collides with stale entries for IPs the NAT network
 # re-assigned (accept-new never overrides a conflicting entry). ssh(1)
 # ignores the $HOME environment variable on this platform, so we interpose
-# an ssh wrapper on PATH for the vm-create invocation only. CLI options win
-# over any config file, so the isolated known_hosts always applies.
-VM_CREATE_BIN_DIR="${REPORT_DIR}/vmhome-bin"
-mkdir -p "$VM_CREATE_BIN_DIR"
-cat > "${VM_CREATE_BIN_DIR}/ssh" <<EOF
+# an ssh wrapper on PATH for the virt-runner create invocation only. CLI
+# options win over any config file, so the isolated known_hosts always applies.
+SSH_SHIM_DIR="${REPORT_DIR}/vmhome-bin"
+mkdir -p "$SSH_SHIM_DIR"
+cat > "${SSH_SHIM_DIR}/ssh" <<EOF
 #!/usr/bin/env bash
 exec $(command -v ssh) -o UserKnownHostsFile=${REPORT_DIR}/ssh-known-hosts -o StrictHostKeyChecking=accept-new -o BatchMode=yes "\$@"
 EOF
-chmod +x "${VM_CREATE_BIN_DIR}/ssh"
+chmod +x "${SSH_SHIM_DIR}/ssh"
 
 # shellcheck disable=SC2029  # command string is meant to expand on the client
 remote_ssh() { ssh "${SSH_OPTS[@]}" "${VM_USER}@${VM_IP}" "$@"; }
@@ -142,16 +138,16 @@ VM_CREATED=0
 cleanup() {
   if (( VM_CREATED )) && (( ! KEEP_VM )); then
     log "Destroying test VM: ${VM_NAME}"
-    if "$VM_DESTROY" "$VM_NAME" > "$REPORT_DIR/vm-destroy.log" 2>&1; then
-      log "VM destroyed (log: ${REPORT_DIR}/vm-destroy.log)"
+    if "$VIRT_RUNNER" destroy "$VM_NAME" --json > "$REPORT_DIR/destroy.json" 2> "$REPORT_DIR/destroy-stderr.log"; then
+      log "VM destroyed (log: ${REPORT_DIR}/destroy.json)"
     else
-      echo "[VM-TEST][ERROR] vm-destroy FAILED — manual cleanup: $VM_DESTROY $VM_NAME" >&2
-      echo "  (see ${REPORT_DIR}/vm-destroy.log)" >&2
+      echo "[VM-TEST][ERROR] virt-runner destroy FAILED — manual cleanup: $VIRT_RUNNER destroy $VM_NAME" >&2
+      echo "  (see ${REPORT_DIR}/destroy.json)" >&2
     fi
   elif (( VM_CREATED )) && (( KEEP_VM )); then
     log "Keeping VM (as requested): ${VM_NAME}"
-    echo "  access:  ssh ${VM_USER}@$(grep -m1 '^IP acquired: ' "$REPORT_DIR/vm-create.log" 2>/dev/null | awk '{print $3}')"
-    echo "  teardown: $VM_DESTROY $VM_NAME"
+    echo "  access:  ssh ${VM_USER}@$(jq -r '.vm.ip // empty' "$REPORT_DIR/create.json")"
+    echo "  teardown: $VIRT_RUNNER destroy $VM_NAME"
   fi
 }
 trap cleanup EXIT
@@ -161,8 +157,8 @@ trap cleanup EXIT
 # ---------------------------------------------------------------------------
 
 log "Preflight checks"
-[[ -x "$VM_CREATE" ]]  || fail "vm-create not found or not executable: $VM_CREATE (set VM_CREATE/VM_TOOLS_DIR)"
-[[ -x "$VM_DESTROY" ]] || fail "vm-destroy not found or not executable: $VM_DESTROY (set VM_DESTROY/VM_TOOLS_DIR)"
+command -v "$VIRT_RUNNER" &>/dev/null || fail "virt-runner not found or not executable: $VIRT_RUNNER (set VIRT_RUNNER)"
+command -v jq &>/dev/null || fail "jq not found (required to parse virt-runner JSON output)"
 [[ -f "$SSH_KEY" ]] || fail "SSH public key not found: $SSH_KEY (set VM_SSH_KEY)"
 virsh list --all &>/dev/null || fail "libvirt is not reachable (virsh list failed)"
 [[ -f "$CONFIG" ]] || fail "test config not found: $CONFIG"
@@ -199,18 +195,21 @@ fi
 # ---------------------------------------------------------------------------
 
 log "Creating VM '${VM_NAME}' (release=${RELEASE} ram=${RAM}GiB vcpu=${VCPUS} disk=${DISK}GiB)"
-if ! PATH="${VM_CREATE_BIN_DIR}:${PATH}" "$VM_CREATE" "$VM_NAME" \
+# virt-runner create --json: stdout carries exactly one JSON document (also on
+# failure, where error.code/message are reported and already-created resources
+# remain visible under .vm). stderr is kept separate so the JSON stays parseable.
+if ! PATH="${SSH_SHIM_DIR}:${PATH}" "$VIRT_RUNNER" create "$VM_NAME" \
       --ram "$RAM" --vcpu "$VCPUS" --disk "$DISK" \
       --release "$RELEASE" --user "$VM_USER" \
       --ssh-key "${SSH_KEY}" \
-      > "$REPORT_DIR/vm-create.log" 2>&1; then
-  # vm-create's 90s SSH window can expire on slow first boots even when the
-  # domain is healthy. Recover: if the domain was created and an IP assigned,
-  # give the guest up to 5 more minutes.
-  VM_IP="$(grep -m1 '^IP acquired: ' "$REPORT_DIR/vm-create.log" | awk '{print $3}')"
-  if [[ -n "$VM_IP" ]] && grep -q "VM '${VM_NAME}' created (assigned MAC" \
-      "$REPORT_DIR/vm-create.log" && virsh dominfo "$VM_NAME" >/dev/null 2>&1; then
-    log "vm-create timed out waiting for SSH — waiting up to 5m more (IP: ${VM_IP})"
+      --json > "$REPORT_DIR/create.json" 2> "$REPORT_DIR/create-stderr.log"; then
+  # virt-runner's 90s SSH window can expire on slow first boots even when the
+  # domain is healthy; the JSON still reports the VM and its IP in that case.
+  # Recover: if the domain was created and an IP assigned, give the guest up
+  # to 5 more minutes.
+  VM_IP="$(jq -r '.vm.ip // empty' "$REPORT_DIR/create.json" 2>/dev/null)"
+  if [[ -n "$VM_IP" ]] && virsh dominfo "$VM_NAME" >/dev/null 2>&1; then
+    log "virt-runner create timed out waiting for SSH — waiting up to 5m more (IP: ${VM_IP})"
     for _ in $(seq 1 30); do
       if remote_ssh exit 2>/dev/null; then
         VM_CREATED=1
@@ -221,18 +220,21 @@ if ! PATH="${VM_CREATE_BIN_DIR}:${PATH}" "$VM_CREATE" "$VM_NAME" \
     done
   fi
   if (( VM_CREATED != 1 )); then
-    echo "----- vm-create.log (tail) -----" >&2
-    tail -n 20 "$REPORT_DIR/vm-create.log" >&2
-    if grep -q "VM '${VM_NAME}' created (assigned MAC" "$REPORT_DIR/vm-create.log" \
-        && virsh dominfo "$VM_NAME" >/dev/null 2>&1; then
-      log "Removing half-created VM: ${VM_NAME}"
-      "$VM_DESTROY" "$VM_NAME" > "$REPORT_DIR/vm-destroy.log" 2>&1 || true
+    echo "----- create.json -----" >&2
+    tail -n 20 "$REPORT_DIR/create.json" >&2
+    if [[ -s "$REPORT_DIR/create-stderr.log" ]]; then
+      echo "----- create-stderr.log (tail) -----" >&2
+      tail -n 20 "$REPORT_DIR/create-stderr.log" >&2
     fi
-    fail "vm-create failed — see ${REPORT_DIR}/vm-create.log"
+    if virsh dominfo "$VM_NAME" >/dev/null 2>&1; then
+      log "Removing half-created VM: ${VM_NAME}"
+      "$VIRT_RUNNER" destroy "$VM_NAME" --json > "$REPORT_DIR/destroy.json" 2>&1 || true
+    fi
+    fail "virt-runner create failed — see ${REPORT_DIR}/create.json"
   fi
 else
-  VM_IP="$(grep -m1 '^IP acquired: ' "$REPORT_DIR/vm-create.log" | awk '{print $3}')"
-  [[ -n "$VM_IP" ]] || fail "could not parse VM IP from ${REPORT_DIR}/vm-create.log (unexpected vm-create output)"
+  VM_IP="$(jq -r '.vm.ip // empty' "$REPORT_DIR/create.json" 2>/dev/null)"
+  [[ -n "$VM_IP" ]] || fail "could not parse VM IP from ${REPORT_DIR}/create.json (unexpected virt-runner create output)"
   VM_CREATED=1
 fi
 log "VM ready: ${VM_NAME} at ${VM_IP}"
@@ -417,12 +419,12 @@ write_report() {
     echo
     echo "## Artifacts"
     echo
-    echo "- [vm-create.log](vm-create.log) — VM creation output"
+    echo "- [create.json](create.json) — VM creation output (virt-runner create --json)"
     echo "- [runner.log](runner.log) — remote test runner console output"
     echo "- [results.jsonl](vmtest/results.jsonl) — machine-readable results"
     echo "- [meta.json](vmtest/meta.json) — guest VM metadata"
     echo "- [vmtest/logs/](vmtest/logs/) — per-script logs"
-    (( KEEP_VM )) || echo "- [vm-destroy.log](vm-destroy.log) — VM teardown output"
+    (( KEEP_VM )) || echo "- [destroy.json](destroy.json) — VM teardown output (virt-runner destroy --json)"
   } > "$report"
 
   log "Report written: ${report}"

@@ -65,9 +65,12 @@ bigger VM (`--ram`, `--disk`) and a larger `--timeout`.
 - An **active `vm-pool`** storage pool and the **active `default` NAT
   network** (dnsmasq, `192.168.122.0/24`) — the same prerequisites as
   virt-runner.
-- The virt-runner tools: `vm-create` and `vm-destroy`
-  (default location `~/dev/os_projects/virt-runner/bin`, override with
-  `VM_CREATE` / `VM_DESTROY`).
+- The **`virt-runner` CLI** (e.g. installed via `uv tool install .` in the
+  virt-runner repo, or run through a wrapper), so that the configured command
+  resolves on `PATH` — see the virt-runner README. The single `virt-runner`
+  entrypoint (`create` / `destroy` / `list`, all with `--json`) replaces the
+  former `vm-create` / `vm-destroy` scripts. Override the command with
+  `VIRT_RUNNER`.
 - A public SSH key to inject into the VM
   (default `~/.ssh/id_ed25519.pub`, override with `VM_SSH_KEY`).
 - `scp`, `virsh` in `PATH`.
@@ -129,9 +132,7 @@ tests/run-vm-tests.sh [OPTIONS]
 
 | Environment variable | Meaning | Default |
 |---|---|---|
-| `VM_TOOLS_DIR` | Directory containing `vm-create`/`vm-destroy` | `$HOME/dev/os_projects/virt-runner/bin` |
-| `VM_CREATE` | Full path to `vm-create` (overrides `VM_TOOLS_DIR`) | — |
-| `VM_DESTROY` | Full path to `vm-destroy` (overrides `VM_TOOLS_DIR`) | — |
+| `VIRT_RUNNER` | Command to invoke virt-runner (must resolve on `PATH`) | `virt-runner` |
 | `VM_SSH_KEY` | Public SSH key injected into the VM | `$HOME/.ssh/id_ed25519.pub` |
 
 ### Exit codes
@@ -146,20 +147,20 @@ tests/run-vm-tests.sh [OPTIONS]
 
 ```mermaid
 flowchart TD
-    A(["tests/run-vm-tests.sh"]) --> B{"Preflight<br/>vm-create/vm-destroy exist ·<br/>libvirt reachable ·<br/>test config exists ·<br/>SSH key exists"}
+    A(["tests/run-vm-tests.sh"]) --> B{"Preflight<br/>virt-runner CLI + jq exist ·<br/>libvirt reachable ·<br/>test config exists ·<br/>SSH key exists"}
     B -- "fail" --> XF["exit 1 (no VM created)"]
     B -- "ok" --> C{"--scripts given?"}
     C -- "yes" --> C1["Generate modified config:<br/>disable all, re-enable listed scripts<br/>(env/args preserved from test config)"]
     C -- "no" --> D
-    C1 --> D["1 · vm-create: fresh Ubuntu VM<br/>(mas-vmtest-&lt;ts&gt;, cached cloud image,<br/>isolated SSH known_hosts)"]
-    D -- "vm-create failed" --> D1{"domain exists + IP assigned?"}
+    C1 --> D["1 · virt-runner create --json: fresh Ubuntu VM<br/>(mas-vmtest-&lt;ts&gt;, cached cloud image,<br/>isolated SSH known_hosts)"]
+    D -- "create failed" --> D1{"domain exists + IP assigned?"}
     D1 -- "no" --> D4["remove half-created VM (if any)"]
     D1 -- "yes" --> D2["Recovery: wait up to 5 min<br/>more for SSH (slow boot)"]
     D2 -- "SSH up" --> E
     D2 -- "still down" --> D4
-    D4 --> X1["exit 1 + vm-create.log kept in report dir"]
+    D4 --> X1["exit 1 + create.json kept in report dir"]
     D -- "IP acquired + SSH verified" --> E["2 · scp: repo → VM:<br/>/home/&lt;user&gt;/machine_setup_automation<br/>+ test config → /tmp/test-config.yml"]
-    E -- "scp/ssh failed" --> XC["trap: vm-destroy · exit 1"]
+    E -- "scp/ssh failed" --> XC["trap: virt-runner destroy · exit 1"]
     E --> F["3 · Bootstrap on VM:<br/>sudo apt install yq jq"]
     F --> G["4 · Remote runner (single SSH session):<br/>tests/remote/run-tests.sh"]
     G --> G1["Precheck:<br/>run-setup.sh -c config status"]
@@ -169,7 +170,7 @@ flowchart TD
     G4 --> H["5 · Fetch artifacts:<br/>/tmp/vmtest → report dir"]
     H --> I["6 · Render report.md<br/>(table: script × phase, PASS/FAIL/TIMEOUT,<br/>durations, verdict, artifact links)"]
     I --> J{"--keep-vm?"}
-    J -- "no" --> K["7 · vm-destroy: destroy + undefine<br/>+ delete disk volume<br/>(also runs from EXIT trap on early failure)"]
+    J -- "no" --> K["7 · virt-runner destroy: destroy + undefine<br/>+ delete disk volume<br/>(also runs from EXIT trap on early failure)"]
     J -- "yes" --> L["Keep VM; print ssh command<br/>+ manual teardown command"]
     K --> M{"all test cases rc=0?"}
     L --> M
@@ -179,20 +180,23 @@ flowchart TD
 
 Step by step:
 
-1. **Preflight.** Fails fast if the virt-runner tools are missing,
+1. **Preflight.** Fails fast if the `virt-runner` command or `jq` is missing,
    libvirt is unreachable, the test config or the SSH key cannot be found.
    No VM is created on failure.
    If `--scripts` was given, a modified config is generated in the report
    directory (all scripts disabled, the listed ones enabled again; env/args
    for scripts that already exist in the test config are preserved, unknown
    scripts are added with empty env/args).
-2. **VM creation.** `vm-create` downloads (once, then cached) the Ubuntu
-   cloud image, creates the domain in `vm-pool` on the `default` NAT
-   network, boots it with cloud-init (SSH key + cloud user injected), waits
-   for the DHCP lease and **verifies a real SSH round-trip** before
-   reporting success. The harness parses the IP from the `IP acquired:`
-   line. If vm-create's own 90 s SSH window expires (slow first boot), the
-   harness retries SSH for up to 5 more minutes before giving up.
+2. **VM creation.** `virt-runner create --json` downloads (once, then
+   cached) the Ubuntu cloud image, creates the domain in `vm-pool` on the
+   `default` NAT network, boots it with cloud-init (SSH key + cloud user
+   injected), waits for the DHCP lease and **verifies a real SSH
+   round-trip** before reporting success. stdout is a single JSON document
+   (also on failure, where `error.code`/`error.message` explain the abort
+   and already-created resources are still reported); the harness parses
+   the IP from `.vm.ip`. If virt-runner's own 90 s SSH window expires
+   (slow first boot), the harness retries SSH for up to 5 more minutes
+   before giving up.
 3. **Copy.** The whole repository is copied with `scp -r` to
    `/home/<user>/machine_setup_automation` on the VM (including `tasks/`,
    `lib/`, `templates/`, `run-setup.sh`), plus the active test config to
@@ -222,11 +226,11 @@ Step by step:
    missing on disk, anything else = the script's own exit code.
 6. **Fetch + report.** `/tmp/vmtest` is fetched back and rendered into
    `report.md` (see below).
-7. **Teardown.** `vm-destroy` destroys the domain, undefines it and deletes
-   its `<name>_vda.qcow2` volume from `vm-pool`. This runs both at the end
-   of a normal run **and** from an `EXIT` trap, so early failures (scp,
-   bootstrap, …) never leak a VM. `--keep-vm` skips destruction and prints
-   the SSH command plus the manual teardown command.
+7. **Teardown.** `virt-runner destroy` destroys the domain, undefines it
+   and deletes its `<name>_vda.qcow2` volume from `vm-pool`. This runs both
+   at the end of a normal run **and** from an `EXIT` trap, so early failures
+   (scp, bootstrap, …) never leak a VM. `--keep-vm` skips destruction and
+   prints the SSH command plus the manual teardown command.
 
 ## Reports & Artifacts
 
@@ -235,11 +239,13 @@ Every run creates `tests/reports/vmtest-<timestamp>/` (git-ignored):
 ```
 tests/reports/vmtest-<ts>/
 ├── report.md               ← the test report (start here)
-├── vm-create.log           ← virt-runner creation output
+├── create.json             ← virt-runner create output (single JSON document)
+├── create-stderr.log       ← stderr of the create call
 ├── scp.log                 ← repo copy output
 ├── bootstrap.log           ← apt bootstrap output on the VM
 ├── runner.log              ← remote runner console output
-├── vm-destroy.log          ← teardown output
+├── destroy.json            ← virt-runner destroy output (single JSON document)
+├── destroy-stderr.log      ← stderr of the destroy call
 ├── config.generated.yml    ← only when --scripts was used
 ├── ssh_config / ssh-known-hosts / vmhome-bin/   ← isolated SSH plumbing
 └── vmtest/
@@ -302,8 +308,8 @@ itself.
   with pre-existing domains such as `setup-test-vm`). Teardown only
   destroys/undefines that exact domain and deletes its
   `<name>_vda.qcow2` volume.
-- **No VM leaks on failure.** `vm-destroy` runs from an `EXIT` trap
-  whenever the VM was created. A half-created VM (vm-create failed after
+- **No VM leaks on failure.** `virt-runner destroy` runs from an `EXIT`
+  trap whenever the VM was created. A half-created VM (create failed after
   domain creation) is removed explicitly.
 - **Isolated SSH host keys.** The libvirt NAT network re-assigns
   `192.168.122.0/24` addresses, so the user's `~/.ssh/known_hosts`
@@ -311,7 +317,7 @@ itself.
   VM — and `StrictHostKeyChecking=accept-new` never overrides a conflicting
   entry. All harness SSH/SCP traffic therefore uses a per-run
   `UserKnownHostsFile` (via a per-run SSH config passed with `-F`), and
-  `vm-create`'s *internal* SSH verification is wrapped with a one-shot
+  `virt-runner create`'s *internal* SSH verification is wrapped with a one-shot
   `ssh` shim on `PATH` that pins the same isolated file (ssh(1) on this
   platform ignores `SSH_CONFIG` and the `$HOME` env var, so a wrapper is
   the reliable route). The user's `known_hosts` is never modified.
@@ -331,9 +337,9 @@ itself.
 
 | Symptom | Cause / fix |
 |---|---|
-| `vm-create failed` + `no DHCP lease after 120s` | libvirt network or disk problem — check `virsh net-info default`, `virsh pool-info vm-pool`, and the report's `vm-create.log`. |
-| `vm-create timed out waiting for SSH` followed by failure | The guest needs more than 90 s + 5 min (very small VM / slow image). Increase `--ram`/`--vcpu`; inspect the console with `virsh console <name>` **before** the run tears down — use `--keep-vm` if you need the VM afterwards. |
-| `could not parse VM IP` | virt-runner output format changed — check `vm-create.log` in the report dir. |
+| `virt-runner create failed` + `no DHCP lease after 120s` | libvirt network or disk problem — check `virsh net-info default`, `virsh pool-info vm-pool`, and the report's `create.json` (`error.code`/`error.message`). |
+| `virt-runner create timed out waiting for SSH` followed by failure | The guest needs more than 90 s + 5 min (very small VM / slow image). Increase `--ram`/`--vcpu`; inspect the console with `virsh console <name>` **before** the run tears down — use `--keep-vm` if you need the VM afterwards. |
+| `could not parse VM IP` | virt-runner JSON contract changed — check `create.json` in the report dir. |
 | Script `FAIL (rc=125)` | Script not present in `tasks/` (typo in the config or `--scripts` list). |
 | Script `TIMEOUT` | Raise `--timeout` for heavy scripts (e.g. `setup-llama-cpp` builds can take a long time). |
 | `scp to VM failed` | VM crashed during copy — the trap destroyed it; re-run. |
@@ -349,6 +355,6 @@ itself.
 - Static analysis (ShellCheck) remains the first quality gate and is
   independent of this suite — see
   [`specification/project/test-strategy.md`](../specification/project/test-strategy.md).
-- The VM tooling itself (create/destroy/list, image caching, cloud-init)
-  lives in the separate virt-runner project; this suite is a consumer of
-  its CLI contract.
+- The VM tooling itself (`virt-runner create/destroy/list`, image caching,
+  cloud-init) lives in the separate virt-runner project; this suite is a
+  consumer of its `--json` CLI contract.
