@@ -1,0 +1,27 @@
+services:
+  dagu:
+    image: ${DAGU_IMAGE}
+    container_name: dagu
+    restart: unless-stopped
+    ports:
+      - "${DAGU_BIND_IP}:${DAGU_PORT}:8080"
+    environment:
+      - DAGU_HOST=0.0.0.0
+      - DAGU_PORT=8080
+      - DAGU_TZ=${DAGU_TZ}
+      - DAGU_DAGS_DIR=${DAGU_DAGS_DIR}
+      - DAGU_AUTH_MODE=builtin
+      - DAGU_AUTH_BUILTIN_INITIAL_ADMIN_USERNAME=${DAGU_AUTH_BUILTIN_INITIAL_ADMIN_USERNAME}
+      - DAGU_AUTH_BUILTIN_INITIAL_ADMIN_PASSWORD=${DAGU_AUTH_BUILTIN_INITIAL_ADMIN_PASSWORD}
+    entrypoint: ["/usr/local/bin/tini", "-g", "--"]
+    command: ["dagu", "start-all"]
+    user: "0:0"
+    volumes:
+      - dagu_data:/var/lib/dagu
+      - ./shared:${DAGU_DAGS_DIR}
+      - /var/run/docker.sock:/var/run/docker.sock
+    env_file:
+      - .env
+
+volumes:
+  dagu_data:
