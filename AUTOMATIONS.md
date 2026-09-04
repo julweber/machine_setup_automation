@@ -1,32 +1,24 @@
 # Automations
 
 The list of all automated software components in this repository.
+For each of the scripts you can run the script with the `--help` parameter to display all environment configuration and script parameters.
+E.g. `./tasks/setup-basics.sh --help`
 
 ### System & Infrastructure
 
 #### `setup-basics.sh`
 Installs common system packages (curl, git, python3, etc.), **uv** Python package manager, **herdr** CLI tool, Node.js/npm, and the **huggingface-cli**.
 
-**Environment variables:** `NVM_VERSION` (default `0.40.4`), `NVM_DIR` (default `$HOME/.nvm`), `HF_CLI_INSTALL_SHA256` / `HERDR_INSTALL_SHA256` (default unset — the installer digest is logged on every run; set to enforce a reviewed checksum)
-
 #### `setup-docker.sh`
 Installs Docker Engine from the official Docker repository, adds the current user to the `docker` group and verifies the installation.
 
-**Environment variables:** None
-
 #### `setup-traefik.sh`
 Deploys production-ready Traefik v3 reverse proxy with Docker Compose, TLS via Let's Encrypt, security headers, rate limiting, and optional protected dashboard.
-
-**Environment variables:** `TRAEFIK_HOME`, `TRAEFIK_DOMAIN`, `TRAEFIK_DASHBOARD`, `SOCKET_PROXY_IMAGE`, `ACME_EMAIL` (**required**), `ACME_STAGING`, `DNS_PROVIDER`, `CF_DNS_API_TOKEN`, `TRAEFIK_ADMIN_USER`, `TRAEFIK_ADMIN_PASS`, `PROXY_NETWORK`, `HTTP_PORT`, `HTTPS_PORT`, `USE_SOCKET_PROXY`
 
 **See also:** [README_TRAEFIK.md](README_TRAEFIK.md) for full documentation
 
 #### `setup-upstream-kernel.sh`
 Prepares the Zabbly mainline kernel apt repository on Ubuntu 22.04/24.04 LTS, providing access to the latest stable Linux kernels.
-
-**Environment variables:** None (uses defaults from Zabbly repository)
-
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
 
 **Notes:**
 - Requires Secure Boot to be disabled in BIOS/UEFI
@@ -45,10 +37,6 @@ port; `sshd -t` validates before any restart (invalid drop-in is reverted) and
 the effective config is proven with `sshd -T` afterwards. An unchanged
 drop-in does not trigger a restart.
 
-**Environment variables:** `SSHD_PORT` (default 2224), `SSHD_LEGACY_PORT`
-(extra port to keep listening on while migrating), `SSHD_ALLOW_PASSWORDAUTH`
-(`yes` keeps password auth on when no usable key is present)
-
 #### `configure-firewall.sh`
 Sets up **UFW** rules for the SSH port plus any explicitly requested ports —
 each service's own setup script opens its port (no speculative rules).
@@ -56,39 +44,8 @@ Lockout-safe: over SSH it refuses to enable UFW while the live session's port
 would be cut, and the first remote enable arms the
 `machine-setup-ufw-rollback` timer (see below).
 
-**Environment variables:** `SSHD_PORT` (default 2224),
-`FIREWALL_EXTRA_PORTS` (e.g. `1234/tcp,4096/tcp`), `FIREWALL_ALLOW_SSH_MISMATCH`
-(`true` overrides the session-port lockout guard), `FIREWALL_ARM_ROLLBACK`
-(default `true`; `false` for headless CI), `FIREWALL_ROLLBACK_MINUTES`
-(default 10). `LM_STUDIO_PORT`, `OPENCODE_PORT`, `OPENWEBUI_PORT`,
-`KUBERNETES_API_PORT`, `GNOME_REMOTE_PORT` are displayed only.
-
-##### SSH / firewall lock-out protection (escape hatches)
-
-- **`SSHD_ALLOW_PASSWORDAUTH=yes`** (`setup-sshd.sh`) — keep
-  `PasswordAuthentication yes` when `~/.ssh/authorized_keys` has no usable
-  public key, instead of refusing to run.
-- **`FIREWALL_ALLOW_SSH_MISMATCH=true`** (`configure-firewall.sh`) — proceed
-  even when this SSH session's port would not be allowed by the new rules.
-- **`FIREWALL_ARM_ROLLBACK=false`** / **`FIREWALL_ROLLBACK_MINUTES=<n>`**
-  (`configure-firewall.sh`) — disable the self-rollback safety net on a first
-  enable over SSH (headless CI), or change its delay.
-
-The **self-rollback**: when UFW is enabled for the first time from a remote
-session, the transient unit **`machine-setup-ufw-rollback`** is armed and
-runs `ufw disable` again after `FIREWALL_ROLLBACK_MINUTES` — a mistake cannot
-cause a permanent lockout. The timer is deliberately *not* cancelled by the
-script: after you confirm a **new** ssh connection works, cancel it yourself
-with `sudo systemctl stop machine-setup-ufw-rollback.timer` (console/IPMI if
-you lost access; the firewall also disables itself once the timer fires).
-
-Remember: keep the old session open and test the new one from a second
-terminal before closing it.
-
 #### `setup-fail2ban.sh`
 Installs **fail2ban** (including the Python 3.12 `pyasynchat` compatibility fix) and configures the jail to monitor the custom SSH port, protecting SSH from brute-force attacks.
-
-**Environment variables:** `FAIL2BAN_SSHD_PORT` (default: `$SSHD_PORT` or `2224`), `FAIL2BAN_MAXRETRY` (default `5`), `FAIL2BAN_BANTIME` (default `3600` seconds), `FAIL2BAN_FINDTIME` (default `600` seconds)
 
 ---
 
@@ -97,19 +54,11 @@ Installs **fail2ban** (including the Python 3.12 `pyasynchat` compatibility fix)
 #### `setup-lm-studio.sh`
 Downloads the specified LM Studio AppImage, creates a desktop entry, an optional start script, and optionally installs the **llmster** CLI (`lms`).
 
-**Environment variables:** `LM_STUDIO_VERSION` (default `0.4.2-2`), `INSTALL_LLMSTER_ENABLED` (default `true`), `LMSTUDIO_INSTALL_SHA256` (default unset — the llmster installer digest is logged on every run; set to enforce a reviewed checksum)
-
 #### `setup-llama-cpp.sh`
 Builds and installs llama.cpp from source with auto or manual GPU backend selection. Skips install if binaries are already present.
 
-**Environment variables:** `INSTALL_DIR` (default `$HOME/llama.cpp`), `BACKEND` (`nvidia`, `amd`, `cpu`, auto-detected if empty), `FORCE` (default `0`), `JOBS` (default `nproc`), `LLAMA_CPP_REF` (default `latest` — the most recently published tag in the source repo, resolved at run time; set a concrete tag/branch name to pin a reproducible build; the built ref is printed in the summary)
-
 #### `setup-openwebui.sh`
 Deploys Open WebUI using Docker Compose, connecting to an external LM Studio instance for AI model inference. Supports both direct access mode and Traefik reverse-proxy integration.
-
-**Environment variables:** `OPENWEBUI_IMAGE` (default `ghcr.io/open-webui/open-webui:v0.11.1`), `OPENWEBUI_PORT` (default 3333), `LM_STUDIO_PORT` (default 1234), `PROJECT_DIR` (default `/srv/openwebui`), `WEBUI_SECRET_KEY` (generated on first run if not set; stored in `.env` and reused on re-runs — set explicitly to override), `OPENWEBUI_TRAEFIK` (default `false`), `OPENWEBUI_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`)
-
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
 
 **Features:**
 - Direct mode: Accessible at `http://localhost:3333`
@@ -117,17 +66,11 @@ Deploys Open WebUI using Docker Compose, connecting to an external LM Studio ins
 - Secure secret key: generated on first run, stored in `.env` (mode 600), reused on re-runs (never rotated); `docker-compose.yml` keeps only a literal `${WEBUI_SECRET_KEY}` placeholder resolved from the project `.env`
 - Creates convenience start script
 
-**Upgrade note:** Installs that predate this change carried the key inside `docker-compose.yml`. On the first run of the updated script a fresh key is generated — existing sessions are invalidated, but data is preserved.
-
 #### `setup-opencode-server.sh`
 Installs and configures the Opencode AI coding agent server with systemd integration.
 
-**Environment variables:** `OPENCODE_IMAGE` (default `ghcr.io/anomalyco/opencode:1.18.25`), `OPENCODE_PORT` (default 4096), `OPENCODE_HOSTNAME` (default `0.0.0.0`), `OPENCODE_SERVER_USERNAME` (default `opencode`), `OPENCODE_SERVER_PASSWORD` (auto-generated if empty), `OPENCODE_INSTALL_METHOD` (`npm` or `curl`), `GENERATE_PASSWORD` (default `false`)
-
 #### `setup-llama-swap.sh`
 Deploys llama-swap, a multi-model LLM proxy with hot-swap support, as a native systemd service. Downloads the Go binary from GitHub releases and generates a comprehensive `config.yaml` with all available options documented.
-
-**Environment variables:** `LLAMA_SWAP_PORT` (default `9292`), `LLAMA_SWAP_DIR` (default `/srv/llama-swap`), `LLAMA_SWAP_HEALTH_TIMEOUT` (default `500`), `LLAMA_SWAP_LOG_LEVEL` (default `info`), `LLAMA_SWAP_START_PORT` (default `10001`), `LLAMA_SWAP_GLOBAL_TTL` (default `0`), `LLAMA_SWAP_LISTEN_ADDR` (default `0.0.0.0:9292`), `LLAMA_SWAP_USER` (default `root`), `LLAMA_SWAP_BIN_PATH` (default `/usr/local/bin/llama-swap`), `LLAMA_SWAP_VERSION` (default `latest`)
 
 **Features:**
 - Hot-swap between multiple LLM models without restarting
@@ -139,8 +82,6 @@ Deploys llama-swap, a multi-model LLM proxy with hot-swap support, as a native s
 #### `setup-colqwen.sh`
 Generates a ColQwen2.5 embedding-service Docker project (FastAPI + colpali-engine on an NVIDIA NGC PyTorch base image). Serves multi-vector embeddings (dim 128) for document images and text queries — the retrieval side of visual document RAG. The script only generates the project; build and start it yourself. Models are mounted read-only from the HF cache at the identical path (adapter `base_model_name_or_path` entries resolve) and are never downloaded (fully offline: `HF_HUB_OFFLINE=1`).
 
-**Environment variables:** `PROJECT_DIR` (default `/srv/colqwen`), `COLQWEN_MODEL_DIR` (default `~/.cache/huggingface`), `COLQWEN_MODEL` (default `vidore/colqwen2.5-v0.2`), `COLPALI_VERSION` (default `0.3.13`), `NGC_PYTORCH_TAG` (default `25.10-py3`), `COLQWEN_PORT` (default `8100`)
-
 **Features:**
 - `POST /embed/queries` and `POST /embed/images` (multi-vector, one embedding per input, in order)
 - `GET /health` readiness probe (200 only after the model is loaded)
@@ -150,8 +91,6 @@ Generates a ColQwen2.5 embedding-service Docker project (FastAPI + colpali-engin
 
 #### `setup-vllm.sh`
 Deploys vLLM as a Docker-based OpenAI-compatible inference server. Supports NVIDIA (CUDA), AMD (ROCm), and CPU backends with auto-detection. Mounts the HuggingFace cache directory so models downloaded via `huggingface-cli` are automatically available.
-
-**Environment variables:** `PROJECT_DIR` (default `/srv/vllm`), `HF_CACHE_DIR` (default `~/.cache/huggingface`), `VLLM_PORT` (default `8000`), `VLLM_MODEL`, `HF_TOKEN`, `VLLM_GPU_UTIL` (default `0.90`), `VLLM_EXTRA_ARGS`, `VLLM_TENSOR_PARALLEL` (default `1`), `VLLM_MAX_MODEL_LEN`, `VLLM_DTYPE` (default `auto`), `VLLM_SHM_SIZE` (default `8g`), `VLLM_TRAEFIK` (default `false`), `VLLM_DOMAIN`, `PROXY_NETWORK` (default `proxy`)
 
 **Features:**
 - Auto-detects GPU backend (NVIDIA, AMD, or CPU fallback)
@@ -164,8 +103,6 @@ Deploys vLLM as a Docker-based OpenAI-compatible inference server. Supports NVID
 #### `setup-vllm-omni.sh`
 Deploys **vLLM-Omni** — the official vLLM sub-project for omni-modality serving (TTS/speech, diffusion, image/video generation, any-to-any models like Qwen3-Omni / Cosmos3) — as a Docker-based, OpenAI-compatible server. Uses prebuilt Docker Hub images (no local build), auto-detects the GPU backend, and serves via `vllm serve <model> --omni`. Runs alongside `setup-vllm.sh` on its own port and directory.
 
-**Environment variables:** `PROJECT_DIR` (default `/srv/vllm-omni`), `HF_CACHE_DIR`, `VLLM_OMNI_VERSION` (default `latest`), `VLLM_OMNI_PORT` (default `8091`), `VLLM_OMNI_MODEL`, `HF_TOKEN`, `VLLM_OMNI_GPU_UTIL` (default `0.90`), `VLLM_OMNI_TENSOR_PARALLEL` (default `1`), `VLLM_OMNI_MAX_MODEL_LEN`, `VLLM_OMNI_SHM_SIZE` (default `8g`), `VLLM_OMNI_EXTRA_ARGS`, `VLLM_OMNI_TRAEFIK` (default `false`), `VLLM_OMNI_DOMAIN`, `PROXY_NETWORK` (default `proxy`)
-
 **Features:**
 - Prebuilt images: `vllm/vllm-omni` (NVIDIA, amd64/arm64) and `vllm/vllm-omni-rocm` (AMD)
 - Auto-detects NVIDIA / AMD / CPU backend (CPU is impractical for generative models)
@@ -175,10 +112,6 @@ Deploys **vLLM-Omni** — the official vLLM sub-project for omni-modality servin
 
 #### `setup-omnigent.sh`
 Deploys Omnigent — an open-source meta-harness providing a common orchestration layer over multiple AI coding agents (Claude Code, Codex, Cursor, Pi, etc.) — via Docker Compose with Postgres + FastAPI. Also installs the runner CLI (`omnigent`) on the host for local agent execution.
-
-**Environment variables:** `OMNIGENT_HOME` (default `/srv/omnigent`), `OMNIGENT_IMAGE` (default `ghcr.io/omnigent-ai/omnigent-server`), `OMNIGENT_IMAGE_TAG` (default `latest`), `OMNIGENT_PORT` (default `8008`), `OMNIGENT_TRAEFIK` (default `false`), `OMNIGENT_DOMAIN` (required when Traefik enabled), `PROXY_NETWORK` (default `proxy`), `OMNIGENT_AUTH_ENABLED` (default `1`), `OMNIGENT_AUTH_PROVIDER` (`accounts`, `oidc`, or `header`), `OMNIGENT_ACCOUNTS_BASE_URL`, `OMNIGENT_ACCOUNTS_AUTO_OPEN` (default `0`), `OMNIGENT_ACCOUNTS_INIT_ADMIN_USERNAME` (default `admin`), `OMNIGENT_ACCOUNTS_INIT_ADMIN_PASSWORD`, `POSTGRES_USER` (default `omnigent`), `POSTGRES_DB` (default `omnigent`)
-
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
 
 **Features:**
 - Docker Compose deployment with Postgres backend
@@ -191,8 +124,6 @@ Deploys Omnigent — an open-source meta-harness providing a common orchestratio
 #### `setup-agent-docker-runner.sh`
 Installs the Agent Docker Runner (ADR) CLI, a tool that runs coding agents inside isolated Docker containers with a single command. Supports multiple agents: pi, opencode, claude, codex.
 
-**Environment variables:** `ADR_REPO_URL` (default official repo), `ADR_INSTALL_DIR` (default `$HOME/tools/agent-docker-runner`), `ADR_BUILD_AGENTS` (default `pi,opencode,claude,codex`)
-
 **Features:**
 - Runs any supported agent in isolated Docker containers
 - Single CLI command: `adr run <agent> -- <args>`
@@ -203,12 +134,8 @@ Installs the Agent Docker Runner (ADR) CLI, a tool that runs coding agents insid
 #### `setup-nanobot.sh`
 Clones the Nanobot agent repository, builds the Docker image, and runs the onboarding flow.
 
-**Environment variables:** `NANOBOT_TARGET_REPO_DIRECTORY` (default `/srv/nanobot`)
-
 #### `setup-hermes.sh`
 Sets up the Hermes Agent environment using the official prebuilt Docker image. Creates configuration files and provides convenience scripts for management.
-
-**Environment variables:** `HERMES_TARGET_REPO_DIRECTORY` (default `/srv/hermes`), `HERMES_IMAGE` (default `nousresearch/hermes-agent:v2026.8.27`), `BUILD_ONLY` flag via command line (`--build-only`)
 
 **Features:**
 - Official Hermes Agent MCP gateway
@@ -220,12 +147,8 @@ Sets up the Hermes Agent environment using the official prebuilt Docker image. C
 #### `setup-pi.sh`
 Installs the latest Node.js via nvm and the **Pi coding agent** npm package globally.
 
-**Environment variables:** None
-
 #### `setup-deepseek-harness.sh`
 Installs **DeepSeek Harness** (`dsh`) — an open-source agent harness from DeepSeek AI with a plugin-first architecture. Ensures NVM + Node.js 22.19+ are available, then installs `dsh` globally. Run `dsh web` afterwards for the Web UI at `http://127.0.0.1:3080`.
-
-**Environment variables:** `NVM_DIR` (default `$HOME/.nvm`), `DSH_NODE_VERSION` (default `22`)
 
 ---
 
@@ -234,8 +157,6 @@ Installs **DeepSeek Harness** (`dsh`) — an open-source agent harness from Deep
 #### `setup-whispering.sh`
 Downloads the Whispering speech-to-text AppImage, creates a start script (`~/whispering`) and a desktop shortcut. Backs up any existing binary before downloading.
 
-**Environment variables:** `WHISPERING_VERSION` (default `7.11.0`)
-
 ---
 
 ### Project Management & Collaboration
@@ -243,16 +164,8 @@ Downloads the Whispering speech-to-text AppImage, creates a start script (`~/whi
 #### `setup-forgejo.sh`
 Installs Forgejo (a Gitea fork) as a Docker container. Supports optional Traefik reverse-proxy integration via `FORGEJO_TRAEFIK_ENABLED`.
 
-**Environment variables:** `FORGEJO_TRAEFIK_ENABLED` (default `false`), `FORGEJO_DOMAIN`, `FORGEJO_HTTP_PORT` (default `3000`), `FORGEJO_SSH_PORT` (default `222`), `PROXY_NETWORK` (default `proxy`)
-
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
-
 #### `setup-planka.sh`
 Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL. Auto-generates a secret key and supports interactive or headless admin user creation.
-
-**Environment variables:** `PLANKA_HOME` (default `/srv/planka`), `PLANKA_IMAGE` (default `ghcr.io/plankanban/planka:latest`), `POSTGRES_IMAGE` (default `postgres:16-alpine`), `HTTP_PORT` (default `4444`), `BASE_URL` (default `http://localhost:4444`), `POSTGRES_PASSWORD`, `SECRET_KEY` (auto-generated), `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `ADMIN_NAME`, `ADMIN_USERNAME`
-
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting; without `ADMIN_EMAIL`/`ADMIN_PASSWORD` the admin-user creation command is printed instead of prompting)
 
 ---
 
@@ -261,34 +174,16 @@ Installs Planka, a self-hosted Kanban board, via Docker Compose with PostgreSQL.
 #### `setup-concourse.sh`
 Deploys **Concourse CI** (web, TSA, worker, PostgreSQL) with Docker Compose, generates TSA/session/worker keys, and configures a `fly` CLI target. Supports direct port exposure or Traefik reverse-proxy integration.
 
-**Environment variables:** `CONCOURSE_HOME` (default `/srv/concourse`), `CONCOURSE_IMAGE` (default `concourse/concourse:8.3.0`), `POSTGRES_IMAGE` (default `postgres:15`), `CONCOURSE_WEB_PORT` (default `8089`), `CONCOURSE_ADMIN_USER` (default `admin`), `CONCOURSE_ADMIN_PASSWORD` (auto-generated), `CONCOURSE_DB_PASSWORD` (auto-generated), `CONCOURSE_CLUSTER_NAME` (default `denkfabrik`), `CONCOURSE_DNS_SERVER` (default `8.8.8.8`), `CONCOURSE_EXTERNAL_URL` (auto-detected), `CONCOURSE_FLY_TARGET` (default `concourse`), `CONCOURSE_TRAEFIK` (default `false`), `CONCOURSE_DOMAIN` (required when `CONCOURSE_TRAEFIK=true`), `PROXY_NETWORK` (default `proxy`)
-
-**Flags:** `--interactive` — prompt for confirmation on risky conditions (default: non-interactive; errors out instead of prompting)
-
 #### `setup-dagu.sh`
 Deploys **Dagu** (self-hostable workflow orchestrator) via Docker Compose. The host Docker socket is mounted so workflows can run container steps. No Traefik integration — accessed via configurable bind address.
-
-**Environment variables:** `DAGU_DIR` (default `/srv/dagu`), `DAGU_BIND_IP` (default `127.0.0.1`), `DAGU_PORT` (default `8080`), `DAGU_IMAGE` (default `ghcr.io/dagucloud/dagu:2.16.2`), `DAGU_TZ` (default `UTC`), `DAGU_DAGS_DIR` (default `/var/lib/dagu/dags`), `DAGU_USERNAME` (default `dagu`), `DAGU_PASSWORD` (auto-generated on first run; stored in `.env` and reused on re-runs), `WAIT_TIMEOUT` (default `120`)
 
 **Features:**
 - DAG-based workflow orchestration (alternative to Airflow/Cron)
 - Web UI for managing and monitoring DAGs
 - Host Docker socket mounted for container steps
-- Shared volume at `./shared` for workflow definition files (`.dagu.yml`)
+- Shared volume at `./data` including `./data/dags` for workflow definition files (`.dagu.yml`)
 - Builtin RBAC authentication with auto-generated credentials
 - Data persisted in a named Docker volume
-
-**Usage examples:**
-```bash
-# Default: localhost:8080, auto-generated password
-./tasks/setup-dagu.sh
-
-# Custom credentials and port
-DAGU_USERNAME=admin DAGU_PASSWORD='s3cret' DAGU_PORT=9090 ./tasks/setup-dagu.sh
-
-# Expose on all interfaces
-DAGU_BIND_IP=0.0.0.0 ./tasks/setup-dagu.sh
-```
 
 > **Note:** The Docker socket grant means workflows can control the host Docker daemon. Use only for trusted workflows. The admin password is stored in `/srv/dagu/.env` (mode 600).
 
@@ -299,14 +194,8 @@ DAGU_BIND_IP=0.0.0.0 ./tasks/setup-dagu.sh
 #### `setup-nextcloud.sh`
 Deploys NextCloud cloud storage platform via Docker Compose with MariaDB backend. Provides file syncing, sharing, and collaboration features.
 
-**Environment variables:** `NEXTCLOUD_HOME` (default `/srv/nextcloud`), `HTTP_PORT` (default `4600`), `BASE_URL`, `ADMIN_USERNAME`, `ADMIN_PASSWORD`, `MYSQL_ROOT_PASSWORD`, `NEXTCLOUD_VERSION`
-
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting)
-
 #### `setup-n8n.sh`
 Deploys n8n, a workflow automation platform, via Docker Compose with PostgreSQL backend. Supports optional Traefik reverse-proxy integration for secure HTTPS access.
-
-**Environment variables:** `N8N_DIR` (default `/srv/n8n`), `N8N_IMAGE` (default `docker.n8n.io/n8nio/n8n:2.37.4`), `N8N_TRAEFIK_IMAGE` (default `traefik:v3.7.12`, the sidecar the Traefik variant runs next to the shared proxy), `POSTGRES_IMAGE` (default `postgres:15-alpine`), `TRAEFIK_ENABLED` (default `false`), `DOMAIN_NAME`, `SUBDOMAIN`, `N8N_PORT` (default 5678), `GENERIC_TIMEZONE`, `SSL_EMAIL`
 
 **Features:**
 - Visual workflow builder with 200+ integrations
@@ -318,18 +207,12 @@ Deploys n8n, a workflow automation platform, via Docker Compose with PostgreSQL 
 #### `setup-samba.sh`
 Installs and configures Samba file sharing.
 
-**Environment variables:** `BASE_SHARE_PATH`, `SAMBA_SHARE_NAME`, `SHARE_PATH`, `SAMBA_USER`, `DEVELOPER_GROUP_NAME`
-
 ---
 
 ### Graphics & Whiteboarding
 
 #### `setup-excalidraw.sh`
 Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `always` restart policy.
-
-**Environment variables:** `HOST_PORT` (default `5005`)
-
-**Flags:** `--interactive` — enable confirmation prompts (default: non-interactive; errors out instead of prompting; a stopped existing container is started automatically)
 
 ---
 
@@ -338,17 +221,11 @@ Pulls and runs the Excalidraw virtual whiteboard as a Docker container with an `
 #### `setup-anydesk.sh`
 Installs AnyDesk remote desktop from the official apt repository.
 
-**Environment variables:** None
-
 #### `setup-brave.sh`
 Installs the Brave browser from its official apt repository.
 
-**Environment variables:** None
-
 #### `setup-netbird.sh`
 Deploys self-hosted NetBird (a WireGuard-based mesh VPN) as Docker containers: the combined server (management + signal + relay + embedded STUN + embedded IdP) and the dashboard. Supports direct host ports or Traefik reverse-proxy integration, plus an optional routing-peer client for LAN exposure.
-
-**Environment variables:** `NETBIRD_HOME` (default `/srv/netbird`), `NETBIRD_SERVER_TAG` (default `0.77.1`), `NETBIRD_DASHBOARD_TAG` (default `v2.91.1`), `NETBIRD_TRAEFIK` (default `false`), `NETBIRD_DOMAIN` (required when Traefik enabled), `NETBIRD_PORT` (default `8081`), `NETBIRD_DASHBOARD_PORT` (default `8080`), `STUN_PORT` (default `3478`), `PROXY_NETWORK` (default `proxy`)
 
 ---
 
@@ -356,8 +233,6 @@ Deploys self-hosted NetBird (a WireGuard-based mesh VPN) as Docker containers: t
 
 #### `setup-neovim.sh`
 Installs Neovim directly on the host machine (Ubuntu/Debian) with lazy.nvim plugin manager, LSP support via nvim-lspconfig, and essential productivity plugins. Installed via official PPA for latest stable version.
-
-**Environment variables:** `NEOVIM_VERSION` (default `stable`)
 
 **Features:**
 - lazy.nvim fast plugin manager with on-demand loading
@@ -371,23 +246,12 @@ Installs Neovim directly on the host machine (Ubuntu/Debian) with lazy.nvim plug
 #### `setup-zed.sh`
 Installs the Zed editor on Linux using the official installation script. Supports both stable and preview channels.
 
-**Environment variables:** `ZED_CHANNEL` (default `stable`, also supports `preview`)
-
-**Usage:**
-```bash
-./setup-zed.sh              # Install stable version
-./setup-zed.sh --force      # Reinstall
-ZED_CHANNEL=preview ./setup-zed.sh  # Install preview version
-```
-
 ---
 
 ### Virtualization
 
 #### `setup-virtualization.sh`
 Installs or updates libvirt (virtualization API) and virt-manager (graphical VM manager) on Debian/Ubuntu-based systems. Configures the libvirt daemon, default networks, and adds the user to the libvirt group.
-
-**Environment variables:** `VIRT_USERNAME` (default: current user)
 
 **Features:**
 - Installs QEMU/KVM, libvirt-daemon, bridge-utils
@@ -403,8 +267,6 @@ Installs or updates libvirt (virtualization API) and virt-manager (graphical VM 
 #### `setup-ssh-tunnel-user.sh`
 Creates a locked-down SSH user with no shell access, configured exclusively for port-forwarding tunnels.
 
-**Environment variables:** `RESTRICTED_USER` (default `tunneluser`)
-
 > **Note:** See `utilities/ssh-port-forward.sh` for SSH tunneling utilities.
 
 ---
@@ -417,29 +279,6 @@ Deploys a containerized observability stack (Prometheus, Grafana, Node Exporter,
 **Exposure modes:**
 - **Direct** (default): Grafana at `http://<server-ip>:3100` (published on `0.0.0.0`, reachable from the local network) and the Prometheus UI at `http://127.0.0.1:9090` (loopback only, since the Prometheus UI has **no authentication**). Only the Grafana port gets an UFW allow rule; if you publish Prometheus beyond loopback (`PROMETHEUS_BIND_ADDRESS`), restrict it manually (e.g. `ufw allow from <subnet> to any port 9090 proto tcp`).
 - **Traefik** (`GRAFANA_TRAEFIK=true`): Grafana routed via the shared proxy network at `https://GRAFANA_DOMAIN`; Prometheus stays internal. Requires `GRAFANA_DOMAIN` and a running Traefik stack with the shared `proxy` network.
-
-**Environment variables:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `MONITORING_HOME` | `/srv` | Base data directory (compose + config live under `$MONITORING_HOME/monitoring`) |
-| `MONITORING_DOCKER_NETWORK` | `monitoring-net` | Internal monitoring Docker network |
-| `PROXY_NETWORK` | `proxy` | Traefik external network (Traefik mode) |
-| `GRAFANA_TRAEFIK` | `false` | Set to `true` to route Grafana via Traefik |
-| `GRAFANA_PORT` | `3100` | Host port for Grafana (direct mode) |
-| `PROMETHEUS_PORT` | `9090` | Host port for the Prometheus UI (direct mode) |
-| `GRAFANA_BIND_ADDRESS` | `0.0.0.0` | Interface to publish the Grafana port on (direct mode; `127.0.0.1` = loopback only) |
-| `PROMETHEUS_BIND_ADDRESS` | `127.0.0.1` | Interface to publish the Prometheus UI port on (direct mode; the UI is unauthenticated, so keep it loopback unless you restrict it with UFW) |
-| `GRAFANA_DOMAIN` | — | Grafana domain (required when `GRAFANA_TRAEFIK=true`) |
-| `GRAFANA_ADMIN_USER` | `admin` | Grafana admin username |
-| `GRAFANA_ADMIN_PASSWORD` | auto-generated | Grafana admin password (random if unset, stored in a mode-600 `.env`) |
-| `PROMETHEUS_IMAGE_VERSION` | `prom/prometheus:v3.13.2` | Prometheus image tag |
-| `GRAFANA_IMAGE_VERSION` | `grafana/grafana:13.1.1` | Grafana image tag |
-| `NODE_EXPORTER_IMAGE_VERSION` | `quay.io/prometheus/node-exporter:v1.12.1` | Node Exporter image tag |
-| `CADVISOR_IMAGE_VERSION` | `ghcr.io/google/cadvisor:v0.60.5` | cAdvisor image tag |
-| `MONITORING_FORCE` | `false` | Set to `true` to re-create an existing stack (data preserved) |
-
-**Flags:** `--interactive` — prompt before re-creating an existing stack (default: non-interactive; errors out instead of prompting; `MONITORING_FORCE=true` re-creates without prompting)
 
 **Usage examples:**
 ```bash
