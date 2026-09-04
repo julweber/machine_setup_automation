@@ -15,7 +15,6 @@
 #   DAGU_PORT          - Host port for the web UI (default: 8080)
 #   DAGU_IMAGE         - Dagu image (default: ghcr.io/dagucloud/dagu:2.16.2, pinned)
 #   DAGU_TZ            - Timezone for Dagu (default: UTC)
-#   DAGU_DAGS_DIR      - Container path for DAG files (default: /var/lib/dagu/dags)
 #   DAGU_USERNAME      - Admin username (default: dagu)
 #   DAGU_PASSWORD      - Admin password (default: auto-generated on first run)
 #   WAIT_TIMEOUT       - Max seconds to wait for stack health (default: 120)
@@ -61,7 +60,6 @@ ${BOLD}Environment variables${RESET} (all optional):
   DAGU_IMAGE         Dagu image (default: ghcr.io/dagucloud/dagu:2.16.2,
                      pinned — override with an explicit version tag)
   DAGU_TZ            Timezone for Dagu (default: UTC)
-  DAGU_DAGS_DIR      Container path for DAG files (default: /var/lib/dagu/dags)
   DAGU_USERNAME      Admin username (default: dagu)
   DAGU_PASSWORD      Admin password (default: auto-generated on first run;
                      on re-runs the existing password from ${DAGU_DIR:-/srv/dagu}/.env
@@ -100,12 +98,12 @@ done
 : "${DAGU_BIND_IP:=127.0.0.1}"
 : "${DAGU_PORT:=8080}"
 : "${DAGU_TZ:=UTC}"
-: "${DAGU_DAGS_DIR:=/var/lib/dagu/dags}"
 : "${DAGU_USERNAME:=dagu}"
 : "${DAGU_PASSWORD:=-}"
 : "${WAIT_TIMEOUT:=120}"
 COMPOSE_FILE="${DAGU_DIR}/docker-compose.yml"
 ENV_FILE="${DAGU_DIR}/.env"
+DAGU_DATA_DIR="${DAGU_DIR}/data"
 
 # Pinned image (update deliberately:
 #   docker buildx imagetools inspect ghcr.io/dagucloud/dagu)
@@ -130,7 +128,7 @@ fi
 
 # Create workspace
 step "Creating workspace at ${DAGU_DIR}"
-sudo mkdir -p "${DAGU_DIR}/shared"
+sudo mkdir -p "${DAGU_DATA_DIR}"
 success "Directories ready."
 
 # Handle .env (secrets) — read back existing values so re-runs never rotate
@@ -176,9 +174,9 @@ success ".env written (${ENV_FILE})"
 step "Creating docker-compose.yml"
 TEMPLATE_DIR="${SCRIPT_DIR}/../templates/dagu"
 tmp="$(mktempfile docker-compose.yml)"
-export DAGU_IMAGE DAGU_BIND_IP DAGU_PORT DAGU_TZ DAGU_DAGS_DIR
+export DAGU_IMAGE DAGU_BIND_IP DAGU_PORT DAGU_TZ DAGU_DATA_DIR
 # shellcheck disable=SC2016  # envsubst expects the literal variable list
-envsubst '${DAGU_IMAGE} ${DAGU_BIND_IP} ${DAGU_PORT} ${DAGU_TZ} ${DAGU_DAGS_DIR}' < "${TEMPLATE_DIR}/docker-compose.yml" > "${tmp}"
+envsubst '${DAGU_IMAGE} ${DAGU_BIND_IP} ${DAGU_PORT} ${DAGU_TZ} ${DAGU_DATA_DIR}' < "${TEMPLATE_DIR}/docker-compose.yml" > "${tmp}"
 sudo install -m 0644 "${tmp}" "${COMPOSE_FILE}"
 rm -f "${tmp}"
 success "docker-compose.yml written"
@@ -197,7 +195,7 @@ info "Access at http://${DAGU_BIND_IP}:${DAGU_PORT}"
 info "Login: ${DAGU_USERNAME} / (see ${ENV_FILE})"
 echo ""
 echo -e "${BOLD}Next steps:${RESET}"
-echo "- Add .dagu.yml workflow files to a host directory and mount them into the container"
+echo "- Add .dagu.yml workflow files to ${DAGU_DATA_DIR}/dags/"
 echo "- View logs: docker compose -f ${COMPOSE_FILE} logs -f"
 echo "- Run a DAG: docker exec dagu dagu start <dag-name>"
 echo ""

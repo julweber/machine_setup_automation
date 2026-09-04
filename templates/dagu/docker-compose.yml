@@ -9,7 +9,6 @@ services:
       - DAGU_HOST=0.0.0.0
       - DAGU_PORT=8080
       - DAGU_TZ=${DAGU_TZ}
-      - DAGU_DAGS_DIR=${DAGU_DAGS_DIR}
       - DAGU_AUTH_MODE=builtin
       - DAGU_AUTH_BUILTIN_INITIAL_ADMIN_USERNAME=${DAGU_AUTH_BUILTIN_INITIAL_ADMIN_USERNAME}
       - DAGU_AUTH_BUILTIN_INITIAL_ADMIN_PASSWORD=${DAGU_AUTH_BUILTIN_INITIAL_ADMIN_PASSWORD}
@@ -17,11 +16,7 @@ services:
     command: ["dagu", "start-all"]
     user: "0:0"
     volumes:
-      - dagu_data:/var/lib/dagu
-      - ./shared:${DAGU_DAGS_DIR}
+      - ${DAGU_DATA_DIR}:/var/lib/dagu
       - /var/run/docker.sock:/var/run/docker.sock
     env_file:
       - .env
-
-volumes:
-  dagu_data:

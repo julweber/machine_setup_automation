@@ -111,6 +111,7 @@ declare -a APT_PACKAGES=(
   btop
   htop
   tmux
+  openssl
   spirv-headers
 )
 
