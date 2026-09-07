@@ -69,6 +69,11 @@ services:
     command:
       - --path.rootfs=/host
       - --web.listen-address=:9100
+      # The cpufreq collector can hang the entire /metrics endpoint on hosts
+      # whose cppc_cpufreq (AMD CPPC) driver intermittently blocks sysfs
+      # reads (e.g. cpuinfo_cur_freq). One hung collector keeps every scrape
+      # stuck until all 40 in-flight slots are exhausted -> permanent 503.
+      - --no-collector.cpufreq
     volumes:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro

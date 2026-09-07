@@ -334,9 +334,14 @@ fi
 if [[ "$GRAFANA_TRAEFIK" != "true" ]]; then
   # Direct mode: verify the host ports to be published (loopback) are free —
   # now that any existing monitoring stack has been torn down (re-create path).
+  # Ports already published by the running monitoring stack are fine: a
+  # converge re-run must not fail on the stack's own listeners.
   local_listening_ports="$(ss -tln 2>/dev/null | awk 'NR > 1 {print $4}' | sed 's/.*[:.]//')"
   for port in "$GRAFANA_PORT" "$PROMETHEUS_PORT"; do
     if grep -qx "$port" <<< "$local_listening_ports"; then
+      if docker compose -f "$COMPOSE_FILE" ps --format '{{.Ports}}' 2>/dev/null | grep -Eq "[:.]${port}->"; then
+        continue
+      fi
       error "Port ${port} is already in use. Choose a different GRAFANA_PORT/PROMETHEUS_PORT."
     fi
   done
