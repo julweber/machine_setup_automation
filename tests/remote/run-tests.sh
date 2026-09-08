@@ -13,6 +13,12 @@
 #   and arguments configured for them. Failures do NOT stop the run —
 #   every configured script is tested.
 #
+#   Each test case runs under 'sudo -u <vm-user>': this runner is one
+#   long-lived SSH session, so group membership changes made by earlier
+#   test cases (setup-docker's 'usermod -aG docker') are invisible to it
+#   until the next login. 'sudo -u' re-initializes the supplementary groups
+#   from the group database — the same effect an operator's re-login has.
+#
 # OUTPUTS (under --out DIR):
 #   results.jsonl   one JSON object per test case
 #                   {script, phase, rc, duration_s, log}
@@ -69,6 +75,11 @@ command -v yq &>/dev/null || { echo "run-tests.sh: yq not found" >&2; exit 1; }
 command -v jq &>/dev/null || { echo "run-tests.sh: jq not found" >&2; exit 1; }
 [[ -f "$CONFIG" ]] || { echo "run-tests.sh: config not found: $CONFIG" >&2; exit 1; }
 [[ -d "$WORKDIR/tasks" ]] || { echo "run-tests.sh: no tasks/ in workdir: $WORKDIR" >&2; exit 1; }
+
+# The VM user this runner runs as (set by sshd; fall back to the uid name).
+# Each test case is wrapped in 'sudo -u' so it sees fresh group membership
+# (see the header note about the single long-lived SSH session).
+VM_USER="${USER:-$(id -un)}"
 
 mkdir -p "$OUT/logs"
 : > "$OUT/results.jsonl"
@@ -151,9 +162,15 @@ for phase in integration idempotency; do
       '.scripts[$n].args // [] | .[]' "$CONFIG" 2>/dev/null \
       | grep -vE '^$|^null$' || true)
 
+    # 'sudo' (below) resets the environment, which would drop the SSH
+    # session metadata; scripts that read the live session port
+    # (configure-firewall, setup-sshd) must still see it.
+    [[ -n "${SSH_CONNECTION:-}" ]] && envp+=("SSH_CONNECTION=${SSH_CONNECTION}")
+    [[ -n "${SSH_CLIENT:-}" ]] && envp+=("SSH_CLIENT=${SSH_CLIENT}")
+
     start=$(date +%s)
     timeout --kill-after=60 "${TIMEOUT_MIN}m" \
-      env "${envp[@]}" "$script_path" "${args[@]}" > "$log" 2>&1
+      sudo -u "${VM_USER}" env "${envp[@]}" "$script_path" "${args[@]}" > "$log" 2>&1
     rc=$?
     dur=$(( $(date +%s) - start ))
 

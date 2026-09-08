@@ -217,12 +217,18 @@ if ! command -v docker &>/dev/null; then
 fi
 success "Docker $(docker --version | awk '{print $3}' | tr -d ',') detected."
 
-if ! docker info &>/dev/null; then
+# Daemon check via sudo: an unprivileged 'docker info' also fails when this
+# shell lacks docker-group membership (stale session right after
+# setup-docker), which would masquerade a group problem as a dead daemon.
+if ! sudo docker info &>/dev/null; then
   error "Docker daemon is not running. Start it with: sudo systemctl start docker"
 fi
 success "Docker daemon is running."
 
 if ! groups | grep -qw docker; then
+  if getent group docker | cut -d: -f4 | tr ',' '\n' | grep -qxF "$(id -un)"; then
+    error "User is in the docker group, but this shell predates the change (stale session). Log out and back in, then re-run."
+  fi
   error "Current user is not in the docker group. Fix with: sudo usermod -aG docker \$USER (then log out and back in)"
 fi
 success "User is in the docker group."

@@ -111,6 +111,21 @@ if [[ -n "${SSHD_LEGACY_PORT:-}" ]] && { ! [[ "${SSHD_LEGACY_PORT}" =~ ^[0-9]+$ 
   error "SSHD_LEGACY_PORT='${SSHD_LEGACY_PORT}' is not a valid port (must be 1-65535)"
 fi
 
+# ---------------------------------------------------------------------------
+# 'sshd -t' / 'sshd -T' require the privilege-separation runtime directory,
+# which systemd creates only while ssh.service is active (RuntimeDirectory=sshd)
+# and removes on stop. A standalone validation right after a clean stop
+# (e.g. an openssh package upgrade that leaves the service stopped on
+# socket-activated systems) would fail with "Missing privilege separation
+# directory: /run/sshd" — a false config error. Create it when absent, with
+# the same ownership/mode the unit would use.
+# ---------------------------------------------------------------------------
+ensure_sshd_runtime_dir() {
+  if [[ ! -d /run/sshd ]]; then
+    sudo mkdir -p -m 0755 /run/sshd
+  fi
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -200,6 +215,7 @@ fi
 if [[ "${_dropin_changed}" == "true" ]]; then
   warn "Keeping this session open: test a NEW connection (ssh -p ${SSHD_PORT}) from a second terminal BEFORE closing it."
 
+  ensure_sshd_runtime_dir
   if ! sudo sshd -t; then
     sudo rm -f "${SSHD_DROPIN}"
     sudo sshd -t || error "sshd config is invalid even after reverting ${SSHD_DROPIN} — inspect /etc/ssh/sshd_config and /etc/ssh/sshd_config.d/ before restarting sshd."
@@ -237,6 +253,7 @@ fi
 # trustworthy check)
 # ---------------------------------------------------------------------------
 step "Verifying effective sshd configuration"
+ensure_sshd_runtime_dir
 _effective=""
 if ! _effective="$(sudo sshd -T 2>/dev/null | grep -Ei '^(port|passwordauthentication|pubkeyauthentication) ' | sort -u)"; then
   # Without this guard a failing 'sshd -T' would kill the script silently

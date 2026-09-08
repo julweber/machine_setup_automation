@@ -212,8 +212,15 @@ Step by step:
    3. **phase `idempotency`** — every enabled script a second time.
 
    Each script runs as the VM user (which has passwordless sudo; the task
-   scripts use `sudo` internally) under `timeout --kill-after=60 <N>m` with
-   exactly the env vars and args the test config defines for it. Each test
+   scripts use `sudo` internally) under `sudo -u <vm-user> timeout
+   --kill-after=60 <N>m` with exactly the env vars and args the test config
+   defines for it. The `sudo -u` wrapper re-initializes the user's
+   supplementary groups from the group database for every test case: the
+   runner is a single long-lived SSH session, so group changes made by
+   earlier cases (setup-docker's `usermod -aG docker`) would otherwise stay
+   invisible until the next login and break every later unprivileged docker
+   call. The runner's `SSH_CONNECTION`/`SSH_CLIENT` are passed through so
+   the session-port guards (configure-firewall, setup-sshd) keep working. Each test
    case produces:
    - a log file: `/tmp/vmtest/logs/<phase>-<script>.log`
      (plus `precheck-run-setup-status.log`),
