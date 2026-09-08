@@ -8,6 +8,13 @@
 > listed as Design Decisions 26–30 (llama-swap entry env scope, download subprocess env,
 > execution context/permissions, opencode.jsonc handling, log routing).
 >
+> **Updated (2026-09-04), post-review:** Design Decisions 31–32 (default catalog is
+> local-only with no real API keys; post-restart health poll), pinned default catalog
+> contents (new *Default Catalog* section), schema example fix (remote models moved to
+> their own upstream provider), disk-space warning in Behavior 2, sole-writer ownership
+> rule. Download syntax (`hf://` URI form, `[dry-run]` output lines incl. the `N == 0`
+> case) re-verified against `hf` 1.22.0 on the target host.
+>
 > Grounded in the actual on-disk state of `tasks/setup-llama-swap.sh`,
 > `tasks/setup-pi.sh`, `tasks/setup-opencode-server.sh`,
 > `/srv/llama-swap/config/config.yaml`, `~/.pi/agent/models.json`,
@@ -36,6 +43,11 @@ assumed to be set up by `tasks/setup-llama-swap.sh`, `tasks/setup-pi.sh`, and
 `tasks/setup-basics.sh`) and does not install Python 3 or PyYAML (assumed present;
 checked in pre-flight with an actionable error).
 
+**Ownership rule:** this tool is the **sole writer** of provider and model entries in the
+agent config files. `setup-pi.sh` / `setup-opencode-server.sh` only install the agents
+and must not write provider/model content themselves; "the agents are connected to
+llama-swap" is achieved by running this tool (see Decision 31).
+
 ### Files Delivered
 
 | File | Purpose |
@@ -53,11 +65,14 @@ checked in pre-flight with an actionable error).
 | `sync_models/agents/pi.py` | Pi agent adapter: config path + `models.json` merge logic (new) |
 | `sync_models/agents/opencode.py` | Opencode agent adapter: config path + `opencode.json` merge logic (new) |
 | `sync_models/verify.py` | Post-run verification + per-component summary table (new) |
-| `models.yml.default` | Committed default model catalog in repo root (placeholders only, no secrets) (new). Also the **fallback catalog** when `models.yml` is absent (Catalog Resolution), so it is intentionally a real, runnable model set — a first run on a fresh machine downloads its local model(s) |
+| `models.yml.default` | Committed default model catalog in repo root — **local models only, no real API keys** (Decision 31); contents pinned in *Default Catalog* (new). Also the **fallback catalog** when `models.yml` is absent (Catalog Resolution), so it is intentionally a real, runnable model set — a first run on a fresh machine downloads its local model(s) |
 | `.gitignore` | Add `models.yml` (contains API keys) (edit) |
-| `README.md` | Document catalog workflow (copy `.default` → `models.yml`, edit, run; note that the committed default catalog is a real, downloadable model set) (edit) |
+| `README.md` | Document catalog workflow (copy `.default` → `models.yml`, edit, run; the committed default catalog is a real, downloadable local model set) plus the two-stage story (fresh box: the local model works out of the box; remote providers with real keys are added to `models.yml` and the tool re-run) and the deprovisioning note (removing a model from the catalog does **not** remove its entries from agent/llama-swap configs — edit those manually) (edit) |
 | `CONTEXT.md` | Add "model catalog" domain term (edit) |
 | `skills/machine-setup-automation-assistant/SKILL.md` | Mention `sync-models` in the task list (edit) |
+| `AUTOMATIONS.md` | Add a `sync-models.py` entry under "AI & LLM Services" (edit) |
+| `AGENTS.md` | Add the Python lint gate (`ruff`, fallback `python3 -m py_compile`) to the Linting section (edit) |
+| `machine-config.yml.example` | Add `sync-models` with `enabled: false` and a comment that orchestrator dispatch of the `.py` entrypoint is a separate follow-up (edit) |
 
 Generated/modified at runtime on the target host (not committed): `models.yml` (repo
 root), `/srv/llama-swap/config/config.yaml` (additive), `~/.pi/agent/models.json`
@@ -73,7 +88,7 @@ side effects so the pure logic (validation, expansion, merging) is unit-testable
 ### Design Decisions
 
 Numbered to match the shell spec where the decision is unchanged; new Python-specific
-decisions are 21–30.
+decisions are 21–32.
 
 | # | Decision | Choice |
 |---|----------|--------|
@@ -107,6 +122,8 @@ decisions are 21–30.
 | 28 | Execution context & permissions | The tool runs as the user whose agent configs should be updated (its `$HOME`), and that user must have **write access** to `LLAMA_SWAP_CONFIG` (checked in pre-flight; exit 1 with an actionable message otherwise — e.g. fix ownership/permissions or run as a user with write access). The tool's only privileged operation is the `sudo systemctl restart llama-swap` in Behavior 3 step 5; the config write itself is a plain user-space `os.replace` |
 | 29 | Opencode config file handling | The opencode adapter manages `~/.config/opencode/opencode.json` only (or the path in `OPENCODE_CONFIG`, which is **opencode's own** env var for a custom config path — honored with the same semantics). If `opencode.json` is missing but a sibling `opencode.jsonc` exists, the agent is **skipped with a warning** (JSONC is not managed; creating a parallel `opencode.json` next to the user's `opencode.jsonc` would produce an ambiguous merged config) |
 | 30 | Log routing & format | Informational logs, the summary, and `WARNING:`/`ERROR:`-prefixed lines all go to **stdout**; error messages that accompany exit 1/2 additionally go to **stderr** (project convention: `error()` in `lib/helpers.sh` writes to stderr). **No ANSI colors** — deliberate deviation from the project's colourful-output convention: the tool's output is meant to be machine-readable and pipe-safe |
+| 31 | Default catalog content | `models.yml.default` contains **local models only** (served by llama-swap) — no remote providers, no real API keys. The local provider uses the literal `apiKey: not-required` (llama-swap has no auth by default; the value is written into agent provider blocks so agents that require the field work out of the box). Remote providers (with real keys) are opt-in via the gitignored `models.yml`; when the user adds an `apiKey` there, Behavior 4 updates the agent provider blocks on the next run (convergence) |
+| 32 | Post-restart health poll | After a successful llama-swap restart (Behavior 3 step 5), the tool polls `http://localhost:<port>/health` (stdlib `urllib`, 2 s interval, 5 s per-request timeout) until HTTP 200, bounded by `LLAMA_SWAP_HEALTH_TIMEOUT` seconds (default **500** — same name and default as `setup-llama-swap.sh`). `<port>` = the top-level `port` key of `LLAMA_SWAP_CONFIG` if present, else `9292`. On timeout: `ERROR:` with a hint to run `sudo systemctl status llama-swap`; the run ends with exit 2 (the config was written). No poll when the config was unchanged, `--no-restart` was used, or the catalog has no local models |
 
 ### CLI & Environment
 
@@ -128,6 +145,7 @@ Parsed with `argparse`.
 | `LLAMA_SWAP_CONFIG` | `/srv/llama-swap/config/config.yaml` | llama-swap config path (matches `setup-llama-swap.sh` default `LLAMA_SWAP_DIR`) |
 | `PI_MODELS_JSON` | `$HOME/.pi/agent/models.json` | Pi model config path |
 | `OPENCODE_CONFIG` | `$HOME/.config/opencode/opencode.json` | Opencode config path. Same name and semantics as opencode's own `OPENCODE_CONFIG` env var (custom config path): if set, the tool targets that file; if set but the file is missing → agent skipped with a note (Decision 29) |
+| `LLAMA_SWAP_HEALTH_TIMEOUT` | `500` | Post-restart health poll timeout in seconds (Decision 32); same name and default as `setup-llama-swap.sh` |
 
 All are read via `os.environ.get` at startup.
 
@@ -144,8 +162,9 @@ If none of the three resolves (no `MODELS_YML`, no `models.yml`, no
 entrypoint's own path (`Path(__file__).resolve()` of `tasks/sync-models.py`).
 The chosen file is logged on start.
 
-`models.yml.default` is committed and must contain **no real secrets** (placeholder API
-keys). `models.yml` is added to `.gitignore`.
+`models.yml.default` is committed and must contain **no real secrets** — local models
+only, no remote providers, and no `apiKey` values beyond the literal `not-required`
+(Decision 31). `models.yml` is added to `.gitignore`.
 
 ---
 
@@ -162,30 +181,32 @@ env:
     value: ${HOME}/.cache/huggingface/hub
 
 providers:
+  # ── Local provider: the llama-swap proxy. The committed models.yml.default
+  #    contains only this provider (Decision 31) ──
   - name: evo                       # provider name; used for matching in agent configs
     baseUrl: http://localhost:9292/v1
-    apiKey: sk-PLACEHOLDER
+    apiKey: not-required            # optional; literal for auth-less llama-swap
     models:
       # ── Local model: weights downloaded, served by llama-swap ──
-      - name: ornith-1.5-35b        # canonical id: llama-swap key + agent model id
+      - name: qwen3.8-27b           # canonical id: llama-swap key + agent model id
         type: local
         env:                        # optional; adds/overrides top-level env for this model
           - name: CUDA_VISIBLE_DEVICES
             value: "0"
         download:                   # required for local; list of shell commands
-          - "hf download hf://bartowski/Ornith-1.5-35B-A3B-GGUF/Ornith-1.5-35B-A3B-Q4_K_S.gguf --local-dir ${MODEL_DIR}/bartowski/Ornith-1.5-35B-A3B-GGUF"
+          - "hf download hf://unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf --local-dir ${MODEL_DIR}/unsloth/Qwen3.8-27B-GGUF"
         serve:
           cmd: |                    # required for local; raw llama-swap cmd, user-owned
             ${llama-server-bin}
             --port ${PORT}
-            -m ${MODEL_DIR}/bartowski/Ornith-1.5-35B-A3B-GGUF/Ornith-1.5-35B-A3B-Q4_K_S.gguf
+            -m ${MODEL_DIR}/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf
             --ctx-size 128000
             --jinja
         agent:                      # optional; all fields optional (defaults apply)
-          contextWindow: 200000     # default: 200000
-          maxTokens: 16000          # default: 16000
+          contextWindow: 262144     # default: 200000
+          maxTokens: 32000          # default: 16000
           reasoning: true           # default: true
-          input: [text]             # default: [text]
+          input: [text, image]      # default: [text]
           thinkingLevelMap:         # optional
             minimal: null
             low: low
@@ -194,12 +215,24 @@ providers:
             xhigh: xhigh
             max: null
 
+  # ── Remote provider: external OpenAI-compatible upstream. Opt-in via
+  #    models.yml with a real apiKey (Decision 31). A remote model must live
+  #    under a provider whose baseUrl points at that upstream (never under
+  #    the llama-swap provider) ──
+  - name: openrouter
+    baseUrl: https://openrouter.ai/api/v1
+    apiKey: sk-PLACEHOLDER          # illustrative; triggers the placeholder warning
+    models:
       # ── Remote model: no download, no serve; name = upstream model id ──
       - name: meta-llama/llama-3.1-8b-instruct
         type: remote
         agent:
           contextWindow: 131072
 ```
+
+> The example is illustrative of the full schema. The committed
+> `models.yml.default` contains only the `evo` provider and its local model
+> (see *Default Catalog* below, Decision 31).
 
 ### Schema Rules
 
@@ -252,6 +285,70 @@ Applied to `download` commands and `serve.cmd`, implemented in `sync_models/expa
 
 Matching is on the shell syntax `${NAME}` where `NAME` is `[A-Za-z_][A-Za-z0-9_]*`; any other
 `${...}` form (e.g. llama-swap macros with non-identifier names) is never matched.
+
+### Default Catalog (`models.yml.default`)
+
+Contents pinned (verified 2026-09-04 against `hf` 1.22.0: repository and file exist;
+`hf://` URI form, `--local-dir` mode, and the `[dry-run]` output lines — including the
+`N == 0` already-present case — verified on the target host):
+
+```yaml
+---
+# Committed default model catalog (local models only — Decision 31).
+# Customize by copying to models.yml (gitignored) and editing:
+#   cp models.yml.default models.yml
+# Then (re-)run:  ./tasks/sync-models.py
+
+env:
+  - name: MODEL_DIR
+    value: ${HOME}/.cache/huggingface/hub
+
+providers:
+  - name: evo
+    baseUrl: http://localhost:9292/v1
+    apiKey: not-required
+    models:
+      - name: qwen3.8-27b
+        type: local
+        # Folded scalar: the command value is the single line
+        #   hf download hf://unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf
+        #   --local-dir ${MODEL_DIR}/unsloth/Qwen3.8-27B-GGUF
+        # (wrapped here only to keep lines <= 80 chars for yamllint)
+        download:
+          - >-
+            hf download hf://unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf
+            --local-dir ${MODEL_DIR}/unsloth/Qwen3.8-27B-GGUF
+        serve:
+          # ${llama-server-bin} is a llama-swap macro defined in the config
+          # generated by setup-llama-swap.sh (/usr/local/bin/llama-server).
+          cmd: |
+            ${llama-server-bin}
+            --port ${PORT}
+            -m ${MODEL_DIR}/unsloth/Qwen3.8-27B-GGUF/Qwen3.8-27B-UD-Q4_K_M.gguf
+            --ctx-size 128000
+            --jinja
+        agent:
+          contextWindow: 262144
+          maxTokens: 32000
+          reasoning: true
+          input: [text, image]
+          thinkingLevelMap:
+            minimal: null
+            low: low
+            medium: medium
+            high: null
+            xhigh: xhigh
+            max: null
+```
+
+Notes:
+
+- Single-file model (16.5 GB, `Q4_K_M`) — the default exercises no multi-file handling.
+- `input: [text, image]` — the repository ships an `mmproj` vision projector.
+- No per-model `env` on the model → nothing extra is written into the llama-swap entry
+  (Decision 26).
+- Remote providers and real API keys are added by the user in `models.yml` (two-stage
+  flow, README; Decision 31).
 
 ---
 
@@ -320,6 +417,12 @@ Guarantees:
 - The canonical download form (documented in `models.yml.default`) is
   `hf download <hf-uri> [files...] --local-dir ${MODEL_DIR}/<repo>`; per-repo subdirectories
   are recommended to avoid filename collisions across repos in a shared `MODEL_DIR`.
+- **Disk-space warning:** when the dry-run line yields a total size, the tool compares it
+  against the free space of the file system that will receive the download
+  (`shutil.disk_usage` at the deepest existing ancestor of the command's `--local-dir`
+  path; check silently skipped when the command has no `--local-dir`). If free space is
+  below the total size: log `WARNING: not enough free space for <model> (need ~<SIZE>,
+  have <FREE>)` and continue anyway — informational only, never a failure.
 
 ### Behavior 3: llama-swap Configuration Sync
 
@@ -355,6 +458,11 @@ Guarantees:
    the manual command `sudo systemctl restart llama-swap`). If the restart command fails
    (nonzero exit, e.g. no sudo rights): log an `ERROR:` with the manual command and the
    run ends with exit 2 (the config was written; the service state is unknown).
+
+   After a successful restart the tool performs the post-restart health poll
+   (Decision 32) and logs the outcome (`llama-swap healthy` / timeout `ERROR:` with the
+   `sudo systemctl status llama-swap` hint); on timeout the run ends with exit 2 as for
+   a restart failure.
 
 A run that adds nothing does not rewrite `config.yaml` at all (byte-identical guarantee).
 
@@ -486,8 +594,10 @@ pipe-safe), no prompts, no `stdin` reads.
   write failure, an agent write failure) is marked `failed` in the summary; the other
   components still run to completion (their files are independent); the run ends with
   exit 2.
-- A llama-swap restart failure (config was written) is not fatal to the other components:
-  manual command printed, run ends with exit 2 (Behavior 3 step 5).
+- A llama-swap restart failure **or a post-restart health-poll timeout** (Decision 32;
+  config was written) is not fatal to the other components: manual
+  `sudo systemctl restart llama-swap` and `sudo systemctl status llama-swap` hints
+  printed, run ends with exit 2 (Behavior 3 step 5).
 - Pre-existing unparseable / non-object / non-writable configs: llama-swap `config.yaml`
   → pre-flight exit 1 (Behavior 1); an agent config → that agent skipped with an error,
   exit 2 (Behavior 4 step 0).
@@ -501,7 +611,7 @@ Running `sync-models.py` twice in a row with an unchanged catalog:
 
 - Downloads: every `--dry-run` reports 0 files → nothing downloaded.
 - llama-swap: no new keys → merged data equals on-disk data → file **not rewritten** →
-  **no service restart**.
+  **no service restart** → no health poll.
 - Agents: all providers/models present with matching managed fields → files not rewritten.
 - Exit 0, summary shows all "already present".
 

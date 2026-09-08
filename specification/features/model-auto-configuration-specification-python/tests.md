@@ -3,6 +3,10 @@
 > Python rewrite of `specification/features/model-auto-configuration-specification/tests.md`.
 > Scenarios and expected results are unchanged unless noted; only the implementation-facing
 > details (entrypoint name, linter, validation commands) differ.
+>
+> **Updated (2026-09-04), post-review:** T2.15 (disk-space warning), T3.13/T3.14
+> (post-restart health poll, Decision 32) added; T3.1 extended; T4.14 retargeted and
+> T6.2 adjusted for the local-only default catalog (Decision 31).
 
 ## Test Strategy Note (v1)
 Automated test coverage for this feature is **deferred to a future release** (project test
@@ -67,12 +71,13 @@ The entrypoint is invoked throughout as `./tasks/sync-models.py` (executable, sh
 | T2.12 | `download:` command using shell features (e.g. `hf download ... && echo done`) and an env var from the process environment | Executed via `bash -c`; shell features and inherited process env (e.g. `HF_TOKEN`) work without catalog declaration |
 | T2.13 | `HF_TOKEN` declared in top-level catalog `env` (absent from the process env); gated `hf download` | Token visible to the `hf` subprocess via the exported effective env (Decision 27); gated download succeeds; token not spelled inline in the command |
 | T2.14 | Compound `download:` entry (`hf download ... && echo done`) with the file already present | Real command runs (no `already present, skipping` — the probe cannot target the `hf` part of a compound entry); `hf` itself performs no network transfer (ledger); exit 0 |
+| T2.15 | Free space on the `--local-dir` file system is below the dry-run total size (e.g. point a catalog's `MODEL_DIR` at a 1 MiB tmpfs) | `WARNING: not enough free space for <model> (need ~<SIZE>, have <FREE>)` logged before the download attempt; run continues (the download may legitimately fail afterwards → exit 2 with the failure in the summary) |
 
 ## Behavior 3: llama-swap Sync
 
 | Test ID | Description | Expected Result |
 |---------|-------------|-----------------|
-| T3.1 | Add 1 new local model | `models:` gains the key with the expanded `cmd` and `env:` containing **only** the model's per-model env (e.g. `CUDA_VISIBLE_DEVICES=0`) — top-level env (`MODEL_DIR`) is not written (Decision 26); service restarted once; llama-swap `/v1/models` lists it after load |
+| T3.1 | Add 1 new local model | `models:` gains the key with the expanded `cmd` and `env:` containing **only** the model's per-model env (e.g. `CUDA_VISIBLE_DEVICES=0`) — top-level env (`MODEL_DIR`) is not written (Decision 26); service restarted once **and passes the post-restart `/health` poll** (Decision 32); llama-swap `/v1/models` lists it after load |
 | T3.2 | Re-run immediately | Config file **byte-identical** (no reformatting); service **not** restarted |
 | T3.3 | Pre-existing hand-tuned model entry (different `cmd` than catalog) with the same key | Entry untouched; `already present, unchanged` logged |
 | T3.4 | `macros`, `matrix`, `hooks`, `apiKeys` sections | Present and **parse-equal** (structurally preserved) after adding models; comments/reformatting may differ (PyYAML round-trips the whole document) |
@@ -84,6 +89,8 @@ The entrypoint is invoked throughout as `./tasks/sync-models.py` (executable, sh
 | T3.10 | After adding a model, validate YAML + non-model sections preserved | `config.yaml` parses as valid YAML; `macros`, `matrix`, `hooks`, `apiKeys` present and parse-equal; only the new model entry was added; first-modification comment-loss warning logged |
 | T3.11 | Restart failure after a successful config write (e.g. `sudo` denied) | `ERROR:` with manual `sudo systemctl restart llama-swap` printed; config written; exit 2 |
 | T3.12 | One local model's download fails, another succeeds | **Both** models get config entries (declarative); exit 2; summary marks the failed download; llama-swap serves the successful one |
+| T3.13 | Config change triggers a restart; `/health` returns 200 within `LLAMA_SWAP_HEALTH_TIMEOUT` | Health poll logged as healthy (`llama-swap healthy`); exit 0 |
+| T3.14 | Config change triggers a restart but `/health` never answers (e.g. `LLAMA_SWAP_HEALTH_TIMEOUT=5` with the config's `port` key pointed at a closed port) | `ERROR:` with `sudo systemctl status llama-swap` hint; config was written; exit 2; no hang beyond the timeout |
 
 ## Behavior 4: Agent Sync (pi)
 
@@ -109,7 +116,7 @@ The entrypoint is invoked throughout as `./tasks/sync-models.py` (executable, sh
 | T4.11 | Re-run | Config stable (parse-equal), exit 0; file byte-identical on the no-op run |
 | T4.12 | Fresh/empty opencode config, catalog with providers | Provider block has `name`, `npm: "@ai-sdk/openai-compatible"`, `options.baseURL`, `options.apiKey`; model entry has `limit.context`, `limit.output`, `reasoning`, `modalities.input`, derived `attachment` (true when `input` contains `image`), creation-time `tool_call: true`, `modalities.output: ["text"]`; output parses as valid JSON |
 | T4.13 | Manually set `tool_call: false` on an opencode model entry, re-run | `tool_call` stays `false` (unmanaged); managed fields still synced to catalog values |
-| T4.14 | Run with unmodified `models.yml.default` (placeholder keys) | Warning logged for each placeholder `apiKey`; agent configs still contain the placeholder (user responsibility to replace in `models.yml`) |
+| T4.14 | Run with `MODELS_YML` pointing at a catalog containing a provider with `apiKey: sk-PLACEHOLDER` | `WARNING:` logged for the placeholder before writing; agent configs still contain the placeholder (user responsibility to replace in `models.yml`); exit 0 (the committed `models.yml.default` itself contains no placeholder keys — Decision 31) |
 
 ## Behavior 5: Verification & Summary
 
@@ -127,7 +134,7 @@ The entrypoint is invoked throughout as `./tasks/sync-models.py` (executable, sh
 | Test ID | Description | Expected Result |
 |---------|-------------|-----------------|
 | T6.1 | `git status` after creating a local `models.yml` with a real API key | `models.yml` untracked/ignored; not commit-able; `models.yml.default` tracked |
-| T6.2 | `models.yml.default` scanned for real secrets | Only placeholders present |
+| T6.2 | `models.yml.default` scanned for real secrets | No real secrets: local models only, no remote providers, the only `apiKey` is the literal `not-required` (Decision 31) |
 | T6.3 | `machine-config.yml.example` contains `sync-models` with `enabled: false` **and a comment** that orchestrator dispatch of the `.py` entrypoint is a separate follow-up | Orchestrator can list the task; enabling it before the follow-up lands would break `run-setup.sh apply` (it maps task names to `tasks/<name>.sh`) — the comment keeps that visible |
 | T6.4 | Fresh clone on a new machine: `./tasks/setup-basics.sh`, `./tasks/setup-llama-swap.sh`, `./tasks/setup-pi.sh`, `./tasks/setup-opencode-server.sh`, then `./tasks/sync-models.py` | End-to-end: weights downloaded, llama-swap serves a new model, pi + opencode list the models |
 | T6.5 | Static gates on the committed code | `ruff check tasks/sync-models.py sync_models/` clean; `yamllint models.yml.default` clean; `python3 -m py_compile` passes on all new/changed files |
