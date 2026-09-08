@@ -144,6 +144,47 @@ Sets up the Hermes Agent environment using the official prebuilt Docker image. C
 - Hermes Gateway and Chat services
 - Data persistence in `.hermes` directory
 
+#### `setup-unsloth.sh`
+Installs **Unsloth Studio** (the browser-based web UI for running and training AI models) and optionally the **Unsloth Desktop** native app. Studio is installed by default; Desktop requires `UNSLOTH_INSTALL_DESKTOP=true`. Optionally runs Studio as a systemd service (`UNSLOTH_INSTALL_SERVICE=true`).
+
+**Features:**
+- Browser-based web UI accessible at `http://localhost:8888` by default
+- Runs and trains LLMs, diffusion image/video, GGUF, and audio models
+- Native Desktop app (optional) for macOS, Windows, and Linux
+- Optional systemd service (`UNSLOTH_INSTALL_SERVICE=true`) for persistent background operation
+- Supports Python version pinning (`UNSLOTH_PYTHON`), GGUF-only mode (`UNSLOTH_NO_TORCH`), and custom install directory (`UNSLOTH_STUDIO_HOME`)
+- Downloads installer script to a temp file before execution (never pipes curl to bash directly)
+
+**Environment variables (all optional):**
+- `UNSLOTH_INSTALL_DESKTOP` — Install Unsloth Desktop app (`false` by default, set to `true` or `1`)
+- `UNSLOTH_INSTALL_SERVICE` — Install Unsloth Studio as systemd service (`false` by default, set to `true`)
+- `UNSLOTH_STUDIO_USER` — Runtime user for systemd service (defaults to `$USER`)
+- `UNSLOTH_STUDIO_PORT` — Port for Unsloth Studio (`8888` by default)
+- `UNSLOTH_STUDIO_BIND` — Bind address (`127.0.0.1` by default)
+- `UNSLOTH_STUDIO_HOME` — Custom install directory (`/srv/unsloth` by default)
+- `UNSLOTH_PYTHON` — Pin Python version for Unsloth (auto by default)
+- `UNSLOTH_NO_TORCH` — Skip PyTorch for GGUF-only mode (`false` by default)
+
+**Usage examples:**
+```bash
+# Studio only (default)
+./tasks/setup-unsloth.sh
+
+# Studio + Desktop
+UNSLOTH_INSTALL_DESKTOP=true ./tasks/setup-unsloth.sh
+
+# Studio + systemd service
+UNSLOTH_INSTALL_SERVICE=true ./tasks/setup-unsloth.sh
+
+# Studio + Desktop + systemd service
+UNSLOTH_INSTALL_DESKTOP=true UNSLOTH_INSTALL_SERVICE=true ./tasks/setup-unsloth.sh
+
+# Custom port, bind to all interfaces
+UNSLOTH_STUDIO_PORT=9000 UNSLOTH_STUDIO_BIND=0.0.0.0 ./tasks/setup-unsloth.sh
+```
+
+---
+
 #### `setup-pi.sh`
 Installs the latest Node.js via nvm and the **Pi coding agent** npm package globally.
 

@@ -1,0 +1,25 @@
+[Unit]
+Description=Unsloth Studio: Browser-based AI model training and inference UI
+Documentation=https://unsloth.ai/docs
+After=network.target
+
+[Service]
+Type=simple
+User=${UNSLOTH_STUDIO_USER}
+WorkingDirectory=${UNSLOTH_STUDIO_HOME}
+ExecStart=${UNSLOTH_STUDIO_HOME}/.venv/bin/python -m unsloth.studio -H ${UNSLOTH_STUDIO_BIND} -p ${UNSLOTH_STUDIO_PORT}
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=unsloth-studio
+# Allow graceful shutdown
+TimeoutStopSec=30
+# Security hardening
+ProtectSystem=full
+ProtectHome=read-only
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

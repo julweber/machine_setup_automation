@@ -134,6 +134,17 @@ scripts:
     description: Install OpenWebUI (web interface for LLMs)
     env: {}
     args: []
+  # setup-unsloth:
+  #   enabled: false
+  #   description: Install Unsloth Studio (browser-based LLM UI) + optional Desktop app
+  #   env:
+  #     UNSLOTH_INSTALL_DESKTOP: 'false'
+  #     UNSLOTH_INSTALL_SERVICE: 'false'
+  #     UNSLOTH_STUDIO_USER: ""
+  #     UNSLOTH_STUDIO_PORT: '8888'
+  #     UNSLOTH_STUDIO_BIND: 127.0.0.1
+  #     UNSLOTH_STUDIO_HOME: /srv/unsloth
+  #   args: []
   setup-nanobot:
     enabled: false
     description: Install Nanobot (long-running AI agent)
