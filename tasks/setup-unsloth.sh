@@ -19,6 +19,8 @@
 #
 # ENVIRONMENT VARIABLES:
 #   UNSLOTH_INSTALL_DESKTOP  Install Unsloth Desktop app (default: false)
+#   UNSLOTH_INSTALL_SERVICE  Install Unsloth Studio as systemd service (default: false)
+#   UNSLOTH_STUDIO_USER      Runtime user for systemd service (default: $USER)
 #   UNSLOTH_STUDIO_PORT      Port for Unsloth Studio (default: 8888)
 #   UNSLOTH_STUDIO_BIND      Bind address (default: 127.0.0.1)
 #   UNSLOTH_STUDIO_HOME      Custom install directory (default: /srv/unsloth)
@@ -54,6 +56,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LIB_PATH="$(realpath "${SCRIPT_DIR}/../lib/helpers.sh")"
 
 # shellcheck source=lib/helpers.sh
+# shellcheck disable=SC1091
 source "${LIB_PATH}" || {
   echo "[ERROR] Shared library not found: ${LIB_PATH}" >&2
   exit 1
@@ -64,6 +67,8 @@ source "${LIB_PATH}" || {
 # ─────────────────────────────────────────────────────────────────────────────
 
 UNSLOTH_INSTALL_DESKTOP="${UNSLOTH_INSTALL_DESKTOP:-false}"
+UNSLOTH_INSTALL_SERVICE="${UNSLOTH_INSTALL_SERVICE:-false}"
+UNSLOTH_STUDIO_USER="${UNSLOTH_STUDIO_USER:-${SUDO_USER:-${USER:-root}}}"
 UNSLOTH_STUDIO_PORT="${UNSLOTH_STUDIO_PORT:-8888}"
 UNSLOTH_STUDIO_BIND="${UNSLOTH_STUDIO_BIND:-127.0.0.1}"
 UNSLOTH_STUDIO_HOME="${UNSLOTH_STUDIO_HOME:-/srv/unsloth}"
@@ -73,6 +78,8 @@ FORCE=false
 
 INSTALLER_URL="https://unsloth.ai/install.sh"
 DESKTOP_DEB_URL="https://github.com/unslothai/unsloth/releases/latest/download/Unsloth-Desktop-Ubuntu.deb"
+SERVICE_FILE="/etc/systemd/system/unsloth-studio.service"
+TEMPLATE_DIR="${SCRIPT_DIR}/../templates/unsloth"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # USAGE / HELP
@@ -133,11 +140,16 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-# Normalise UNSLOTH_INSTALL_DESKTOP to boolean
+# Normalise UNSLOTH_INSTALL_DESKTOP and UNSLOTH_INSTALL_SERVICE to boolean
 if [[ "${UNSLOTH_INSTALL_DESKTOP}" == "true" || "${UNSLOTH_INSTALL_DESKTOP}" == "1" ]]; then
   UNSLOTH_INSTALL_DESKTOP=true
 else
   UNSLOTH_INSTALL_DESKTOP=false
+fi
+if [[ "${UNSLOTH_INSTALL_SERVICE}" == "true" || "${UNSLOTH_INSTALL_SERVICE}" == "1" ]]; then
+  UNSLOTH_INSTALL_SERVICE=true
+else
+  UNSLOTH_INSTALL_SERVICE=false
 fi
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -225,30 +237,24 @@ fi
 INSTALLED_SHA256="$(sha256sum "${INSTALLER_SCRIPT}" | cut -d' ' -f1)"
 info "Installer SHA-256: ${INSTALLED_SHA256}"
 
-# Build installer environment
-INSTALLER_ENV="UNSLOTH_SKIP_AUTOSTART=1"
+# Build installer environment (passed via `env` to the installer)
+INSTALLER_ENV_ARGS=(UNSLOTH_SKIP_AUTOSTART=1)
 
 if [[ -n "${UNSLOTH_PYTHON}" ]]; then
-  INSTALLER_ENV="${INSTALLER_ENV} UNSLOTH_PYTHON=${UNSLOTH_PYTHON}"
+  INSTALLER_ENV_ARGS+=(UNSLOTH_PYTHON="${UNSLOTH_PYTHON}")
 fi
 
 if [[ "${UNSLOTH_NO_TORCH}" == "true" ]]; then
-  INSTALLER_ENV="${INSTALLER_ENV} UNSLOTH_NO_TORCH=1"
+  INSTALLER_ENV_ARGS+=(UNSLOTH_NO_TORCH=1)
 fi
 
-if [[ -n "${INSTALLER_ENV}" ]]; then
-  info "Installer env overrides: ${INSTALLER_ENV}"
-fi
+info "Installer env overrides: ${INSTALLER_ENV_ARGS[*]}"
 
 # Run the installer — use `set +e` around it because the installer may prompt
 # for confirmation; in non-interactive mode we pass --yes implicitly via the
 # non-interactive run-setup.sh context (no tty), so it should proceed.
 set +e
-if [[ -n "${INSTALLER_ENV}" ]]; then
-  eval "${INSTALLER_ENV}" bash "${INSTALLER_SCRIPT}"
-else
-  bash "${INSTALLER_SCRIPT}"
-fi
+env "${INSTALLER_ENV_ARGS[@]}" bash "${INSTALLER_SCRIPT}"
 INSTALLER_RC=$?
 set -e
 
@@ -313,19 +319,26 @@ if [[ "${UNSLOTH_INSTALL_SERVICE}" == "true" ]]; then
   step "Installing Unsloth Studio systemd service"
 
   # Check if service is already installed
-  if [[ -f "${SERVICE_FILE}" ]]; then
-    warn "Systemd service file already exists at ${SERVICE_FILE}."
-    if [[ "${FORCE}" == "true" ]]; then
+  if [[ -f "${SERVICE_FILE}" && "${FORCE}" != "true" ]]; then
+    warn "Systemd service file already exists at ${SERVICE_FILE}. Skipping (use --force to replace)."
+  else
+    if [[ -f "${SERVICE_FILE}" ]]; then
       info "--force flag set — replacing existing service."
       sudo systemctl stop unsloth-studio 2>/dev/null || true
       sudo systemctl disable unsloth-studio 2>/dev/null || true
-    else
-      info "Skipping service installation (use --force to replace)."
     fi
-  else
+
+    if [[ ! -f "${TEMPLATE_DIR}/unsloth-studio.service" ]]; then
+      error "Service template not found: ${TEMPLATE_DIR}/unsloth-studio.service"
+    fi
+    if ! command -v envsubst &>/dev/null; then
+      error "envsubst not installed — install with: sudo apt-get install gettext-base"
+    fi
+
     # Generate service file from template
     export UNSLOTH_STUDIO_USER UNSLOTH_STUDIO_HOME UNSLOTH_STUDIO_BIND UNSLOTH_STUDIO_PORT
 
+    # shellcheck disable=SC2016  # envsubst expects the literal variable list
     envsubst '${UNSLOTH_STUDIO_USER} ${UNSLOTH_STUDIO_HOME} ${UNSLOTH_STUDIO_BIND} ${UNSLOTH_STUDIO_PORT}' \
       < "${TEMPLATE_DIR}/unsloth-studio.service" \
       | sudo tee "${SERVICE_FILE}" > /dev/null
