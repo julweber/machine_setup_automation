@@ -1,0 +1,84 @@
+# Kestra Docker Compose Configuration (direct access mode)
+# Generated: ${GENERATED_DATE}
+# Secrets (KESTRA_USERNAME, KESTRA_PASSWORD, POSTGRES_PASSWORD) are resolved
+# at runtime by docker compose from the project .env (mode 600) and are
+# intentionally left as literal ${VAR} tokens in this file.
+
+services:
+  postgres:
+    image: ${POSTGRES_IMAGE}
+    container_name: kestra-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: kestra
+      POSTGRES_USER: kestra
+      # Resolved at runtime from .env
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -d $${POSTGRES_DB} -U $${POSTGRES_USER}"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    volumes:
+      - kestra-postgres-data:/var/lib/postgresql/data
+    networks:
+      - kestra
+
+  kestra:
+    image: ${KESTRA_IMAGE}
+    container_name: kestra
+    restart: unless-stopped
+    # Upstream runs standalone mode as root (dev-oriented; the host workdir
+    # volume is root-owned). See Kestra docs for non-root production setups.
+    user: "root"
+    command: server standalone --worker-thread=128
+    environment:
+      KESTRA_CONFIGURATION: |
+        datasources:
+          postgres:
+            url: jdbc:postgresql://postgres:5432/kestra
+            driver-class-name: org.postgresql.Driver
+            username: kestra
+            # Resolved at runtime from .env
+            password: ${POSTGRES_PASSWORD}
+        kestra:
+          server:
+            basic-auth:
+              # Resolved at runtime from .env
+              username: ${KESTRA_USERNAME}
+              password: ${KESTRA_PASSWORD}
+          repository:
+            type: postgres
+          storage:
+            type: local
+            local:
+              base-path: "/app/storage"
+          queue:
+            type: postgres
+          tasks:
+            tmp-dir:
+              path: /tmp/kestra-wd/tmp
+          url: ${KESTRA_URL}
+    ports:
+      - "${KESTRA_BIND_IP}:${KESTRA_PORT}:8080"
+    volumes:
+      - kestra-data:/app/storage
+      # Grants Kestra's docker tasks control of the host Docker daemon —
+      # trusted workloads only (see setup-kestra.sh --help).
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${KESTRA_WD_DIR}:/tmp/kestra-wd
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - kestra
+
+networks:
+  kestra:
+    external: false
+
+volumes:
+  kestra-postgres-data:
+    driver: local
+  kestra-data:
+    driver: local

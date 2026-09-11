@@ -264,3 +264,29 @@ scripts:
       OMNIGENT_PORT: '8008'
       OMNIGENT_TRAEFIK: 'false'
     args: []
+  setup-kestra:
+    enabled: false
+    description: Deploy Kestra workflow orchestrator (Postgres backend) via Docker Compose
+    env:
+      # Installation directory (default: /srv/kestra)
+      KESTRA_DIR: /srv/kestra
+      # Direct-mode bind address (default: 127.0.0.1)
+      KESTRA_BIND_IP: 127.0.0.1
+      # Host port for the web UI (default: 8084)
+      KESTRA_PORT: '8084'
+      # Pinned images (defaults shown; override to pin a different version)
+      KESTRA_IMAGE: kestra/kestra:v2.0.0
+      POSTGRES_IMAGE: postgres:16
+      # Web UI basic-auth username — must be a mail address (default:
+      # admin@example.com). Password auto-generated if empty; stored in .env, 600
+      KESTRA_USERNAME: admin@example.com
+      # KESTRA_PASSWORD: ''
+      # Traefik integration (default: false)
+      KESTRA_TRAEFIK: 'false'
+      # Domain for Traefik access (required when KESTRA_TRAEFIK=true)
+      KESTRA_DOMAIN: ''
+      # Traefik's external Docker network name (default: proxy)
+      PROXY_NETWORK: proxy
+      # Max seconds to wait for the stack to become healthy (default: 180)
+      WAIT_TIMEOUT: '180'
+    args: []

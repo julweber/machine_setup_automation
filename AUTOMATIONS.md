@@ -228,6 +228,18 @@ Deploys **Dagu** (self-hostable workflow orchestrator) via Docker Compose. The h
 
 > **Note:** The Docker socket grant means workflows can control the host Docker daemon. Use only for trusted workflows. The admin password is stored in `/srv/dagu/.env` (mode 600).
 
+#### `setup-kestra.sh`
+Deploys **Kestra** (event-driven workflow & orchestration platform) in standalone mode via Docker Compose with a dedicated PostgreSQL backend. Supports direct port access (bound to a configurable IP, default `127.0.0.1:8084`) or opt-in Traefik reverse-proxy integration with TLS.
+
+**Features:**
+- Standalone Kestra (`server standalone`) with Postgres backend for repository, queue and data
+- Pinned immutable images (`kestra/kestra:v2.0.0`, `postgres:16`) — Kestra recommends exact `v<X.X.X>` tags for production; Postgres is pinned to avoid major-version data-dir incompatibility
+- Basic-auth credentials and Postgres password auto-generated on first run, stored in `/srv/kestra/.env` (mode 600), reused on re-runs (never rotated); the compose file keeps only literal `${VAR}` placeholders resolved at runtime
+- Host Docker socket mounted for Kestra docker script tasks (trusted workflows only)
+- Re-runs converge: re-render, reuse secrets, `docker compose up -d`
+
+> **Note:** The Docker socket grant means Kestra workflows can control the host Docker daemon. Use only for trusted workflows.
+
 ---
 
 ### Storage & File Sharing
