@@ -136,7 +136,7 @@ This is useful for:
 
 ## Model Catalog Configuration (`models.yml`)
 
-After the inference stack is installed (`setup-llama-swap`, `setup-pi`, `setup-opencode-server`), use the model catalog to download and serve LLMs. This is a **separate concern** from `machine-config.yml` — it manages model content, not infrastructure.
+After the inference stack is installed (`setup-llama-swap`, `setup-pi`, `setup-opencode`), use the model catalog to download and serve LLMs. This is a **separate concern** from `machine-config.yml` — it manages model content, not infrastructure.
 
 ### Workflow
 
@@ -249,7 +249,7 @@ When recommending services, group them logically:
 |----------|----------------|
 | **System & Infra** | setup-basics, setup-docker, setup-sshd, configure-firewall, setup-traefik, setup-fail2ban, setup-upstream-kernel, setup-ssh-tunnel-user |
 | **AI / LLM** | setup-llama-cpp, setup-llama-swap, setup-vllm, setup-vllm-omni, setup-lm-studio, setup-openwebui, sync-models |
-| **AI Agents** | setup-omnigent, setup-opencode-server, setup-nanobot, setup-hermes, setup-pi, setup-agent-docker-runner, setup-deepseek-harness |
+| **AI Agents** | setup-omnigent, setup-opencode, setup-nanobot, setup-hermes, setup-pi, setup-agent-docker-runner, setup-deepseek-harness |
 | **Dev Tools** | setup-neovim, setup-zed |
 | **Project Mgmt** | setup-forgejo, setup-planka |
 | **Storage / Files** | setup-nextcloud, setup-samba |
@@ -280,7 +280,7 @@ cp models.yml.default models.yml
 ```
 
 ### Full LLM Dev Station
-Enable: `setup-basics`, `setup-docker`, `setup-sshd`, `configure-firewall`, `setup-llama-cpp`, `setup-llama-swap`, `setup-openwebui`, `setup-pi`, `setup-opencode-server`
+Enable: `setup-basics`, `setup-docker`, `setup-sshd`, `configure-firewall`, `setup-llama-cpp`, `setup-llama-swap`, `setup-openwebui`, `setup-pi`, `setup-opencode`
 
 After setup, configure models:
 ```bash

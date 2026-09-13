@@ -16,7 +16,7 @@
 > case) re-verified against `hf` 1.22.0 on the target host.
 >
 > Grounded in the actual on-disk state of `tasks/setup-llama-swap.sh`,
-> `tasks/setup-pi.sh`, `tasks/setup-opencode-server.sh`,
+> `tasks/setup-pi.sh`, `tasks/setup-opencode.sh`,
 > `/srv/llama-swap/config/config.yaml`, `~/.pi/agent/models.json`,
 > `~/.config/opencode/opencode.json`, and the HuggingFace CLI (`hf` 1.22.0 — download
 > behavior verified empirically on the target host).
@@ -39,12 +39,12 @@ re-running after a successful run is a no-op.
 
 **Scope boundary:** the tool does **not** install llama-swap, pi, or opencode. Those are
 assumed to be set up by `tasks/setup-llama-swap.sh`, `tasks/setup-pi.sh`, and
-`tasks/setup-opencode-server.sh` respectively. It does not install `hf` (installed by
+`tasks/setup-opencode.sh` respectively. It does not install `hf` (installed by
 `tasks/setup-basics.sh`) and does not install Python 3 or PyYAML (assumed present;
 checked in pre-flight with an actionable error).
 
 **Ownership rule:** this tool is the **sole writer** of provider and model entries in the
-agent config files. `setup-pi.sh` / `setup-opencode-server.sh` only install the agents
+agent config files. `setup-pi.sh` / `setup-opencode.sh` only install the agents
 and must not write provider/model content themselves; "the agents are connected to
 llama-swap" is achieved by running this tool (see Decision 31).
 

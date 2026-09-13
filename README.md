@@ -177,11 +177,11 @@ For a complete list of automations see [AUTOMATIONS.md](AUTOMATIONS.md)
 
 Besides installing the stack, this repository supports **configuring LLMs on an already-provisioned inference server** via a declarative **model catalog** (`models.yml`) and the Python sync tool [`tasks/sync-models.py`](tasks/sync-models.py) (the `sync_models/` package).
 
-> **Relationship to `machine-config.yml`:** `machine-config.yml` controls *which services to install* (infrastructure). `models.yml` controls *which models to download and serve* (content). After running `./run-setup.sh apply` with `setup-llama-swap`, `setup-pi`, and `setup-opencode-server` enabled, you use `models.yml` to populate the inference server with actual models.
+> **Relationship to `machine-config.yml`:** `machine-config.yml` controls *which services to install* (infrastructure). `models.yml` controls *which models to download and serve* (content). After running `./run-setup.sh apply` with `setup-llama-swap`, `setup-pi`, and `setup-opencode` enabled, you use `models.yml` to populate the inference server with actual models.
 
 ### Two-stage workflow
 
-1. **Fresh box** — after `setup-llama-swap.sh`, `setup-pi.sh` and `setup-opencode-server.sh`, just run `./tasks/sync-models.py`. The committed `models.yml.default` is a real, downloadable local model set, so a local model works out of the box (it is downloaded via the `hf` CLI and served by llama-swap).
+1. **Fresh box** — after `setup-llama-swap.sh`, `setup-pi.sh` and `setup-opencode.sh`, just run `./tasks/sync-models.py`. The committed `models.yml.default` is a real, downloadable local model set, so a local model works out of the box (it is downloaded via the `hf` CLI and served by llama-swap).
 2. **Remote providers** — add external OpenAI-compatible providers with real API keys later: `cp models.yml.default models.yml`, edit `apiKey`/models, and re-run the tool — the agent provider blocks converge to the catalog on the next run.
 
 ### Getting started

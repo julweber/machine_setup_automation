@@ -66,8 +66,8 @@ Deploys Open WebUI using Docker Compose, connecting to an external LM Studio ins
 - Secure secret key: generated on first run, stored in `.env` (mode 600), reused on re-runs (never rotated); `docker-compose.yml` keeps only a literal `${WEBUI_SECRET_KEY}` placeholder resolved from the project `.env`
 - Creates convenience start script
 
-#### `setup-opencode-server.sh`
-Installs and configures the Opencode AI coding agent server with systemd integration.
+#### `setup-opencode.sh`
+Installs the Opencode AI coding agent. By default only the CLI is installed (npm). `OPENCODE_SERVICE=true` additionally installs the `opencode` systemd service; `USE_DOCKER=true` deploys the Opencode server as a Docker Compose stack (direct or Traefik mode).
 
 #### `setup-llama-swap.sh`
 Deploys llama-swap, a multi-model LLM proxy with hot-swap support, as a native systemd service. Downloads the Go binary from GitHub releases and generates a comprehensive `config.yaml` with all available options documented.

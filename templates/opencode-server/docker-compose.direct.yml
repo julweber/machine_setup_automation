@@ -8,7 +8,7 @@ networks:
 services:
   opencode:
     image: ${OPENCODE_IMAGE}
-    container_name: opencode-agent
+    container_name: opencode
     restart: unless-stopped
     env_file:
       - .env

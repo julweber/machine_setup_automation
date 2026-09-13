@@ -166,12 +166,12 @@ scripts:
     description: Install Zed editor
     env: {}
     args: []
-  setup-opencode-server:
+  setup-opencode:
     enabled: false
-    description: Install OpenCode server for browser-based development
+    description: Install the Opencode CLI (systemd service / Docker opt-in)
     env:
       OPENCODE_PORT: '8765'
-      OPENCODE_HOST: 0.0.0.0
+      OPENCODE_HOSTNAME: 0.0.0.0
     args: []
   setup-excalidraw:
     enabled: false
